@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
-import { getEnv } from '@/src/config/env'
-import { type IngestionAck, validateIngestionAck, validateWordCountRun } from '@/src/contracts/localizationContracts'
+import { getEnv } from '../../config/env.js'
+import { type IngestionAck, validateIngestionAck, validateWordCountRun } from '../../contracts/localizationContracts.js'
 
 function getTimestampMs(): string {
   return String(Date.now())
