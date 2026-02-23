@@ -2,11 +2,13 @@
  * Heimdall middleware — route-based auth + CORS + legacy redirects.
  *
  * Auth zones:
- *   /admin/*   → Supabase session (magic link / email+password)
- *   /sheets/*  → Cookie-based auth with SHEETS_PASSWORD
- *   /api/*     → CORS headers only (Figma plugin needs open access)
- *   /auth/*    → No auth (callback handler)
- *   /          → No auth (landing redirect)
+ *   /admin/*      → Supabase session (magic link / email+password)
+ *   /forecast/*   → Supabase session (same as admin)
+ *   /feedback/*   → Supabase session (same as admin)
+ *   /sheets/*     → Cookie-based auth with SHEETS_PASSWORD
+ *   /api/*        → CORS headers only (Figma plugin needs open access)
+ *   /auth/*       → No auth (callback handler)
+ *   /             → No auth (landing redirect)
  *
  * Legacy redirects keep old URLs working during migration.
  */
@@ -177,21 +179,26 @@ export async function middleware(request: NextRequest) {
     return handleAdminAuth(request)
   }
 
-  // 5. Sheets routes: cookie-based auth
+  // 5. Forecast & Feedback: internal tools — Supabase session (same as admin)
+  if (pathname.startsWith('/forecast') || pathname.startsWith('/feedback')) {
+    return handleAdminAuth(request)
+  }
+
+  // 6. Sheets routes: cookie-based auth
   if (pathname.startsWith('/sheets')) {
     const denied = handleSheetsAuth(request)
     if (denied) return denied
     return NextResponse.next()
   }
 
-  // 6. Briefing Assistant: same cookie-based auth as sheets (Creative Strategists)
+  // 7. Briefing Assistant: same cookie-based auth as sheets (Creative Strategists)
   if (pathname.startsWith('/briefing-assistant')) {
     const denied = handleSheetsAuth(request)
     if (denied) return denied
     return NextResponse.next()
   }
 
-  // 7. Everything else (root landing, etc.)
+  // 8. Everything else (root landing, etc.)
   return NextResponse.next()
 }
 
@@ -203,6 +210,10 @@ export const config = {
     '/sheets/:path*',
     '/briefing-assistant',
     '/briefing-assistant/:path*',
+    '/forecast',
+    '/forecast/:path*',
+    '/feedback',
+    '/feedback/:path*',
     '/auth/:path*',
     '/api/:path*',
     '/jobs/:path*',
