@@ -366,7 +366,7 @@ export default function ForecastPage() {
         </Link>
       </header>
       <main className="flex-1 overflow-y-auto p-4 lg:p-6">
-        <div className="mx-auto max-w-7xl space-y-6">
+        <div className="space-y-6">
       <div className="flex flex-col gap-2">
         <h2 className="text-2xl font-bold flex items-center gap-2">
           <TrendingUp className="h-7 w-7" />
