@@ -41,6 +41,21 @@ const envSchema = z.object({
   LOCALIZATION_BABYLON_SHARED_SECRET: z.string().min(1).optional(),
   /** Optional key identifier header for key rotation support. */
   LOCALIZATION_BABYLON_KEY_ID: z.string().optional(),
+  /** Frontify asset linking: Bearer token for GraphQL API. */
+  FRONTIFY_ACCESS_TOKEN: z.string().min(1).optional(),
+  FRONTIFY_API_KEY: z.string().min(1).optional(),
+  /** Frontify instance domain (e.g. loop.frontify.com). */
+  FRONTIFY_DOMAIN: z.string().optional(),
+  /** Library ID for folder creation (API ID). */
+  FRONTIFY_LIBRARY_ID: z.string().optional(),
+  /** URL path segment for asset link (e.g. document/12). */
+  FRONTIFY_DOCUMENT_PATH: z.string().optional(),
+  /** Monday: column ID of the Assets column for Frontify URL. */
+  MONDAY_ASSETS_COLUMN_ID: z.string().optional(),
+  /** Monday: CSV of board IDs to enable asset linking on (empty = all boards). */
+  MONDAY_ASSETS_BOARD_IDS: z.string().optional(),
+  /** Monday: status value that triggers asset link (e.g. "Approved"). Comparison is case-insensitive. */
+  MONDAY_ASSETS_STATUS_APPROVED: z.string().optional(),
 })
 
 export type Env = z.infer<typeof envSchema>

@@ -57,13 +57,22 @@ export interface FigmaProvider {
 }
 
 // ---------------------------------------------------------------------------
-//  Frontify (placeholder)
+//  Frontify (asset linking + optional folder creation)
 // ---------------------------------------------------------------------------
 
-/** Frontify provider port. Scaffolded for future asset/DAM integration. */
+export interface FrontifyFolderInfo {
+  id: string
+  name: string
+}
+
+/** Frontify provider port. Asset URL generation, folder search, optional folder creation. */
 export interface FrontifyProvider {
-  /** Placeholder: report whether provider is configured. */
   isConfigured(): boolean
-  /** Placeholder: health check. Returns false until implemented. */
   healthCheck(): Promise<boolean>
+  /** Build the Frontify asset link URL for an experiment code (e.g. EXP-LM179). */
+  buildAssetUrl(experimentCode: string): string
+  /** Search library root for a folder matching the experiment code. Returns null if not configured. */
+  searchFolder(experimentCode: string): Promise<FrontifyFolderInfo | null>
+  /** Create a folder in the library root for the experiment code. Returns null if not configured or API unsupported. */
+  createFolder(experimentCode: string): Promise<FrontifyFolderInfo | null>
 }

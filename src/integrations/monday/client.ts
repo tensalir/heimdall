@@ -177,3 +177,22 @@ export function extractImageAttachments(item: MondayItem): MondayImageAttachment
 
   return images
 }
+
+/**
+ * Update a column value on a Monday item using JSON format.
+ * Works for link columns ({"url":"...","text":"..."}) and other complex types.
+ */
+export async function updateColumnValue(
+  boardId: string,
+  itemId: string,
+  columnId: string,
+  value: string
+): Promise<boolean> {
+  const data = await mondayGraphql<{ change_column_value: { id: string } }>(
+    `mutation ($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
+      change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) { id }
+    }`,
+    { boardId, itemId, columnId, value }
+  )
+  return !!data?.change_column_value?.id
+}

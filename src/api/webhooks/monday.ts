@@ -16,6 +16,7 @@ import { getTemplateNodeTree } from '../../integrations/figma/templateCache.js'
 import { computeNodeMapping } from '../../agents/mappingAgent.js'
 import { getDocContent, getDocIdFromColumnValue, getDocImages } from '../../integrations/monday/docReader.js'
 import { columnMap, getCol } from '../../integrations/monday/client.js'
+import { linkFrontifyAsset, isAssetsColumnEmpty } from '../../services/frontifyAssetLinker.js'
 
 export interface MondayWebhookPayload {
   challenge?: string
@@ -156,6 +157,16 @@ export async function handleMondayWebhook(body: MondayWebhookPayload): Promise<{
   const eventType = body.event?.type
   const statusFigmaReady = env.MONDAY_STATUS_FIGMA_READY ?? 'figma_ready'
   const isStatusChange = eventType === 'update' || eventType === 'status_change'
+  const isItemCreate = eventType === 'create_pulse'
+
+  if (isItemCreate) {
+    const linkResult = await linkFrontifyAsset(boardId, itemId)
+    return {
+      received: true,
+      message: linkResult.ok ? 'Asset link generated' : linkResult.message ?? 'Asset link skipped',
+    }
+  }
+
   if (!isStatusChange) {
     return { received: true }
   }
@@ -167,6 +178,16 @@ export async function handleMondayWebhook(body: MondayWebhookPayload): Promise<{
   }
 
   const col = columnMap(item)
+  // Frontify asset link: only when status matches MONDAY_ASSETS_STATUS_APPROVED (independent of Figma flow below)
+  const approvedStatus = (env.MONDAY_ASSETS_STATUS_APPROVED ?? 'approved').trim().toLowerCase()
+  if (
+    isAssetsColumnEmpty(item) &&
+    normalizeText(getCol(col, 'status')) === approvedStatus
+  ) {
+    await linkFrontifyAsset(boardId, itemId)
+  }
+
+  // Figma flow: uses MONDAY_STATUS_FIGMA_READY / MONDAY_ALLOWED_STATUS_VALUES only
   const enforceFilters = isEnabled(env.MONDAY_ENFORCE_FILTERS)
   if (enforceFilters) {
     const allowedStatuses = parseCsvLower(env.MONDAY_ALLOWED_STATUS_VALUES)
