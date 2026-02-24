@@ -470,25 +470,47 @@ async function applyNodeMapping(
   return mappedCount
 }
 
-function findSectionInsertionIndex(sectionName: string, allPages: readonly PageNode[]): number {
-  var UTILITY_PREFIXES = ['Briefing Template', 'Template', 'Cover', 'Status', 'Safe Zone', 'Export']
-  var upper = sectionName.toUpperCase().trim()
+const SECTION_UTILITY_PREFIXES = [
+  'Briefing Template',
+  'Template',
+  'Cover',
+  'Status',
+  'Safe Zone',
+  'Export',
+  '_Heimdall Components',
+]
+
+/** Build list of category/divider pages (names and indices) for section ordering. */
+function getSectionDividers(allPages: readonly PageNode[]): Array<{ index: number; name: string }> {
   var dividers: Array<{ index: number; name: string }> = []
   for (var i = 0; i < allPages.length; i++) {
     var page = allPages[i]
     var name = page.name.trim()
     if (name.toUpperCase().indexOf('EXP-') === 0) continue
     var skip = false
-    for (var j = 0; j < UTILITY_PREFIXES.length; j++) {
-      if (name.indexOf(UTILITY_PREFIXES[j]) >= 0) { skip = true; break }
+    for (var j = 0; j < SECTION_UTILITY_PREFIXES.length; j++) {
+      if (name.indexOf(SECTION_UTILITY_PREFIXES[j]) >= 0) {
+        skip = true
+        break
+      }
     }
     if (skip) continue
     if (/^[-\u2014\u2013\s*]+$/.test(name)) continue
     dividers.push({ index: i, name: name.toUpperCase() })
   }
+  return dividers
+}
+
+function findSectionInsertionIndex(sectionName: string, allPages: readonly PageNode[]): number {
+  var dividers = getSectionDividers(allPages)
+  var upper = sectionName.toUpperCase().trim()
   var matchIdx = -1
   for (var i = 0; i < dividers.length; i++) {
-    if (dividers[i].name === upper || dividers[i].name.indexOf(upper) >= 0 || upper.indexOf(dividers[i].name) >= 0) {
+    if (
+      dividers[i].name === upper ||
+      dividers[i].name.indexOf(upper) >= 0 ||
+      upper.indexOf(dividers[i].name) >= 0
+    ) {
       matchIdx = i
       break
     }
@@ -497,6 +519,55 @@ function findSectionInsertionIndex(sectionName: string, allPages: readonly PageN
   var nextDivider = dividers[matchIdx + 1]
   if (nextDivider) return nextDivider.index
   return allPages.length
+}
+
+/**
+ * Create blank category pages for any section name from jobs that does not yet have a matching page.
+ * Inserts new pages after the last existing category (divider) so briefings can be placed under them.
+ */
+function ensureCategoryPages(root: BaseNode, jobs: QueuedJob[]): void {
+  var sectionNames = new Set<string>()
+  for (var i = 0; i < jobs.length; i++) {
+    var sectionName = (jobs[i].briefingPayload as BriefingPayload).sectionName
+    if (sectionName && String(sectionName).trim()) {
+      sectionNames.add(String(sectionName).trim().toUpperCase())
+    }
+  }
+  if (sectionNames.size === 0) return
+
+  var children = root.children || []
+  var allPages: PageNode[] = []
+  for (var c = 0; c < children.length; c++) {
+    if (children[c].type === 'PAGE') allPages.push(children[c] as PageNode)
+  }
+  var dividers = getSectionDividers(allPages)
+  var existingNames = new Set(dividers.map(function (d) { return d.name }))
+
+  var toCreate: string[] = []
+  sectionNames.forEach(function (upper) {
+    if (!existingNames.has(upper)) toCreate.push(upper)
+  })
+  if (toCreate.length === 0) return
+
+  var insertAt: number
+  if (dividers.length > 0) {
+    insertAt = dividers[dividers.length - 1].index + 1
+  } else {
+    var templateIdx = -1
+    for (var t = 0; t < allPages.length; t++) {
+      var p = allPages[t]
+      if (SECTION_UTILITY_PREFIXES.some(function (pre) { return p.name.indexOf(pre) >= 0 })) {
+        templateIdx = t
+      }
+    }
+    insertAt = templateIdx >= 0 ? templateIdx + 1 : 0
+  }
+
+  for (var k = 0; k < toCreate.length; k++) {
+    var newPage = figma.createPage()
+    newPage.name = toCreate[k]
+    root.insertChild(insertAt + k, newPage)
+  }
 }
 
 const TEMPLATE_FONT = { family: 'Inter', style: 'Regular' }
@@ -549,76 +620,7 @@ function makeTextNode(name: string, placeholder: string, font: FontName): TextNo
   return text
 }
 
-const STATUS_OPTIONS = [
-  'Not Started',
-  'In Progress',
-  'Amends Needed',
-  'Ready to Review',
-  'Approved',
-  'On Hold',
-] as const
-
-/** Build a single status chip frame with given label (for use as variant content). */
-function makeStatusChipFrame(label: string): FrameNode {
-  const chip = figma.createFrame()
-  chip.name = label
-  chip.layoutMode = 'HORIZONTAL'
-  chip.primaryAxisSizingMode = 'AUTO'
-  chip.counterAxisSizingMode = 'AUTO'
-  chip.counterAxisAlignItems = 'CENTER'
-  chip.paddingLeft = 10 * S
-  chip.paddingRight = 10 * S
-  chip.paddingTop = 4 * S
-  chip.paddingBottom = 4 * S
-  chip.cornerRadius = 999
-  chip.itemSpacing = 4 * S
-  chip.fills = [solidPaint(0.29, 0.3, 0.33)]
-  chip.strokes = [solidPaint(0.5, 0.52, 0.57)]
-  chip.strokeWeight = Math.max(1, S / 2)
-  chip.clipsContent = false
-
-  const text = figma.createText()
-  text.name = 'Label'
-  text.fontName = TEMPLATE_FONT_BOLD as FontName
-  text.fontSize = 11 * S
-  text.lineHeight = { unit: 'PIXELS', value: 14 * S }
-  text.characters = label.toUpperCase()
-  text.textAutoResize = 'WIDTH_AND_HEIGHT'
-  text.textTruncation = 'DISABLED' as any
-  applyTextColor(text, 1, 1, 1)
-  chip.appendChild(text)
-  return chip
-}
-
-/**
- * Create a native Figma component set with Status variant (Not Started, In Progress, etc.),
- * place it in a hidden container on the page, and return the set for creating instances.
- */
-function createStatusChipComponentSet(container: FrameNode): ComponentSetNode {
-  const components: ComponentNode[] = []
-  for (const label of STATUS_OPTIONS) {
-    const frame = makeStatusChipFrame(label)
-    container.appendChild(frame)
-    const component = figma.createComponentFromNode(frame)
-    component.name = `Status=${label}`
-    components.push(component)
-  }
-  const set = figma.combineAsVariants(components, container, 0)
-  set.name = 'Heimdall Status Chip'
-  set.layoutMode = 'VERTICAL'
-  set.primaryAxisSizingMode = 'AUTO'
-  set.counterAxisSizingMode = 'AUTO'
-  set.itemSpacing = 8 * S
-  set.paddingTop = set.paddingBottom = set.paddingLeft = set.paddingRight = 8 * S
-  return set
-}
-
-function makeColumnHeader(
-  title: string,
-  width: number,
-  includeStatus: boolean,
-  statusSet: ComponentSetNode | null
-): FrameNode {
+function makeColumnHeader(title: string, width: number): FrameNode {
   const header = figma.createFrame()
   header.name = `${title} Header`
   header.resize(width, 64 * S)
@@ -646,24 +648,6 @@ function makeColumnHeader(
   titleText.textAutoResize = 'WIDTH_AND_HEIGHT'
   applyTextColor(titleText, 1, 1, 1)
   header.appendChild(titleText)
-
-  if (includeStatus && statusSet) {
-    const instance = statusSet.defaultVariant.createInstance()
-    instance.name = `${title} Status`
-    // Scale the instance up so the chip text is readable at column scale
-    instance.rescale(1.2)
-    const defs = statusSet.componentPropertyDefinitions
-    const variantProp = Object.keys(defs).find((k) => defs[k].type === 'VARIANT')
-    const options = variantProp ? defs[variantProp].variantOptions : undefined
-    const notStartedValue =
-      options?.includes('Not Started')
-        ? 'Not Started'
-        : options?.[0]
-    if (variantProp && notStartedValue) {
-      instance.setProperties({ [variantProp]: notStartedValue })
-    }
-    header.appendChild(instance)
-  }
   return header
 }
 
@@ -872,24 +856,8 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
   row.clipsContent = false
   section.appendChild(row)
 
-  const statusContainer = figma.createFrame()
-  statusContainer.name = 'Heimdall Status Chips'
-  statusContainer.fills = []
-  statusContainer.clipsContent = false
-  templatePage.appendChild(statusContainer)
-  // Position to the left of the template with a small gap
-  statusContainer.x = -(400 * S)
-  statusContainer.y = 0
-
-  let statusSet: ComponentSetNode | null = null
-  try {
-    statusSet = createStatusChipComponentSet(statusContainer)
-  } catch (_) {
-    statusSet = null
-  }
-
   /** Wrap a header + column body into one vertical container. */
-  function makeColumnWithHeader(title: string, width: number, includeStatus: boolean): { wrapper: FrameNode; body: FrameNode } {
+  function makeColumnWithHeader(title: string, width: number): { wrapper: FrameNode; body: FrameNode } {
     const wrapper = figma.createFrame()
     wrapper.name = `${title} Column`
     wrapper.layoutMode = 'VERTICAL'
@@ -901,7 +869,7 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
     wrapper.clipsContent = false
     wrapper.resize(width, 100)
 
-    const header = makeColumnHeader(title, width, includeStatus, statusSet)
+    const header = makeColumnHeader(title, width)
     wrapper.appendChild(header)
     try { (header as any).layoutAlign = 'STRETCH' } catch (_) {}
 
@@ -916,7 +884,7 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
   const designW = 900 * S
   const uploadsW = 280 * S
 
-  const { wrapper: briefingWrapper, body: briefingCol } = makeColumnWithHeader('Briefing', colW, true)
+  const { wrapper: briefingWrapper, body: briefingCol } = makeColumnWithHeader('Briefing', colW)
   row.appendChild(briefingWrapper)
 
   // Name EXP header block (dark)
@@ -983,7 +951,7 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
     appendAndStretch(briefingCol, block)
   }
 
-  const { wrapper: copyWrapper, body: copyCol } = makeColumnWithHeader('Copy', colW, true)
+  const { wrapper: copyWrapper, body: copyCol } = makeColumnWithHeader('Copy', colW)
   row.appendChild(copyWrapper)
   let copyBlock = makeBlockFrame()
   for (const letter of ['A', 'B', 'C', 'D']) {
@@ -1011,7 +979,7 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
     }
   }
 
-  const { wrapper: designWrapper, body: designCol } = makeColumnWithHeader('Design', designW, true)
+  const { wrapper: designWrapper, body: designCol } = makeColumnWithHeader('Design', designW)
   row.appendChild(designWrapper)
   let designBlock = makeBlockFrame()
   const sizes = ['4x5', '9x16', '1x1']
@@ -1048,26 +1016,13 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
   // Right-side Uploads column removed. References are now rendered in a
   // dedicated frame below the main briefing panel.
 
-  // References: dedicated container below main content for Monday image references.
-  // Kept outside the right-side columns so imported images do not alter auto-layout columns.
-  const referencesFrame = figma.createFrame()
-  referencesFrame.name = 'References'
-  referencesFrame.layoutMode = 'VERTICAL'
-  referencesFrame.primaryAxisSizingMode = 'AUTO'
-  referencesFrame.counterAxisSizingMode = 'FIXED'
-  referencesFrame.counterAxisAlignItems = 'MIN'
-  referencesFrame.itemSpacing = 8 * S
-  referencesFrame.paddingTop = referencesFrame.paddingBottom = 8 * S
-  referencesFrame.paddingLeft = referencesFrame.paddingRight = 8 * S
-  referencesFrame.fills = [solidPaint(0.97, 0.97, 0.97)]
-  referencesFrame.strokes = [solidPaint(0.88, 0.89, 0.92)]
-  referencesFrame.strokeWeight = Math.max(1, S / 2)
-  referencesFrame.cornerRadius = 6 * S
-  referencesFrame.clipsContent = false
-  referencesFrame.resize(280 * S, 60 * S)
-  referencesFrame.x = section.x
-  referencesFrame.y = section.y + section.height + 24 * S
-  templatePage.appendChild(referencesFrame)
+  // References: column with dark header matching Briefing/Copy/Design,
+  // positioned to the left of the main layout so images don't alter columns.
+  const { wrapper: referencesWrapper, body: referencesBody } = makeColumnWithHeader('References', uploadsW)
+  referencesBody.name = 'References'
+  templatePage.appendChild(referencesWrapper)
+  referencesWrapper.x = section.x - uploadsW - 24 * S
+  referencesWrapper.y = section.y + 24 * S
 
   // Apply bold styling to all template text nodes
   async function boldAllText(node: BaseNode): Promise<void> {
@@ -1080,12 +1035,206 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
     }
   }
   await boldAllText(section)
+  await boldAllText(referencesWrapper)
 
   await figma.setCurrentPageAsync(templatePage)
   return {}
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Failed to create template' }
   }
+}
+
+/** Header names that should have a status widget (Briefing, Copy, Design). */
+const STATUS_HEADER_NAMES = ['Briefing Header', 'Copy Header', 'Design Header']
+
+/**
+ * Find template page (same logic as processJobs).
+ */
+function findTemplatePage(): PageNode | null {
+  const root = figma.root
+  const children = root.children || []
+  for (let i = 0; i < children.length; i++) {
+    const node = children[i]
+    if (node.type !== 'PAGE') continue
+    const pageName = (node as PageNode).name
+    if (TEMPLATE_PAGE_NAMES.some((n) => pageName.indexOf(n) >= 0 || pageName === n)) {
+      return node as PageNode
+    }
+  }
+  return null
+}
+
+/**
+ * Collect widget nodes from header frames. Traverses from a root (e.g. Name Briefing)
+ * and returns a map: header frame name -> first WidgetNode found in that header.
+ */
+function findWidgetsInHeaders(root: BaseNode): Record<string, SceneNode> {
+  const map: Record<string, SceneNode> = {}
+  function walk(node: BaseNode): void {
+    if (node.type === 'FRAME' && STATUS_HEADER_NAMES.includes((node as FrameNode).name)) {
+      const frame = node as FrameNode
+      const kids = frame.children || []
+      for (let i = 0; i < kids.length; i++) {
+        const child = kids[i]
+        if ((child as SceneNode).type === 'WIDGET') {
+          if (!map[frame.name]) map[frame.name] = child as SceneNode
+          return
+        }
+      }
+    }
+    const c = node as { children?: readonly BaseNode[] }
+    if (c.children) {
+      for (let i = 0; i < c.children.length; i++) walk(c.children[i])
+    }
+  }
+  walk(root)
+  return map
+}
+
+/**
+ * Find header frames under content root (Name Briefing -> Columns -> * Column -> * Header).
+ * Returns a map: header name -> FrameNode.
+ */
+function findHeaderFrames(contentRoot: BaseNode): Record<string, FrameNode> {
+  const map: Record<string, FrameNode> = {}
+  function walk(node: BaseNode): void {
+    if (node.type === 'FRAME' && STATUS_HEADER_NAMES.includes((node as FrameNode).name)) {
+      map[(node as FrameNode).name] = node as FrameNode
+      return
+    }
+    const c = node as { children?: readonly BaseNode[] }
+    if (c.children) {
+      for (let i = 0; i < c.children.length; i++) walk(c.children[i])
+    }
+  }
+  walk(contentRoot)
+  return map
+}
+
+/**
+ * Remove old Heimdall status chip instances from a header (nodes named "* Status").
+ */
+function removeOldStatusChips(header: FrameNode): void {
+  const kids = [...(header.children || [])]
+  for (const child of kids) {
+    if (child.type === 'INSTANCE' && child.name.endsWith(' Status')) {
+      child.remove()
+    }
+  }
+}
+
+/**
+ * Check if a header already has a widget (already migrated).
+ */
+function headerHasWidget(header: FrameNode): boolean {
+  const kids = header.children || []
+  for (let i = 0; i < kids.length; i++) {
+    if ((kids[i] as SceneNode).type === 'WIDGET') return true
+  }
+  return false
+}
+
+export interface MigrateStatusWidgetsResult {
+  error?: string
+  pagesMigrated: number
+  pagesSkipped: number
+  pagesFailed: number
+}
+
+/**
+ * Migrate status widgets from template to existing briefing pages.
+ * Removes old Heimdall Status Chip instances and appends cloned widget from template.
+ */
+async function migrateStatusWidgets(): Promise<MigrateStatusWidgetsResult> {
+  const result: MigrateStatusWidgetsResult = { pagesMigrated: 0, pagesSkipped: 0, pagesFailed: 0 }
+  const templatePage = findTemplatePage()
+  if (!templatePage) {
+    result.error = 'No template page found.'
+    return result
+  }
+  if (typeof (templatePage as any).loadAsync === 'function') {
+    try {
+      await (templatePage as any).loadAsync()
+    } catch (_) {}
+  }
+  const nameBriefing = templatePage.children?.find(
+    (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Name Briefing'
+  ) as FrameNode | undefined
+  if (!nameBriefing) {
+    result.error = 'Template has no "Name Briefing" frame.'
+    return result
+  }
+  const templateWidgets = findWidgetsInHeaders(nameBriefing)
+  const headerNamesWithWidget = Object.keys(templateWidgets)
+  if (headerNamesWithWidget.length === 0) {
+    result.error =
+      "No widgets found on template headers. Please add the 'Custom Labels - Status Tracker' widget to the Briefing, Copy, and Design headers first."
+    return result
+  }
+  const root = figma.root
+  const briefingPages: PageNode[] = []
+  for (let i = 0; i < root.children.length; i++) {
+    const node = root.children[i]
+    if (node.type !== 'PAGE') continue
+    const page = node as PageNode
+    const mondayId = page.getPluginData('heimdallMondayItemId')
+    if (!mondayId || mondayId === '') continue
+    briefingPages.push(page)
+  }
+  for (const page of briefingPages) {
+    if (typeof (page as any).loadAsync === 'function') {
+      try {
+        await (page as any).loadAsync()
+      } catch (_) {}
+    }
+    let contentRoot: BaseNode | null = null
+    for (let ci = 0; ci < page.children.length; ci++) {
+      const child = page.children[ci]
+      if (child.type === 'FRAME' && (child as FrameNode).name === 'Name Briefing') {
+        contentRoot = child
+        break
+      }
+    }
+    if (!contentRoot) {
+      result.pagesSkipped++
+      continue
+    }
+    const headers = findHeaderFrames(contentRoot)
+    let didMigrate = false
+    let failed = false
+    for (const headerName of STATUS_HEADER_NAMES) {
+      const templateWidget = templateWidgets[headerName]
+      const targetHeader = headers[headerName]
+      if (!targetHeader || !templateWidget) continue
+      if (headerHasWidget(targetHeader)) {
+        continue
+      }
+      removeOldStatusChips(targetHeader)
+      try {
+        const cloned = (templateWidget as any).clone()
+        if (cloned && targetHeader.appendChild) {
+          targetHeader.appendChild(cloned)
+          didMigrate = true
+        }
+      } catch (_) {
+        failed = true
+      }
+    }
+    if (failed) result.pagesFailed++
+    else if (didMigrate) result.pagesMigrated++
+    else result.pagesSkipped++
+  }
+
+  // Clean up the legacy "_Heimdall Components" utility page (no longer needed)
+  for (let i = root.children.length - 1; i >= 0; i--) {
+    const node = root.children[i]
+    if (node.type === 'PAGE' && (node as PageNode).name === '_Heimdall Components') {
+      node.remove()
+      break
+    }
+  }
+
+  return result
 }
 
 // =====================================================
@@ -1492,16 +1641,27 @@ var debugLog: DebugEntry[] = []
  * Find dedicated "Doc Images" frame on the page (below main content). Prefer this for Monday doc images so they don't affect column layout.
  */
 function findDocImagesTarget(page: PageNode): FrameNode | null {
+  // Direct top-level match (legacy templates)
   for (let i = 0; i < page.children.length; i++) {
     const node = page.children[i]
-    if (
-      node.type === 'FRAME' &&
-      (
-        (node as FrameNode).name.toLowerCase() === 'references' ||
-        (node as FrameNode).name.toLowerCase() === 'doc images'
-      )
-    ) {
+    if (node.type !== 'FRAME') continue
+    const name = (node as FrameNode).name.toLowerCase()
+    if (name === 'references' || name === 'doc images') {
       return node as FrameNode
+    }
+  }
+  // Search one level deeper for column-wrapped structure (new template)
+  for (let i = 0; i < page.children.length; i++) {
+    const node = page.children[i]
+    if (node.type !== 'FRAME') continue
+    const frame = node as FrameNode
+    for (let j = 0; j < frame.children.length; j++) {
+      const child = frame.children[j]
+      if (child.type !== 'FRAME') continue
+      const childName = (child as FrameNode).name.toLowerCase()
+      if (childName === 'references' || childName === 'doc images') {
+        return child as FrameNode
+      }
     }
   }
   return null
@@ -1645,10 +1805,18 @@ async function importImagesToPage(
 
   const nameBriefing = (page as PageNode).children.find((c) => c.type === 'FRAME' && (c as FrameNode).name === 'Name Briefing') as FrameNode | undefined
   if (nameBriefing) {
-    // Keep references visually separate from briefing content: pin left of Name Briefing.
     const gap = 24 * S
-    uploadsBody.x = nameBriefing.x - uploadsBody.width - gap
-    uploadsBody.y = nameBriefing.y
+    // For column-wrapped structure, reposition the wrapper (auto-layout parent).
+    // Moving a child inside auto-layout has no effect; the wrapper is the free node.
+    const wrapper = uploadsBody.parent
+    if (wrapper && wrapper.type === 'FRAME' && wrapper !== page) {
+      const wf = wrapper as FrameNode
+      wf.x = nameBriefing.x - wf.width - gap
+      wf.y = nameBriefing.y
+    } else {
+      uploadsBody.x = nameBriefing.x - uploadsBody.width - gap
+      uploadsBody.y = nameBriefing.y
+    }
   }
 
   const PLACEHOLDER_PATTERNS = ['frontify', 'images from monday', 'uploads placeholder', 'references placeholder']
@@ -1723,6 +1891,8 @@ async function processJobs(jobs: QueuedJob[]): Promise<Array<{ idempotencyKey: s
       return { idempotencyKey: job.idempotencyKey, experimentPageName: job.experimentPageName, pageId: '', fileUrl: '', error: 'No template page found' }
     })
   }
+
+  ensureCategoryPages(root, jobs)
 
   var fileKey = figma.fileKey || ''
   var results: Array<{ idempotencyKey: string; experimentPageName: string; pageId: string; fileUrl: string; error?: string }> = []
@@ -1883,6 +2053,7 @@ var uiHtml = '<html><head><style>'
   + '  <button id="sync">Sync</button>'
   + '</div>'
   + '<button id="create-template" style="margin-top:8px;">Create Auto-Layout Template</button>'
+  + '<button id="migrate-widgets" class="secondary" style="margin-top:6px;display:block;">Migrate Status Widgets</button>'
   + '<script>'
   + 'parent.postMessage({ pluginMessage: { type: "ui-boot" } }, "*");'
   + 'window.onerror = function(message, source, lineno, colno) {'
@@ -1909,6 +2080,26 @@ var uiHtml = '<html><head><style>'
   + '  var input = document.getElementById("api-base");'
   + '  if (input) input.value = HEIMDALL_API;'
   + '}'
+  + 'function requestJson(url, options) {'
+  + '  return fetch(url, options).then(function(r) {'
+  + '    var status = r.status;'
+  + '    var contentType = (r.headers.get("content-type") || "").toLowerCase();'
+  + '    return r.text().then(function(t) {'
+  + '      var raw = t || "";'
+  + '      var parsed = null;'
+  + '      if (raw) {'
+  + '        try { parsed = JSON.parse(raw); } catch (_) { parsed = null; }'
+  + '      }'
+  + '      if (!r.ok) {'
+  + '        var err = parsed && (parsed.error || parsed.reason) ? (parsed.error || parsed.reason) : ("HTTP " + status);'
+  + '        throw new Error(err + " @ " + url);'
+  + '      }'
+  + '      if (parsed !== null) return parsed;'
+  + '      var preview = raw.slice(0, 80).replace(/\\s+/g, " ");'
+  + '      throw new Error("Expected JSON but got non-JSON response @ " + url + " (status " + status + ", content-type: " + contentType + ", body: " + preview + ")");'
+  + '    });'
+  + '  });'
+  + '}'
   + 'document.getElementById("save-api").onclick = function() {'
   + '  var input = document.getElementById("api-base");'
   + '  setApiBase(input ? input.value : "");'
@@ -1923,6 +2114,11 @@ var uiHtml = '<html><head><style>'
   + '  document.getElementById("msg").textContent = "Creating template...";'
   + '  document.getElementById("msg").className = "";'
   + '  parent.postMessage({ pluginMessage: { type: "create-template" } }, "*");'
+  + '};'
+  + 'document.getElementById("migrate-widgets").onclick = function() {'
+  + '  document.getElementById("msg").textContent = "Migrating status widgets...";'
+  + '  document.getElementById("msg").className = "";'
+  + '  parent.postMessage({ pluginMessage: { type: "migrate-widgets" } }, "*");'
   + '};'
   + 'function showBriefings(data) {'
   + '  currentBriefings = data.items || [];'
@@ -1952,8 +2148,7 @@ var uiHtml = '<html><head><style>'
   + '  document.getElementById("msg").className = "";'
   + '  var body = { fileName: fileName, fileKey: fileKey };'
   + '  if (selectedBatch) body.batch = selectedBatch;'
-  + '  fetch(HEIMDALL_API + "/api/plugin/briefings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })'
-  + '    .then(function(r) { return r.json(); })'
+  + '  requestJson(HEIMDALL_API + "/api/plugin/briefings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })'
   + '    .then(function(data) {'
   + '      if (data.needsBatchSelection && data.availableBatches && data.availableBatches.length > 0) {'
   + '        document.getElementById("batch-select-wrap").style.display = "flex";'
@@ -1996,8 +2191,7 @@ var uiHtml = '<html><head><style>'
   + '  document.getElementById("msg").textContent = "Queueing briefings...";'
   + '  document.getElementById("sync").disabled = true;'
   + '  var items = currentBriefings.map(function(it){ return { id: it.id, name: it.name, batch: it.batch }; });'
-  + '  fetch(HEIMDALL_API + "/api/plugin/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileKey: fileKey || "", items: items }) })'
-  + '    .then(function(r) { return r.json(); })'
+  + '  requestJson(HEIMDALL_API + "/api/plugin/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileKey: fileKey || "", items: items }) })'
   + '    .then(function(data) {'
   + '      if (data.error) { document.getElementById("msg").textContent = data.error; document.getElementById("msg").className = "err"; isSyncing = false; document.getElementById("sync").disabled = false; return; }'
   + '      queuedJobIds = (data.jobs || []).map(function(j){ return j.id; });'
@@ -2006,7 +2200,7 @@ var uiHtml = '<html><head><style>'
   + '      if (queuedJobIds.length > 0) q = "ids=" + queuedJobIds.map(function(id){ return encodeURIComponent(id); }).join(",");'
   + '      else if (fileKey) q = "fileKey=" + encodeURIComponent(fileKey);'
   + '      else if (items.length > 0 && items[0].batch) q = "batch=" + encodeURIComponent(items[0].batch);'
-  + '      return fetch(HEIMDALL_API + "/api/jobs/queued" + (q ? ("?" + q) : "")).then(function(r2){ return r2.json(); });'
+  + '      return requestJson(HEIMDALL_API + "/api/jobs/queued" + (q ? ("?" + q) : ""));'
   + '    })'
   + '    .then(function(data2) {'
   + '      var jobs = (data2 && data2.jobs) ? data2.jobs : [];'
@@ -2024,13 +2218,12 @@ var uiHtml = '<html><head><style>'
   + 'parent.postMessage({ pluginMessage: { type: "ui-handlers-bound" } }, "*");'
   + 'function fetchJobs(fk) {'
   + '  fileKey = fk;'
-  + '  fetch(HEIMDALL_API + "/api/jobs/queued?fileKey=" + encodeURIComponent(fk))'
-  + '    .then(function(r) { return r.json(); })'
+  + '  requestJson(HEIMDALL_API + "/api/jobs/queued?fileKey=" + encodeURIComponent(fk))'
   + '    .then(function(data) {'
   + '      var jobs = data.jobs || [];'
   + '      if (jobs.length === 0) {'
   + '        document.getElementById("msg").textContent = "No file-specific jobs. Checking all queued...";'
-  + '        return fetch(HEIMDALL_API + "/api/jobs/queued").then(function(r2){return r2.json();}).then(function(d2){'
+  + '        return requestJson(HEIMDALL_API + "/api/jobs/queued").then(function(d2){'
   + '          var all = d2.jobs || [];'
   + '          if (all.length === 0) { document.getElementById("msg").textContent = "No queued jobs."; isSyncing = false; return; }'
   + '          document.getElementById("msg").textContent = "Found " + all.length + " job(s). Creating pages...";'
@@ -2124,8 +2317,13 @@ var uiHtml = '<html><head><style>'
   + '  if (d.type === "api-base") setApiBase(d.apiBase || DEFAULT_HEIMDALL_API);'
   + '  if (d.type === "create-template-done") {'
   + '    var el = document.getElementById("msg");'
-  + '    el.textContent = d.error ? "Template error: " + d.error : "Template created. You can now sync briefings.";'
+  + '    el.textContent = d.error ? "Template error: " + d.error : "Template created. Place the \'Custom Labels - Status Tracker\' widget in each column header (Briefing, Copy, Design).";'
   + '    el.className = d.error ? "err" : "";'
+  + '  }'
+  + '  if (d.type === "migrate-widgets-done") {'
+  + '    var el = document.getElementById("msg");'
+  + '    if (d.error) { el.textContent = "Migrate error: " + d.error; el.className = "err"; }'
+  + '    else { el.textContent = "Migrated: " + (d.pagesMigrated || 0) + " pages, skipped: " + (d.pagesSkipped || 0) + (d.pagesFailed ? ", failed: " + d.pagesFailed : ""); el.className = ""; }'
   + '  }'
   + '  if (d.type === "fetch-images" && d.images && d.images.length > 0) {'
   + '    fetchAllImages(d.images);'
@@ -2206,6 +2404,16 @@ export function runSyncBriefings() {
     if (msg.type === 'create-template') {
       const result = await createAutoLayoutTemplate()
       figma.ui.postMessage({ type: 'create-template-done', error: result.error })
+    }
+    if (msg.type === 'migrate-widgets') {
+      const result = await migrateStatusWidgets()
+      figma.ui.postMessage({
+        type: 'migrate-widgets-done',
+        error: result.error,
+        pagesMigrated: result.pagesMigrated,
+        pagesSkipped: result.pagesSkipped,
+        pagesFailed: result.pagesFailed,
+      })
     }
     if (msg.type === 'process-jobs' && msg.jobs) {
       var results: Array<{ idempotencyKey: string; experimentPageName: string; pageId: string; fileUrl: string; error?: string }>
