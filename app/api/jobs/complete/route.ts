@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getJobByIdempotencyKey, updateJobState } from '@/lib/kv'
 import { logger } from '@/lib/logger'
-import { updateSyncFigmaPage } from '@/src/services/briefingSyncStore'
+import { updateSyncFigmaPage, appendImportEvent } from '@/src/services/briefingSyncStore'
 
 export async function POST(request: Request) {
   try {
@@ -27,6 +27,19 @@ export async function POST(request: Request) {
         figmaPageId,
         job.experimentPageName ?? null
       )
+      await appendImportEvent({
+        mondayItemId: job.mondayItemId,
+        mondayBoardId: job.mondayBoardId,
+        mondayItemName: job.experimentPageName ?? job.mondayItemId,
+        batchCanonical: job.batchCanonical,
+        figmaFileKey: job.figmaFileKey,
+        figmaPageId,
+        figmaPageName: job.experimentPageName ?? null,
+        idempotencyKey: job.idempotencyKey,
+        source: 'plugin_sync',
+        outcome: 'completed',
+        reason: 'Plugin sync completed',
+      })
     }
 
     logger.info('figma', 'Job marked completed', {

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { queueMondayItem } from '@/src/api/webhooks/monday'
-import { upsertSync } from '@/src/services/briefingSyncStore'
+import {
+  upsertSync,
+  hasSuccessfulImport,
+  appendImportEvent,
+} from '@/src/services/briefingSyncStore'
 export const dynamic = 'force-dynamic'
 
 const BOARD_ID = process.env.MONDAY_BOARD_ID ?? '9147622374'
@@ -49,13 +53,44 @@ export async function POST(request: NextRequest) {
       const name = String(it.name ?? '').trim()
       const batch = String(it.batch ?? '').trim()
 
+      if (fileKey) {
+        const alreadyImported = await hasSuccessfulImport(itemId, fileKey)
+        if (alreadyImported) {
+          await appendImportEvent({
+            mondayItemId: itemId,
+            mondayBoardId: BOARD_ID,
+            mondayItemName: name,
+            batchCanonical: batch,
+            figmaFileKey: fileKey,
+            source: 'plugin_sync',
+            outcome: 'skipped_already_imported',
+            reason: 'Already successfully imported into this file',
+          })
+          return { itemId, name, batch, result: { outcome: 'skipped_already_imported' as const, message: 'Already imported' }, skipped: true }
+        }
+      }
+
       const result = await queueMondayItem(BOARD_ID, itemId, {
         idempotencySuffix: `plugin-${Date.now()}-${itemId}`,
         // Plugin sync should feel immediate: use deterministic mapping (no Claude roundtrip).
         disableAiMapping: true,
       })
 
-      return { itemId, name, batch, result }
+      if (fileKey && (result.outcome === 'queued' || result.outcome === 'skipped')) {
+        await appendImportEvent({
+          mondayItemId: itemId,
+          mondayBoardId: BOARD_ID,
+          mondayItemName: name,
+          batchCanonical: batch,
+          figmaFileKey: fileKey,
+          idempotencyKey: null,
+          source: 'plugin_sync',
+          outcome: 'queued',
+          reason: result.outcome === 'skipped' ? 'Idempotency hit (already queued)' : undefined,
+        })
+      }
+
+      return { itemId, name, batch, result, skipped: false }
     })
 
     const jobs: Array<{ id: string; itemName: string }> = []
@@ -68,7 +103,11 @@ export async function POST(request: NextRequest) {
         skipped++
         continue
       }
-      const { itemId, name, batch, result } = settled.value
+      const { itemId, name, batch, result, skipped: alreadyImported } = settled.value
+      if (alreadyImported || result.outcome === 'skipped_already_imported') {
+        skipped++
+        continue
+      }
       if (result.outcome === 'queued' || result.outcome === 'skipped') {
         queued++
         if (result.job) jobs.push({ id: result.job.id, itemName: result.job.experimentPageName ?? name })

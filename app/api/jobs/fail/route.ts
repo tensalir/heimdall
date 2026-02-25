@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getJobByIdempotencyKey, updateJobState } from '@/lib/kv'
 import { logger } from '@/lib/logger'
+import { appendImportEvent } from '@/src/services/briefingSyncStore'
 
 export async function POST(request: Request) {
   try {
@@ -18,6 +19,20 @@ export async function POST(request: Request) {
     }
     
     await updateJobState(job.id, 'failed', { errorCode })
+
+    if (job.figmaFileKey && job.mondayItemId) {
+      await appendImportEvent({
+        mondayItemId: job.mondayItemId,
+        mondayBoardId: job.mondayBoardId,
+        mondayItemName: job.experimentPageName ?? job.mondayItemId,
+        batchCanonical: job.batchCanonical,
+        figmaFileKey: job.figmaFileKey,
+        idempotencyKey: job.idempotencyKey,
+        source: 'plugin_sync',
+        outcome: 'failed',
+        errorCode,
+      })
+    }
 
     logger.warn('figma', 'Job marked failed', {
       jobId: job.id,
