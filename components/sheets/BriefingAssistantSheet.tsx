@@ -15,10 +15,18 @@ import {
   Plus,
   X,
   Check,
+  FileDown,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Separator } from '@/components/ui/separator'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Tooltip,
   TooltipContent,
@@ -26,6 +34,38 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+
+type StatusFilter = 'all' | 'pending' | 'in_review' | 'approved' | 'synced'
+
+const STATUS_TAB_MAP: Record<StatusFilter, string[]> = {
+  all: [],
+  pending: ['draft', 'queued'],
+  in_review: ['edited'],
+  approved: ['approved'],
+  synced: ['synced_to_monday'],
+}
+
+const STATUS_TAB_LABELS: { key: StatusFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'pending', label: 'Pending' },
+  { key: 'in_review', label: 'In Review' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'synced', label: 'Synced' },
+]
+
+function downloadAssignmentsCsv(rows: { briefName: string; productOrUseCase: string; source?: string; format: string; funnel: string; agencyRef: string; assetCount: number; status?: string }[]) {
+  const header = ['Name', 'Product', 'Source', 'Format', 'Funnel', 'Agency', 'Assets', 'Status'].join(',')
+  const esc = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const body = rows.map((r) => [esc(r.briefName), esc(r.productOrUseCase), esc(r.source ?? 'split'), esc(r.format), esc(r.funnel), esc(r.agencyRef), r.assetCount, esc(r.status ?? 'draft')].join(',')).join('\n')
+  const csv = `${header}\n${body}`
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `briefing-assignments-${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 import { BriefingGeneratorPanel } from './BriefingGeneratorPanel'
 import { BriefingWorkingDocPanel } from './BriefingWorkingDocPanel'
 import { BriefingAssignmentsTable, type AssignmentRow, type AssignmentPatch } from './BriefingAssignmentsTable'
@@ -96,8 +136,8 @@ export function BriefingAssistantSheet({
   const [selectedMondayIds, setSelectedMondayIds] = useState<Set<string>>(new Set())
   const [importSaving, setImportSaving] = useState(false)
   const [feedbackStatusMap, setFeedbackStatusMap] = useState<Record<string, { hasExperiment: boolean; roles: string[]; sentToMonday: boolean }>>({})
-  const [splitDropdownOpen, setSplitDropdownOpen] = useState(false)
-  const [generateDropdownOpen, setGenerateDropdownOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState<'split' | 'briefings'>('briefings')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   /** Last datasource IDs used in the toolbar (for generate-briefing so both flows use same sources). */
   const [lastUsedDatasources, setLastUsedDatasources] = useState<string[]>([])
 
@@ -360,6 +400,21 @@ export function BriefingAssistantSheet({
   const availableBoards = (sprintData?.batches ?? []).filter((b) => b.monday_board_id).map((b) => ({ batch_key: b.batch_key, label: b.batch_label, board_id: b.monday_board_id! }))
   const selected = assignmentsWithLinks.find((a) => a.id === selectedAssignmentId)
 
+  const statusCounts: Record<StatusFilter, number> = {
+    all: assignmentsWithLinks.length,
+    pending: assignmentsWithLinks.filter((a) => !a.status || a.status === 'draft' || a.status === 'queued').length,
+    in_review: assignmentsWithLinks.filter((a) => a.status === 'edited').length,
+    approved: assignmentsWithLinks.filter((a) => a.status === 'approved').length,
+    synced: assignmentsWithLinks.filter((a) => a.status === 'synced_to_monday').length,
+  }
+
+  const filteredAssignments = statusFilter === 'all'
+    ? assignmentsWithLinks
+    : assignmentsWithLinks.filter((a) => {
+        const s = a.status ?? 'draft'
+        return STATUS_TAB_MAP[statusFilter].includes(s) || (statusFilter === 'pending' && !a.status)
+      })
+
   const mondayItemIdsForFeedback = (initialAssignments ?? [])
     .map((a) => a.mondayItemId)
     .filter(Boolean) as string[]
@@ -454,378 +509,446 @@ export function BriefingAssistantSheet({
     <TooltipProvider>
       <div className="h-full flex flex-col bg-background text-foreground">
 
-        {/* Row 1: Title bar – back + sprint name + batch links */}
-        <div className="flex-shrink-0 flex items-center px-6 pt-6 pb-4">
-          <div className="flex items-center gap-4 shrink-0">
-            <Link
-              href={sprintId ? '/briefing-assistant' : '/sheets'}
-              className="flex items-center justify-center w-9 h-9 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors shrink-0"
-              aria-label={sprintId ? 'Back to Briefing Assistant' : 'Back to sheets'}
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
-            <div className="flex flex-col gap-0.5">
-              <span className="text-xl font-bold tracking-tight text-foreground truncate max-w-[320px]" title={sprintData?.name ?? 'Sprint'}>
-                {sprintData?.name ?? 'Sprint'}
-              </span>
-              {sprintData?.batches?.length ? (
-                <div className="flex items-center gap-2">
-                  {sprintData.batches.map((b) => (
-                    <span key={b.batch_key} className="inline-flex items-center gap-1 text-xs text-muted-foreground/60">
-                      {b.batch_label}
-                      {b.monday_board_id ? (
-                        <a href={`https://loopearplugs.monday.com/boards/${b.monday_board_id}`} target="_blank" rel="noopener noreferrer" className="hover:text-foreground"><LayoutGrid className="h-2.5 w-2.5" /></a>
-                      ) : null}
-                      {b.figma_file_key ? (
-                        <a href={`https://www.figma.com/design/${b.figma_file_key}`} target="_blank" rel="noopener noreferrer" className="hover:text-foreground"><ExternalLink className="h-2.5 w-2.5" /></a>
-                      ) : null}
-                    </span>
+        {/* Import modal */}
+        {importDrawerOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+            <div className="bg-card border border-border rounded-xl shadow-lg w-full max-w-2xl max-h-[85vh] flex flex-col">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+                <h2 className="text-lg font-semibold text-foreground">Import from Monday</h2>
+                <button type="button" onClick={() => { setImportDrawerOpen(false); setSelectedMondayIds(new Set()); }} className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50" aria-label="Close">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="px-4 py-2 border-b border-border flex items-center gap-2">
+                <label className="text-sm text-muted-foreground">Board (batch):</label>
+                <select
+                  value={importBatchKey ?? ''}
+                  onChange={(e) => {
+                    const key = e.target.value || null
+                    setImportBatchKey(key)
+                    const batch = sprintData?.batches?.find((b) => b.batch_key === key)
+                    if (batch?.monday_board_id) fetchBoardItems(batch.monday_board_id)
+                  }}
+                  className="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                >
+                  {batchesWithBoard.map((b) => (
+                    <option key={b.batch_key} value={b.batch_key}>{b.batch_label}</option>
                   ))}
-                </div>
-              ) : null}
+                </select>
+              </div>
+              <div className="flex-1 min-h-0 overflow-auto p-4">
+                {boardItemsLoading ? (
+                  <div className="flex items-center justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+                ) : boardItems.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-8">No items on this board, or board not accessible.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {boardItems.map((item) => {
+                      const alreadyImported = existingMondayIds.has(item.id)
+                      const checked = selectedMondayIds.has(item.id)
+                      return (
+                        <li key={item.id} className={cn('flex items-center gap-2 py-2 px-2 rounded-md', alreadyImported && 'opacity-60')}>
+                          <input
+                            type="checkbox"
+                            id={`import-${item.id}`}
+                            checked={alreadyImported || checked}
+                            disabled={alreadyImported}
+                            onChange={() => {
+                              if (alreadyImported) return
+                              setSelectedMondayIds((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(item.id)) next.delete(item.id)
+                                else next.add(item.id)
+                                return next
+                              })
+                            }}
+                            className="rounded border-border"
+                          />
+                          <label htmlFor={`import-${item.id}`} className="flex-1 text-sm cursor-pointer truncate">
+                            {item.name}
+                            {item.group ? <span className="text-muted-foreground ml-1">({item.group})</span> : null}
+                            {alreadyImported ? <span className="text-muted-foreground ml-1">— already imported</span> : null}
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 px-4 py-3 border-t border-border">
+                <Button variant="outline" onClick={() => { setImportDrawerOpen(false); setSelectedMondayIds(new Set()); }}>Cancel</Button>
+                <Button onClick={handleImportConfirm} disabled={selectedMondayIds.size === 0 || importSaving}>
+                  {importSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  <span className="ml-2">Import {selectedMondayIds.size > 0 ? selectedMondayIds.size : ''} selected</span>
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
 
-        {/* Row 2 & 3 + content: Tabs */}
-        <Tabs defaultValue="briefings" className="flex flex-col flex-1 min-h-0">
-          <TabsList
-            className={cn(
-              'w-full rounded-none bg-transparent p-0 gap-0 border-b border-border px-6',
-              'flex items-center justify-start'
-            )}
-          >
-            <TabsTrigger
-              value="split"
+        {/* Header — spacious with branding + stats + export */}
+        <header className="flex-shrink-0 border-b border-border bg-card/80 backdrop-blur-sm">
+          <div className="px-6 py-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-4 min-w-0">
+                <Link
+                  href={sprintId ? '/briefing-assistant' : '/sheets'}
+                  className="flex items-center justify-center w-8 h-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors flex-shrink-0"
+                  aria-label={sprintId ? 'Back to Briefing Assistant' : 'Back to sheets'}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </Link>
+
+                <div className="flex items-center gap-2.5 flex-shrink-0">
+                  <span className="text-lg font-semibold tracking-tight text-foreground">Heimdall</span>
+                  <span className="text-xs text-muted-foreground/40 font-medium">Briefing</span>
+                </div>
+
+                <div className="h-5 w-px bg-border/60 flex-shrink-0" />
+
+                <div className="min-w-0">
+                  <h1 className="text-sm font-medium text-foreground truncate" title={sprintData?.name ?? 'Sprint'}>
+                    {sprintData?.name ?? 'Sprint'}
+                  </h1>
+                  {sprintData?.batches?.length ? (
+                    <div className="flex items-center gap-2">
+                      {sprintData.batches.map((b) => (
+                        <span key={b.batch_key} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/60">
+                          {b.batch_label}
+                          {b.monday_board_id ? (
+                            <a href={`https://loopearplugs.monday.com/boards/${b.monday_board_id}`} target="_blank" rel="noopener noreferrer" className="hover:text-foreground"><LayoutGrid className="h-2.5 w-2.5" /></a>
+                          ) : null}
+                          {b.figma_file_key ? (
+                            <a href={`https://www.figma.com/design/${b.figma_file_key}`} target="_blank" rel="noopener noreferrer" className="hover:text-foreground"><ExternalLink className="h-2.5 w-2.5" /></a>
+                          ) : null}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 flex-shrink-0">
+                <div className="flex items-center gap-3 text-[11px] text-muted-foreground/60">
+                  <span className="flex items-center gap-1">
+                    <LayoutGrid className="h-3 w-3" />
+                    {assignments.length} assignment{assignments.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => downloadAssignmentsCsv(assignmentsWithLinks)}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium',
+                        'border border-border text-muted-foreground',
+                        'hover:bg-muted/50 hover:text-foreground transition-colors'
+                      )}
+                    >
+                      <FileDown className="h-3.5 w-3.5" />
+                      CSV
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Export assignments as CSV</TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Toolbar row 1: Mode tabs + Status filter tabs */}
+        <div className="flex-shrink-0 flex items-center gap-4 px-6 py-3 border-b border-border">
+          <div className="flex items-center gap-1 rounded-md border border-border/40 p-0.5">
+            <button
+              type="button"
+              onClick={() => setActiveTab('split')}
               className={cn(
-                'rounded-none border-b-2 border-transparent bg-transparent px-6 py-3.5 text-sm font-medium text-muted-foreground -mb-px',
-                'data-[state=active]:border-primary data-[state=active]:text-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none',
-                'mr-1'
+                'px-3 py-1.5 text-sm font-medium rounded transition-colors',
+                activeTab === 'split'
+                  ? 'text-foreground bg-muted/60'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
               )}
             >
               Split
-            </TabsTrigger>
-            <TabsTrigger
-              value="briefings"
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('briefings')}
               className={cn(
-                'rounded-none border-b-2 border-transparent bg-transparent px-6 py-3.5 text-sm font-medium text-muted-foreground -mb-px',
-                'data-[state=active]:border-primary data-[state=active]:text-foreground data-[state=active]:bg-transparent data-[state=active]:shadow-none'
+                'px-3 py-1.5 text-sm font-medium rounded transition-colors',
+                activeTab === 'briefings'
+                  ? 'text-foreground bg-muted/60'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
               )}
             >
               Briefings
-            </TabsTrigger>
-          </TabsList>
+            </button>
+          </div>
 
-          <TabsContent value="split" className="flex-1 mt-0 px-4 py-8">
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <p className="text-sm text-muted-foreground">Split view placeholder. Coming soon.</p>
-            </div>
-          </TabsContent>
+          <Separator orientation="vertical" className="h-5" />
 
-          <TabsContent value="briefings" className="flex-1 flex flex-col min-h-0 mt-0">
-      {/* Import modal (lives outside toolbar flow) */}
-      {importDrawerOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-card border border-border rounded-xl shadow-lg w-full max-w-2xl max-h-[85vh] flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <h2 className="text-lg font-semibold text-foreground">Import from Monday</h2>
-              <button type="button" onClick={() => { setImportDrawerOpen(false); setSelectedMondayIds(new Set()); }} className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50" aria-label="Close">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="px-4 py-2 border-b border-border flex items-center gap-2">
-              <label className="text-sm text-muted-foreground">Board (batch):</label>
-              <select
-                value={importBatchKey ?? ''}
-                onChange={(e) => {
-                  const key = e.target.value || null
-                  setImportBatchKey(key)
-                  const batch = sprintData?.batches?.find((b) => b.batch_key === key)
-                  if (batch?.monday_board_id) fetchBoardItems(batch.monday_board_id)
-                }}
-                className="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+          <div className="flex items-center gap-1">
+            {STATUS_TAB_LABELS.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setStatusFilter(tab.key)}
+                className={cn(
+                  'px-2.5 py-1 text-xs font-medium rounded-md transition-colors',
+                  statusFilter === tab.key
+                    ? 'bg-primary/15 text-primary'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
+                )}
               >
-                {batchesWithBoard.map((b) => (
-                  <option key={b.batch_key} value={b.batch_key}>{b.batch_label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex-1 min-h-0 overflow-auto p-4">
-              {boardItemsLoading ? (
-                <div className="flex items-center justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
-              ) : boardItems.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-8">No items on this board, or board not accessible.</p>
-              ) : (
-                <ul className="space-y-1">
-                  {boardItems.map((item) => {
-                    const alreadyImported = existingMondayIds.has(item.id)
-                    const checked = selectedMondayIds.has(item.id)
-                    return (
-                      <li key={item.id} className={cn('flex items-center gap-2 py-2 px-2 rounded-md', alreadyImported && 'opacity-60')}>
-                        <input
-                          type="checkbox"
-                          id={`import-${item.id}`}
-                          checked={alreadyImported || checked}
-                          disabled={alreadyImported}
-                          onChange={() => {
-                            if (alreadyImported) return
-                            setSelectedMondayIds((prev) => {
-                              const next = new Set(prev)
-                              if (next.has(item.id)) next.delete(item.id)
-                              else next.add(item.id)
-                              return next
-                            })
-                          }}
-                          className="rounded border-border"
-                        />
-                        <label htmlFor={`import-${item.id}`} className="flex-1 text-sm cursor-pointer truncate">
-                          {item.name}
-                          {item.group ? <span className="text-muted-foreground ml-1">({item.group})</span> : null}
-                          {alreadyImported ? <span className="text-muted-foreground ml-1">— already imported</span> : null}
-                        </label>
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-            </div>
-            <div className="flex justify-end gap-2 px-4 py-3 border-t border-border">
-              <Button variant="outline" onClick={() => { setImportDrawerOpen(false); setSelectedMondayIds(new Set()); }}>Cancel</Button>
-              <Button onClick={handleImportConfirm} disabled={selectedMondayIds.size === 0 || importSaving}>
-                {importSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                <span className="ml-2">Import {selectedMondayIds.size > 0 ? selectedMondayIds.size : ''} selected</span>
-              </Button>
-            </div>
+                {tab.label}
+                {statusCounts[tab.key] > 0 ? (
+                  <span className={cn(
+                    'ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-semibold',
+                    statusFilter === tab.key
+                      ? 'bg-primary/20 text-primary'
+                      : 'bg-muted/60 text-muted-foreground'
+                  )}>
+                    {statusCounts[tab.key]}
+                  </span>
+                ) : null}
+              </button>
+            ))}
           </div>
         </div>
-      ) : null}
 
-            {/* Error / split result toast */}
-            {error || splitResult ? (
-              <div className="flex-shrink-0 px-6 py-2">
-                {error ? <p className="text-[11px] text-destructive">{error}</p> : null}
-                {splitResult ? <p className="text-[11px] text-muted-foreground/70">{splitResult.allocation.briefCount} briefs · {splitResult.allocation.totalAssets} assets</p> : null}
-              </div>
-            ) : null}
-
-            {/* Toolbar – full-width, continuous with tabs above */}
-            <div className="flex-shrink-0 flex items-center gap-5 px-6 py-4 border-b border-border">
-                  <BriefingGeneratorPanel
-                    collapsed
-                    open={generateDropdownOpen}
-                    onOpenChange={setGenerateDropdownOpen}
-                    onGenerate={async (product, datasources) => {
-                      setLastUsedDatasources(datasources)
-                      setError(null)
-                      try {
-                        const res = await fetch('/api/briefing-assistant/angles', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            assignmentId: selectedAssignmentId ?? 'generate',
-                            productOrUseCase: product,
-                            sourceIds: datasources,
-                          }),
-                        })
-                        const data = await res.json()
-                        if (!res.ok) {
-                          setError(data.error ?? 'Angle generation failed')
-                          return
-                        }
-                        const count = data.angles?.length ?? 0
-                        setError(null)
-                        window.alert(`Generated ${count} angle${count !== 1 ? 's' : ''} for ${product}.\n\n${data.angles?.map((a: { title: string; hook: string }) => `${a.title}: ${a.hook}`).join('\n') ?? '(none)'}`)
-                      } catch {
-                        setError('Angle generation request failed')
-                      }
-                    }}
-                  />
-
-                  <Separator orientation="vertical" className="h-6 self-stretch" />
-
-                  {/* Split dropdown */}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setSplitDropdownOpen((o) => !o)}
-                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium transition-colors bg-primary/10 text-primary border border-primary/20 hover:bg-primary/15 min-h-[40px]"
-                    >
-                      <Play className="h-4 w-4" />
-                      Split
-                      <ChevronDown className={cn('h-4 w-4 transition-transform', splitDropdownOpen && 'rotate-180')} />
-                    </button>
-                    {splitDropdownOpen ? (
-                      <div className="absolute top-full left-0 mt-2 z-50 rounded-lg border border-border bg-card shadow-lg p-4 min-w-[280px] animate-in zoom-in-95 fade-in-0 duration-150">
-                        <div className="flex flex-wrap items-end gap-4">
-                          <div className="flex flex-col gap-1">
-                            <label className="text-muted-foreground text-xs">Batch</label>
-                            <input type="text" value={batchKey} onChange={(e) => setBatchKey(e.target.value)} placeholder="2026-01" className="w-24 rounded-md border border-border bg-background px-2 py-1.5 text-sm" />
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <label className="text-muted-foreground text-xs">Assets</label>
-                            <input type="number" min={1} value={totalAssets} onChange={(e) => setTotalAssets(Number(e.target.value) || 210)} className="w-20 rounded-md border border-border bg-background px-2 py-1.5 text-sm" />
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <label className="text-muted-foreground text-xs">Max briefs</label>
-                            <input type="number" min={1} value={maxBriefs} onChange={(e) => setMaxBriefs(Number(e.target.value) || 53)} className="w-16 rounded-md border border-border bg-background px-2 py-1.5 text-sm" />
-                          </div>
-                          <Button onClick={() => { runSplit(); setSplitDropdownOpen(false); }} disabled={loading} size="sm">
-                            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                            <span className="ml-2">Run</span>
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {sprintId && batchesWithBoard.length > 0 ? (
-                    <>
-                      <Separator orientation="vertical" className="h-6 self-stretch" />
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={() => { setImportDrawerOpen(true); setImportBatchKey(batchesWithBoard[0]?.batch_key ?? null); if (batchesWithBoard[0]?.monday_board_id) fetchBoardItems(batchesWithBoard[0].monday_board_id); }}
-                            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors min-h-[40px]"
-                          >
-                            <Download className="h-4 w-4" />
-                            Import
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>Import from Monday</TooltipContent>
-                      </Tooltip>
-                    </>
-                  ) : null}
-                  {sprintId && (sprintData?.batches?.length ?? 0) > 0 ? (
-                    <Button variant="default" size="default" className="min-h-[40px] px-5" onClick={handleNewBrief}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      New brief
-                    </Button>
-                  ) : null}
-            </div>
-
-            {/* Content: table | chevron strip | working doc panel (right) */}
-            <div className="flex flex-1 min-h-0 gap-0">
-              {/* Table – flex-1, takes remaining space */}
-              <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <BriefingAssignmentsTable
-            assignments={assignmentsWithLinks}
-            selectedId={selectedAssignmentId}
-            onSelect={setSelectedAssignmentId}
-            loading={loading}
-            batchBoardMap={batchBoardMap}
-            availableBoards={availableBoards}
-            onBoardChange={sprintId ? async (assignmentId, boardId) => {
+        {/* Toolbar row 2: Generate controls + Actions */}
+        <div className="flex-shrink-0 flex items-center gap-3 px-6 py-3 border-b border-border/60 bg-card/40">
+          <BriefingGeneratorPanel
+            onGenerate={async (product, datasources) => {
+              setLastUsedDatasources(datasources)
+              setError(null)
               try {
-                await fetch(`/api/briefing-assistant/sprints/${sprintId}/assignments/${assignmentId}`, {
-                  method: 'PATCH',
+                const res = await fetch('/api/briefing-assistant/angles', {
+                  method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ target_board_id: boardId || null }),
+                  body: JSON.stringify({
+                    assignmentId: selectedAssignmentId ?? 'generate',
+                    productOrUseCase: product,
+                    sourceIds: datasources,
+                  }),
                 })
-                onSprintUpdated?.()
+                const data = await res.json()
+                if (!res.ok) {
+                  setError(data.error ?? 'Angle generation failed')
+                  return
+                }
+                const count = data.angles?.length ?? 0
+                setError(null)
+                window.alert(`Generated ${count} angle${count !== 1 ? 's' : ''} for ${product}.\n\n${data.angles?.map((a: { title: string; hook: string }) => `${a.title}: ${a.hook}`).join('\n') ?? '(none)'}`)
               } catch {
-                setError('Failed to update board')
+                setError('Angle generation request failed')
               }
-            } : undefined}
-            onPatch={sprintId ? async (assignmentId, patch) => {
-              try {
-                const body: Record<string, unknown> = {}
-                if (patch.briefName !== undefined) body.brief_name = patch.briefName
-                if (patch.productOrUseCase !== undefined) body.product_or_use_case = patch.productOrUseCase
-                if (patch.format !== undefined) body.format = patch.format
-                if (patch.funnel !== undefined) body.funnel = patch.funnel
-                if (patch.agencyRef !== undefined) body.agency_ref = patch.agencyRef
-                if (patch.assetCount !== undefined) body.asset_count = patch.assetCount
-                if (patch.mondayItemId !== undefined) body.monday_item_id = patch.mondayItemId
-                if (patch.targetBoardId !== undefined) body.target_board_id = patch.targetBoardId
-                if (Object.keys(body).length === 0) return
-                const res = await fetch(`/api/briefing-assistant/sprints/${sprintId}/assignments/${assignmentId}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(body),
-                })
-                if (res.ok) onSprintUpdated?.()
-                else setError('Failed to save')
-              } catch {
-                setError('Failed to save')
-              }
-            } : undefined}
-            onAddRow={undefined}
-            feedbackStatusMap={feedbackStatusMap}
-            onGenerateBriefing={sprintId ? handleGenerateBriefing : undefined}
-            generatingIds={generatingIds}
+            }}
           />
-                <footer className="flex-shrink-0 border-t border-border/50 px-6 py-4">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground/60">
-                    <span className="flex items-center gap-1.5">
-                      <LayoutGrid className="h-3 w-3" />
-                      {assignments.length} assignment{assignments.length !== 1 ? 's' : ''}
-                    </span>
-                    <span>Powered by Heimdall</span>
-                  </div>
-                </footer>
-              </div>
 
-              {/* Chevron toggle strip – right edge of table area */}
+          <Separator orientation="vertical" className="h-5" />
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors text-muted-foreground hover:text-foreground hover:bg-muted/30"
+              >
+                <Play className="h-3.5 w-3.5" />
+                Split
+                <ChevronDown className="h-3.5 w-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-80 p-4">
+              <DropdownMenuLabel className="px-0 pb-3 text-xs text-muted-foreground">Split configuration</DropdownMenuLabel>
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-muted-foreground text-xs">Batch</label>
+                  <input type="text" value={batchKey} onChange={(e) => setBatchKey(e.target.value)} placeholder="2026-01" className="w-24 rounded-md border border-border bg-background px-2 py-1.5 text-sm" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-muted-foreground text-xs">Assets</label>
+                  <input type="number" min={1} value={totalAssets} onChange={(e) => setTotalAssets(Number(e.target.value) || 210)} className="w-20 rounded-md border border-border bg-background px-2 py-1.5 text-sm" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-muted-foreground text-xs">Max briefs</label>
+                  <input type="number" min={1} value={maxBriefs} onChange={(e) => setMaxBriefs(Number(e.target.value) || 53)} className="w-16 rounded-md border border-border bg-background px-2 py-1.5 text-sm" />
+                </div>
+                <Button onClick={() => runSplit()} disabled={loading} size="sm">
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                  <span className="ml-2">Run</span>
+                </Button>
+              </div>
+              {assignmentsWithLinks.length > 0 ? (
+                <>
+                  <DropdownMenuSeparator className="my-3" />
+                  <DropdownMenuItem onClick={() => downloadAssignmentsCsv(assignmentsWithLinks)}>
+                    <FileDown className="h-3.5 w-3.5 mr-2" />
+                    Export CSV
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {sprintId && batchesWithBoard.length > 0 ? (
+            <>
+              <Separator orientation="vertical" className="h-5" />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    onClick={() => setWorkingDocOpen((v) => !v)}
-                    className={cn(
-                      'flex-shrink-0 flex items-center justify-center w-5 hover:bg-muted/40 transition-colors',
-                      'text-muted-foreground/40 hover:text-muted-foreground/70',
-                      'border-r border-border/30'
-                    )}
-                    aria-label={workingDocOpen ? 'Hide working doc panel' : 'Show working doc panel'}
+                    onClick={() => { setImportDrawerOpen(true); setImportBatchKey(batchesWithBoard[0]?.batch_key ?? null); if (batchesWithBoard[0]?.monday_board_id) fetchBoardItems(batchesWithBoard[0].monday_board_id); }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
                   >
-                    {workingDocOpen ? (
-                      <ChevronLeft className="h-4 w-4" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4" />
-                    )}
+                    <Download className="h-3.5 w-3.5" />
+                    Import
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="left">
-                  {workingDocOpen ? 'Hide working doc' : 'Show working doc'}
-                </TooltipContent>
+                <TooltipContent>Import from Monday</TooltipContent>
               </Tooltip>
+            </>
+          ) : null}
+          {sprintId && (sprintData?.batches?.length ?? 0) > 0 ? (
+            <Button variant="default" size="sm" onClick={handleNewBrief}>
+              <Plus className="h-3.5 w-3.5 mr-1.5" />
+              New brief
+            </Button>
+          ) : null}
+        </div>
 
-              {/* Right panel: collapsible working doc */}
-              <aside
-                className={cn(
-                  'flex-shrink-0 border-l border-border/40 bg-primary/[0.03] flex flex-col transition-[width] duration-300 ease-in-out overflow-hidden',
-                  workingDocOpen ? 'w-[480px]' : 'w-0 overflow-hidden border-l-0'
-                )}
-              >
-                {workingDocOpen && (
-                  <div className="flex-1 flex flex-col min-h-0 w-[480px] border-l border-border bg-card m-0 overflow-hidden">
-                    <BriefingWorkingDocPanel
-                      assignmentId={selected?.id ?? null}
-                      briefName={selected?.briefName}
-                      sections={selected?.workingDocSections}
-                      readOnly={!sprintId}
-                      onClose={() => setWorkingDocOpen(false)}
-                      onSaveSections={sprintId ? async (assignmentId, nextSections) => {
-                        try {
-                          const res = await fetch(`/api/briefing-assistant/sprints/${sprintId}/assignments/${assignmentId}`, {
-                            method: 'PATCH',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ working_doc_sections: nextSections }),
-                          })
-                          if (res.ok) onSprintUpdated?.()
-                          else setError('Failed to save working doc')
-                        } catch {
-                          setError('Failed to save working doc')
-                        }
-                      } : undefined}
-                    />
-                  </div>
-                )}
-              </aside>
+        {/* Error / split result */}
+        {error || splitResult ? (
+          <div className="flex-shrink-0 px-6 py-2">
+            {error ? <p className="text-[11px] text-destructive">{error}</p> : null}
+            {splitResult ? <p className="text-[11px] text-muted-foreground/70">{splitResult.allocation.briefCount} briefs · {splitResult.allocation.totalAssets} assets</p> : null}
+          </div>
+        ) : null}
+
+        {/* Content based on active tab */}
+        {activeTab === 'split' ? (
+          <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
+            <p className="text-sm text-muted-foreground">Split view placeholder. Coming soon.</p>
+          </div>
+        ) : (
+          <div className="flex flex-1 min-h-0 gap-0">
+            <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+              <BriefingAssignmentsTable
+                assignments={filteredAssignments}
+                selectedId={selectedAssignmentId}
+                onSelect={setSelectedAssignmentId}
+                loading={loading}
+                batchBoardMap={batchBoardMap}
+                availableBoards={availableBoards}
+                onBoardChange={sprintId ? async (assignmentId, boardId) => {
+                  try {
+                    await fetch(`/api/briefing-assistant/sprints/${sprintId}/assignments/${assignmentId}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ target_board_id: boardId || null }),
+                    })
+                    onSprintUpdated?.()
+                  } catch {
+                    setError('Failed to update board')
+                  }
+                } : undefined}
+                onPatch={sprintId ? async (assignmentId, patch) => {
+                  try {
+                    const body: Record<string, unknown> = {}
+                    if (patch.briefName !== undefined) body.brief_name = patch.briefName
+                    if (patch.productOrUseCase !== undefined) body.product_or_use_case = patch.productOrUseCase
+                    if (patch.format !== undefined) body.format = patch.format
+                    if (patch.funnel !== undefined) body.funnel = patch.funnel
+                    if (patch.agencyRef !== undefined) body.agency_ref = patch.agencyRef
+                    if (patch.assetCount !== undefined) body.asset_count = patch.assetCount
+                    if (patch.mondayItemId !== undefined) body.monday_item_id = patch.mondayItemId
+                    if (patch.targetBoardId !== undefined) body.target_board_id = patch.targetBoardId
+                    if (Object.keys(body).length === 0) return
+                    const res = await fetch(`/api/briefing-assistant/sprints/${sprintId}/assignments/${assignmentId}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(body),
+                    })
+                    if (res.ok) onSprintUpdated?.()
+                    else setError('Failed to save')
+                  } catch {
+                    setError('Failed to save')
+                  }
+                } : undefined}
+                onAddRow={undefined}
+                feedbackStatusMap={feedbackStatusMap}
+                onGenerateBriefing={sprintId ? handleGenerateBriefing : undefined}
+                generatingIds={generatingIds}
+              />
+              <footer className="flex-shrink-0 border-t border-border/50 px-6 py-2 bg-card/20">
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground/60">
+                  <span className="flex items-center gap-1.5">
+                    <LayoutGrid className="h-3 w-3" />
+                    {filteredAssignments.length}{statusFilter !== 'all' ? ` of ${assignments.length}` : ''} assignment{filteredAssignments.length !== 1 ? 's' : ''}
+                  </span>
+                  <span>Powered by Heimdall</span>
+                </div>
+              </footer>
             </div>
-          </TabsContent>
-        </Tabs>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setWorkingDocOpen((v) => !v)}
+                  className={cn(
+                    'flex-shrink-0 flex items-center justify-center w-5 hover:bg-muted/40 transition-colors',
+                    'text-muted-foreground/40 hover:text-muted-foreground/70',
+                    'border-r border-border/30'
+                  )}
+                  aria-label={workingDocOpen ? 'Hide working doc panel' : 'Show working doc panel'}
+                >
+                  {workingDocOpen ? (
+                    <ChevronLeft className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="left">
+                {workingDocOpen ? 'Hide working doc' : 'Show working doc'}
+              </TooltipContent>
+            </Tooltip>
+
+            <aside
+              className={cn(
+                'flex-shrink-0 border-l border-border/40 bg-primary/[0.03] flex flex-col transition-[width] duration-300 ease-in-out overflow-hidden',
+                workingDocOpen ? 'w-[480px]' : 'w-0 overflow-hidden border-l-0'
+              )}
+            >
+              {workingDocOpen && (
+                <div className="flex-1 flex flex-col min-h-0 w-[480px] border-l border-border bg-card m-0 overflow-hidden">
+                  <BriefingWorkingDocPanel
+                    assignmentId={selected?.id ?? null}
+                    briefName={selected?.briefName}
+                    sections={selected?.workingDocSections}
+                    readOnly={!sprintId}
+                    onClose={() => setWorkingDocOpen(false)}
+                    onSaveSections={sprintId ? async (assignmentId, nextSections) => {
+                      try {
+                        const res = await fetch(`/api/briefing-assistant/sprints/${sprintId}/assignments/${assignmentId}`, {
+                          method: 'PATCH',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ working_doc_sections: nextSections }),
+                        })
+                        if (res.ok) onSprintUpdated?.()
+                        else setError('Failed to save working doc')
+                      } catch {
+                        setError('Failed to save working doc')
+                      }
+                    } : undefined}
+                  />
+                </div>
+              )}
+            </aside>
+          </div>
+        )}
       </div>
     </TooltipProvider>
   )

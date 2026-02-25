@@ -132,29 +132,9 @@ function GeneratorFormContent({
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex items-center gap-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">
-          Product
-        </span>
-        <ToggleGroup
-          type="single"
-          size="sm"
-          value={product || undefined}
-          onValueChange={(v) => setProduct(v ?? '')}
-          disabled={isLoading}
-          className="justify-start"
-        >
-          {PRODUCTS.map((p) => (
-            <ToggleGroupItem key={p.id} value={p.id} aria-label={`Select product: ${p.label}`}>
-              {p.label}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      </div>
-      <Separator orientation="vertical" className="h-5" />
-      <div className="flex items-center gap-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">
+    <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 rounded-md border border-border/40 px-2.5 py-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 shrink-0">
           Sources
         </span>
         <ToggleGroup
@@ -164,7 +144,7 @@ function GeneratorFormContent({
           value={selectedDatasources}
           onValueChange={setSelectedDatasources}
           disabled={isLoading}
-          className="justify-start"
+          className="justify-start gap-1.5"
         >
           {DATASOURCES.map((ds) => {
             const Icon = ds.icon
@@ -173,7 +153,7 @@ function GeneratorFormContent({
                 key={ds.id}
                 value={ds.id}
                 aria-label={`Toggle data source: ${ds.label}`}
-                className="gap-1"
+                className="gap-1.5 data-[state=on]:bg-primary/15 data-[state=on]:text-primary data-[state=on]:border-primary/30"
               >
                 <Icon className="h-3 w-3 shrink-0" />
                 {ds.label}
@@ -182,7 +162,30 @@ function GeneratorFormContent({
           })}
         </ToggleGroup>
       </div>
-      <Separator orientation="vertical" className="h-5" />
+      <div className="flex items-center gap-2 rounded-md border border-border/40 px-2.5 py-1">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 shrink-0">
+          Product
+        </span>
+        <ToggleGroup
+          type="single"
+          size="sm"
+          value={product || undefined}
+          onValueChange={(v) => setProduct(v ?? '')}
+          disabled={isLoading}
+          className="justify-start gap-1.5"
+        >
+          {PRODUCTS.map((p) => (
+            <ToggleGroupItem
+              key={p.id}
+              value={p.id}
+              aria-label={`Select product: ${p.label}`}
+              className="data-[state=on]:bg-primary/15 data-[state=on]:text-primary data-[state=on]:border-primary/30"
+            >
+              {p.label}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </div>
       <Button
         size="sm"
         onClick={handleGenerate}
