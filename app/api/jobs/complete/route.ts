@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getJobByIdempotencyKey, updateJobState } from '@/lib/kv'
 import { logger } from '@/lib/logger'
 import { updateSyncFigmaPage, appendImportEvent } from '@/src/services/briefingSyncStore'
+import { updateItemPipelineStatus } from '@/src/services/opsBoardStore'
 
 export async function POST(request: Request) {
   try {
@@ -39,6 +40,15 @@ export async function POST(request: Request) {
         source: 'plugin_sync',
         outcome: 'completed',
         reason: 'Plugin sync completed',
+      })
+    }
+
+    if (job.mondayItemId && job.mondayBoardId) {
+      await updateItemPipelineStatus(job.mondayItemId, job.mondayBoardId, 'synced', {
+        figma_file_key: job.figmaFileKey ?? undefined,
+        figma_page_id: figmaPageId || undefined,
+        figma_page_url: figmaFileUrl || undefined,
+        synced_at: new Date().toISOString(),
       })
     }
 

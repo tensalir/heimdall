@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getJobByIdempotencyKey, updateJobState } from '@/lib/kv'
 import { logger } from '@/lib/logger'
 import { appendImportEvent } from '@/src/services/briefingSyncStore'
+import { updateItemPipelineStatus } from '@/src/services/opsBoardStore'
 
 export async function POST(request: Request) {
   try {
@@ -32,6 +33,10 @@ export async function POST(request: Request) {
         outcome: 'failed',
         errorCode,
       })
+    }
+
+    if (job.mondayItemId && job.mondayBoardId) {
+      await updateItemPipelineStatus(job.mondayItemId, job.mondayBoardId, 'failed')
     }
 
     logger.warn('figma', 'Job marked failed', {

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { Network, Settings, Puzzle, MessageSquare, LayoutGrid, ScrollText, LogOut, TrendingUp } from 'lucide-react'
+import { Network, Settings, Puzzle, MessageSquare, LayoutGrid, ScrollText, LogOut, TrendingUp, Kanban } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-auth'
 
 interface NavItem {
@@ -25,6 +25,12 @@ const sections: NavSection[] = [
     items: [
       { name: 'Connections', href: '/admin', icon: Network },
       { name: 'Settings', href: '/admin/settings', icon: Settings },
+    ],
+  },
+  {
+    label: 'Operations',
+    items: [
+      { name: 'Briefing Pipeline', href: '/ops', icon: Kanban },
     ],
   },
   {

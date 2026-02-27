@@ -179,8 +179,8 @@ export async function middleware(request: NextRequest) {
     return handleAdminAuth(request)
   }
 
-  // 5. Forecast & Feedback: internal tools — Supabase session (same as admin)
-  if (pathname.startsWith('/forecast') || pathname.startsWith('/feedback')) {
+  // 5. Forecast, Feedback, Ops: internal tools — Supabase session (same as admin)
+  if (pathname.startsWith('/forecast') || pathname.startsWith('/feedback') || pathname.startsWith('/ops')) {
     return handleAdminAuth(request)
   }
 
@@ -214,6 +214,8 @@ export const config = {
     '/forecast/:path*',
     '/feedback',
     '/feedback/:path*',
+    '/ops',
+    '/ops/:path*',
     '/auth/:path*',
     '/api/:path*',
     '/jobs/:path*',

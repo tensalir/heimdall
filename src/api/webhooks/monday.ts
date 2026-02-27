@@ -17,6 +17,8 @@ import { computeNodeMapping } from '../../agents/mappingAgent.js'
 import { getDocContent, getDocIdFromColumnValue, getDocImages } from '../../integrations/monday/docReader.js'
 import { columnMap, getCol } from '../../integrations/monday/client.js'
 import { linkFrontifyAsset, isAssetsColumnEmpty } from '../../services/frontifyAssetLinker.js'
+import { getBoardByMondayId, updateItemPipelineStatus, getItemByMondayId } from '../../services/opsBoardStore.js'
+import { getSupabase } from '../../../lib/supabase.js'
 
 export interface MondayWebhookPayload {
   challenge?: string
@@ -296,6 +298,47 @@ export async function handleMondayWebhook(body: MondayWebhookPayload): Promise<{
     idempotencyKey,
     resourceId: itemId,
   })
+
+  // Update ops_board_items if this board is tracked
+  try {
+    const opsBoard = await getBoardByMondayId(boardId)
+    if (opsBoard) {
+      const pipelineStatus =
+        result.outcome === 'queued' || result.outcome === 'created' ? 'queued' as const
+        : result.outcome === 'skipped' ? 'synced' as const
+        : 'failed' as const
+
+      const existing = await getItemByMondayId(itemId, boardId)
+      if (existing) {
+        await updateItemPipelineStatus(itemId, boardId, pipelineStatus, {
+          figma_file_key: result.figmaFileKey ?? undefined,
+          queued_at: pipelineStatus === 'queued' ? new Date().toISOString() : undefined,
+        })
+      } else {
+        const db = getSupabase()
+        if (db) {
+          await db.from('ops_board_items').upsert({
+            board_id: opsBoard.id,
+            monday_item_id: itemId,
+            monday_board_id: boardId,
+            item_name: item.name,
+            experiment_name: briefing.experimentName,
+            batch_canonical: briefing.batchCanonical,
+            batch_raw: briefing.batchRaw,
+            section_name: briefing.sectionName ?? null,
+            monday_status: getCol(col, 'status'),
+            pipeline_status: pipelineStatus,
+            figma_file_key: result.figmaFileKey ?? null,
+            queued_at: pipelineStatus === 'queued' ? new Date().toISOString() : null,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'monday_item_id,monday_board_id' })
+        }
+      }
+    }
+  } catch (err) {
+    logger.error('webhook', 'Failed to update ops_board_items', err as Error, { itemId, boardId })
+  }
+
   return {
     received: true,
     inserted: result.outcome === 'queued' || result.outcome === 'created',
