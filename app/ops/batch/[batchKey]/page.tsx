@@ -1,13 +1,11 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { useParams } from 'next/navigation'
-import Link from 'next/link'
-import { Card, CardContent } from '@/components/ui/card'
+import { useParams, useRouter } from 'next/navigation'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
-  StatusPill,
   LanePill,
   SyncBadge,
   getKanbanLane,
@@ -22,26 +20,20 @@ import {
   LayoutGrid,
   List,
   ExternalLink,
-  Calendar,
   Users,
   ChevronDown,
   ChevronRight,
   Check,
 } from 'lucide-react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { BriefingDocModal } from '@/components/ops/BriefingDocModal'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 interface OpsBoard {
   id: string
   monday_board_id: string
   board_name: string
-  figma_project_id: string | null
-  figma_project_name: string | null
-  auto_queue: boolean
-  eligible_statuses: string[]
   default_creative_partners: string[]
-  last_board_sync_at: string | null
 }
 
 interface OpsBoardItem {
@@ -65,17 +57,27 @@ interface OpsBoardItem {
 }
 
 type ViewMode = 'kanban' | 'table'
-
 const WORKFLOW_LANES: KanbanLane[] = ['upcoming', 'ready_for_figma', 'imported', 'exported']
 
-export default function BoardDetailPage() {
-  const { boardId } = useParams<{ boardId: string }>()
+const MONTH_NAMES = [
+  '', 'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+function batchLabel(key: string): string {
+  const [y, m] = key.split('-')
+  const month = MONTH_NAMES[parseInt(m, 10)] ?? m
+  return `${month} ${y}`
+}
+
+export default function BatchKanbanPage() {
+  const { batchKey } = useParams<{ batchKey: string }>()
+  const router = useRouter()
   const [board, setBoard] = useState<OpsBoard | null>(null)
   const [items, setItems] = useState<OpsBoardItem[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('kanban')
-  const [filterBatch, setFilterBatch] = useState<string | 'all'>('all')
   const [filterPartners, setFilterPartners] = useState<Set<string>>(new Set())
   const [showOtherLane, setShowOtherLane] = useState(false)
   const [filtersInitialized, setFiltersInitialized] = useState(false)
@@ -84,7 +86,7 @@ export default function BoardDetailPage() {
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/ops/boards/${boardId}`)
+      const res = await fetch(`/api/ops/batch/${batchKey}`)
       if (res.ok) {
         const data = await res.json()
         setBoard(data.board ?? null)
@@ -93,7 +95,7 @@ export default function BoardDetailPage() {
     } finally {
       setLoading(false)
     }
-  }, [boardId])
+  }, [batchKey])
 
   useEffect(() => { fetchData() }, [fetchData])
   useEffect(() => {
@@ -104,26 +106,19 @@ export default function BoardDetailPage() {
   const RELEVANT_PARTNERS = ['Studio', 'Content Creation']
 
   useEffect(() => {
-    if (filtersInitialized || !board || items.length === 0) return
-
+    if (filtersInitialized || !board) return
     const defaults = board.default_creative_partners?.length
       ? board.default_creative_partners
       : RELEVANT_PARTNERS
     setFilterPartners(new Set(defaults))
-
-    const batchValues = [...new Set(items.map(i => i.batch_canonical).filter(Boolean))] as string[]
-    if (batchValues.length > 0) {
-      const sorted = batchValues.sort()
-      setFilterBatch(sorted[sorted.length - 1])
-    }
-
     setFiltersInitialized(true)
-  }, [board, items, filtersInitialized])
+  }, [board, filtersInitialized])
 
   const handleSync = async () => {
+    if (!board) return
     setSyncing(true)
     try {
-      await fetch(`/api/ops/boards/${boardId}/sync`, { method: 'POST' })
+      await fetch(`/api/ops/boards/${board.id}/sync`, { method: 'POST' })
       await fetchData()
     } finally {
       setSyncing(false)
@@ -131,97 +126,46 @@ export default function BoardDetailPage() {
   }
 
   const handleQueueEligible = async () => {
-    await fetch(`/api/ops/boards/${boardId}/queue-eligible`, { method: 'POST' })
+    if (!board) return
+    await fetch(`/api/ops/boards/${board.id}/queue-eligible`, { method: 'POST' })
     await fetchData()
   }
 
-  const batches = useMemo(
-    () => [...new Set(items.map(i => i.batch_canonical).filter(Boolean))].sort() as string[],
-    [items]
-  )
   const creativePartners = useMemo(
     () => [...new Set(items.map(i => i.creative_partner).filter(Boolean))].sort() as string[],
     [items]
   )
 
   const filteredItems = useMemo(() => items.filter(i => {
-    if (filterBatch !== 'all' && i.batch_canonical !== filterBatch) return false
     if (filterPartners.size > 0 && !filterPartners.has(i.creative_partner ?? '')) return false
     return true
-  }), [items, filterBatch, filterPartners])
+  }), [items, filterPartners])
 
-  const readyForFigmaCount = filteredItems.filter(
+  const readyCount = filteredItems.filter(
     i => getKanbanLane(i.monday_status, i.pipeline_status) === 'ready_for_figma'
   ).length
 
-  if (!board && !loading) {
-    return (
-      <div className="space-y-4">
-        <Link href="/ops" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="h-4 w-4" /> Back
-        </Link>
-        <p className="text-muted-foreground">Board not found.</p>
-      </div>
-    )
-  }
-
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <Link href="/ops" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-3">
-          <ArrowLeft className="h-4 w-4" /> All Boards
-        </Link>
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">{board?.board_name ?? 'Loading...'}</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              {board?.monday_board_id ? `Board ${board.monday_board_id}` : ''}
-              {board?.figma_project_name && ` · ${board.figma_project_name}`}
+    <div className="flex h-full flex-col">
+      {/* Top bar */}
+      <header className="flex items-center justify-between gap-4 border-b border-border px-4 py-3 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            onClick={() => router.push('/ops')}
+            className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground shrink-0"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold tracking-tight truncate">{batchLabel(batchKey)}</h1>
+            <p className="text-xs text-muted-foreground">
+              {filteredItems.length} briefings
+              {board && ` · ${board.board_name}`}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="icon" onClick={handleSync} disabled={syncing}>
-              <RefreshCw className={cn('h-4 w-4', syncing && 'animate-spin')} />
-            </Button>
-            {readyForFigmaCount > 0 && (
-              <Button size="sm" className="gap-1.5" onClick={handleQueueEligible}>
-                <Play className="h-3.5 w-3.5" />
-                Queue {readyForFigmaCount} Ready
-              </Button>
-            )}
-          </div>
         </div>
-      </div>
 
-      {/* Progress bar */}
-      {board && (
-        <PipelineProgress
-          total={filteredItems.length}
-          synced={filteredItems.filter(i => i.pipeline_status === 'synced').length}
-          queued={filteredItems.filter(i => i.pipeline_status === 'queued' || i.pipeline_status === 'syncing').length}
-          eligible={filteredItems.filter(i => getKanbanLane(i.monday_status, i.pipeline_status) === 'ready_for_figma').length}
-          failed={filteredItems.filter(i => i.pipeline_status === 'failed').length}
-        />
-      )}
-
-      {/* Filters + view toggle */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Batch filter */}
-          <div className="flex items-center gap-1">
-            <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-            <select
-              className="h-7 rounded-md border border-input bg-background px-2 text-xs"
-              value={filterBatch}
-              onChange={(e) => setFilterBatch(e.target.value)}
-            >
-              <option value="all">All batches ({items.length})</option>
-              {batches.map(b => (
-                <option key={b} value={b}>{b} ({items.filter(i => i.batch_canonical === b).length})</option>
-              ))}
-            </select>
-          </div>
+        <div className="flex items-center gap-2 shrink-0">
           {/* Creative partner filter */}
           {creativePartners.length > 0 && (() => {
             const primaryPartners = creativePartners.filter(cp => RELEVANT_PARTNERS.includes(cp))
@@ -299,44 +243,60 @@ export default function BoardDetailPage() {
               </div>
             )
           })()}
-          {filterBatch !== 'all' && (
+
+          {/* View toggle */}
+          <div className="flex rounded-md border border-input overflow-hidden">
             <button
-              className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2"
-              onClick={() => setFilterBatch('all')}
+              className={cn('flex items-center gap-1 px-2.5 py-1 text-xs transition-colors', viewMode === 'kanban' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent')}
+              onClick={() => setViewMode('kanban')}
             >
-              Clear batch
+              <LayoutGrid className="h-3 w-3" /> Board
             </button>
+            <button
+              className={cn('flex items-center gap-1 px-2.5 py-1 text-xs transition-colors border-l border-input', viewMode === 'table' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent')}
+              onClick={() => setViewMode('table')}
+            >
+              <List className="h-3 w-3" /> Table
+            </button>
+          </div>
+
+          <Button variant="outline" size="icon" className="h-7 w-7" onClick={handleSync} disabled={syncing}>
+            <RefreshCw className={cn('h-3.5 w-3.5', syncing && 'animate-spin')} />
+          </Button>
+          {readyCount > 0 && (
+            <Button size="sm" className="h-7 gap-1 text-xs" onClick={handleQueueEligible}>
+              <Play className="h-3 w-3" />
+              Queue {readyCount}
+            </Button>
           )}
         </div>
-        {/* View toggle */}
-        <div className="flex rounded-md border border-input overflow-hidden">
-          <button
-            className={cn('flex items-center gap-1 px-2.5 py-1 text-xs transition-colors', viewMode === 'kanban' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent')}
-            onClick={() => setViewMode('kanban')}
-          >
-            <LayoutGrid className="h-3 w-3" /> Board
-          </button>
-          <button
-            className={cn('flex items-center gap-1 px-2.5 py-1 text-xs transition-colors border-l border-input', viewMode === 'table' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent')}
-            onClick={() => setViewMode('table')}
-          >
-            <List className="h-3 w-3" /> Table
-          </button>
-        </div>
+      </header>
+
+      {/* Progress bar */}
+      <div className="px-4 py-2 border-b border-border shrink-0">
+        <PipelineProgress
+          total={filteredItems.length}
+          synced={filteredItems.filter(i => i.pipeline_status === 'synced').length}
+          queued={filteredItems.filter(i => i.pipeline_status === 'queued' || i.pipeline_status === 'syncing').length}
+          eligible={readyCount}
+          failed={filteredItems.filter(i => i.pipeline_status === 'failed').length}
+        />
       </div>
 
       {/* Content */}
-      {viewMode === 'kanban' ? (
-        <KanbanView
-          items={filteredItems}
-          showOther={showOtherLane}
-          onToggleOther={() => setShowOtherLane(!showOtherLane)}
-          onQueueReady={handleQueueEligible}
-          onItemClick={setSelectedItem}
-        />
-      ) : (
-        <TableView items={filteredItems} onItemClick={setSelectedItem} />
-      )}
+      <div className="flex-1 overflow-y-auto p-4">
+        {viewMode === 'kanban' ? (
+          <KanbanView
+            items={filteredItems}
+            showOther={showOtherLane}
+            onToggleOther={() => setShowOtherLane(!showOtherLane)}
+            onQueueReady={handleQueueEligible}
+            onItemClick={setSelectedItem}
+          />
+        ) : (
+          <TableView items={filteredItems} onItemClick={setSelectedItem} />
+        )}
+      </div>
 
       <BriefingDocModal
         open={selectedItem !== null}
@@ -377,12 +337,12 @@ function KanbanView({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 h-full">
         {WORKFLOW_LANES.map(lane => {
           const columnItems = laneItems[lane]
           return (
-            <div key={lane} className="space-y-2">
-              <div className="flex items-center justify-between px-1">
+            <div key={lane} className="flex flex-col space-y-2">
+              <div className="flex items-center justify-between px-1 shrink-0">
                 <LanePill lane={lane} count={columnItems.length} />
                 {lane === 'ready_for_figma' && columnItems.length > 0 && (
                   <Button variant="ghost" size="sm" className="h-6 gap-1 text-[10px] px-1.5" onClick={onQueueReady}>
@@ -390,9 +350,9 @@ function KanbanView({
                   </Button>
                 )}
               </div>
-              <div className="space-y-2 rounded-lg bg-muted/40 p-2 min-h-[120px]">
+              <div className="flex-1 space-y-2 rounded-lg bg-muted/40 p-2 min-h-[200px] overflow-y-auto">
                 {columnItems.length === 0 ? (
-                  <p className="py-6 text-center text-[11px] text-muted-foreground/50">Empty</p>
+                  <p className="py-8 text-center text-[11px] text-muted-foreground/50">Empty</p>
                 ) : (
                   columnItems.map(item => <KanbanCard key={item.id} item={item} onClick={() => onItemClick(item)} />)
                 )}
@@ -402,7 +362,6 @@ function KanbanView({
         })}
       </div>
 
-      {/* Other lane (collapsible) */}
       {laneItems.other.length > 0 && (
         <div className="space-y-2">
           <button
@@ -436,11 +395,6 @@ function KanbanCard({ item, onClick }: { item: OpsBoardItem; onClick?: () => voi
         <SyncBadge status={item.pipeline_status} />
       </div>
       <div className="flex items-center gap-1.5 flex-wrap">
-        {item.batch_canonical && (
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-            {item.batch_canonical}
-          </Badge>
-        )}
         {item.section_name && (
           <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
             {item.section_name}
@@ -489,7 +443,7 @@ function KanbanCard({ item, onClick }: { item: OpsBoardItem; onClick?: () => voi
 // ── Table ───────────────────────────────────────────────────────────────────
 
 function TableView({ items, onItemClick }: { items: OpsBoardItem[]; onItemClick: (item: OpsBoardItem) => void }) {
-  const [sortKey, setSortKey] = useState<'name' | 'batch' | 'status' | 'updated'>('updated')
+  const [sortKey, setSortKey] = useState<'name' | 'status' | 'updated'>('updated')
   const [sortAsc, setSortAsc] = useState(false)
 
   const sorted = [...items].sort((a, b) => {
@@ -497,8 +451,6 @@ function TableView({ items, onItemClick }: { items: OpsBoardItem[]; onItemClick:
     switch (sortKey) {
       case 'name':
         return dir * (a.item_name ?? '').localeCompare(b.item_name ?? '')
-      case 'batch':
-        return dir * (a.batch_canonical ?? '').localeCompare(b.batch_canonical ?? '')
       case 'status': {
         const laneA = getKanbanLane(a.monday_status, a.pipeline_status)
         const laneB = getKanbanLane(b.monday_status, b.pipeline_status)
@@ -532,8 +484,8 @@ function TableView({ items, onItemClick }: { items: OpsBoardItem[]; onItemClick:
           <thead className="border-b border-border">
             <tr>
               <SortHeader label="Name" field="name" />
-              <SortHeader label="Batch" field="batch" />
               <th className="text-left text-xs font-medium text-muted-foreground px-3 py-2">Section</th>
+              <th className="text-left text-xs font-medium text-muted-foreground px-3 py-2">Partner</th>
               <th className="text-left text-xs font-medium text-muted-foreground px-3 py-2">Monday Status</th>
               <SortHeader label="Workflow" field="status" />
               <th className="text-left text-xs font-medium text-muted-foreground px-3 py-2">Sync</th>
@@ -548,15 +500,12 @@ function TableView({ items, onItemClick }: { items: OpsBoardItem[]; onItemClick:
                   <p className="truncate font-medium" title={item.item_name}>
                     {item.experiment_name ?? item.item_name}
                   </p>
-                  {item.creative_partner && (
-                    <p className="text-[10px] text-muted-foreground">{item.creative_partner}</p>
-                  )}
-                </td>
-                <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                  {item.batch_canonical ?? '—'}
                 </td>
                 <td className="px-3 py-2.5 text-xs text-muted-foreground">
                   {item.section_name ?? '—'}
+                </td>
+                <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                  {item.creative_partner ?? '—'}
                 </td>
                 <td className="px-3 py-2.5 text-xs text-muted-foreground">
                   {item.monday_status ?? '—'}
@@ -599,7 +548,7 @@ function TableView({ items, onItemClick }: { items: OpsBoardItem[]; onItemClick:
           </tbody>
         </table>
         {sorted.length === 0 && (
-          <p className="py-8 text-center text-sm text-muted-foreground">No items match filters.</p>
+          <p className="py-8 text-center text-sm text-muted-foreground">No briefings for this batch.</p>
         )}
       </div>
     </Card>
