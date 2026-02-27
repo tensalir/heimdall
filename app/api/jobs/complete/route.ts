@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getJobByIdempotencyKey, updateJobState } from '@/lib/kv'
 import { logger } from '@/lib/logger'
-import { updateSyncFigmaPage, appendImportEvent } from '@/src/services/briefingSyncStore'
+import { upsertSync, appendImportEvent } from '@/src/services/briefingSyncStore'
 import { updateItemPipelineStatus } from '@/src/services/opsBoardStore'
 
 export async function POST(request: Request) {
@@ -22,12 +22,15 @@ export async function POST(request: Request) {
     
     await updateJobState(job.id, 'completed', { figmaPageId, figmaFileUrl })
     if (job.figmaFileKey && job.mondayItemId && figmaPageId) {
-      await updateSyncFigmaPage(
-        job.mondayItemId,
-        job.figmaFileKey,
+      await upsertSync({
+        mondayItemId: job.mondayItemId,
+        mondayBoardId: job.mondayBoardId,
+        mondayItemName: job.experimentPageName ?? job.mondayItemId,
+        batchCanonical: job.batchCanonical,
+        figmaFileKey: job.figmaFileKey,
         figmaPageId,
-        job.experimentPageName ?? null
-      )
+        figmaPageName: job.experimentPageName ?? null,
+      })
       await appendImportEvent({
         mondayItemId: job.mondayItemId,
         mondayBoardId: job.mondayBoardId,
@@ -39,7 +42,7 @@ export async function POST(request: Request) {
         idempotencyKey: job.idempotencyKey,
         source: 'plugin_sync',
         outcome: 'completed',
-        reason: 'Plugin sync completed',
+        reason: 'Job completed',
       })
     }
 

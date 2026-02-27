@@ -68,6 +68,17 @@ type ViewMode = 'kanban' | 'table'
 
 const WORKFLOW_LANES: KanbanLane[] = ['upcoming', 'ready_for_figma', 'imported', 'exported']
 
+const MONTH_NAMES = [
+  '', 'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+function batchLabel(key: string): string {
+  const [y, m] = key.split('-')
+  const month = MONTH_NAMES[parseInt(m, 10)] ?? m
+  return `${month} ${y}`
+}
+
 export default function BoardDetailPage() {
   const { boardId } = useParams<{ boardId: string }>()
   const [board, setBoard] = useState<OpsBoard | null>(null)
@@ -218,7 +229,7 @@ export default function BoardDetailPage() {
             >
               <option value="all">All batches ({items.length})</option>
               {batches.map(b => (
-                <option key={b} value={b}>{b} ({items.filter(i => i.batch_canonical === b).length})</option>
+                <option key={b} value={b}>{batchLabel(b)} ({items.filter(i => i.batch_canonical === b).length})</option>
               ))}
             </select>
           </div>

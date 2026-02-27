@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { LanePill, type KanbanLane } from './StatusPill'
@@ -45,16 +45,19 @@ export function BoardCard({
     { lane: 'exported', count: board.exported_count },
   ].filter(s => s.count > 0)
 
+  const router = useRouter()
+
   return (
-    <Card className="group relative transition-colors hover:border-primary/30">
+    <Card
+      className="group relative transition-colors hover:border-primary/30 cursor-pointer"
+      onClick={() => router.push(`/ops/board/${board.id}`)}
+    >
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <Link href={`/ops/board/${board.id}`} className="group/link">
-              <CardTitle className="text-base font-semibold leading-tight group-hover/link:text-primary transition-colors">
-                {board.board_name}
-              </CardTitle>
-            </Link>
+            <CardTitle className="text-base font-semibold leading-tight group-hover:text-primary transition-colors">
+              {board.board_name}
+            </CardTitle>
             <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
               <span>Board {board.monday_board_id}</span>
               {board.figma_project_name && (
@@ -93,7 +96,7 @@ export function BoardCard({
           </div>
         )}
 
-        <div className="flex items-center gap-2 pt-1 border-t border-border">
+        <div className="flex items-center gap-2 pt-1 border-t border-border" onClick={(e) => e.stopPropagation()}>
           <Button
             variant="ghost"
             size="sm"
