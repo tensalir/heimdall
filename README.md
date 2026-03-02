@@ -33,7 +33,7 @@ Pulls briefings from Monday.com via webhooks or manual queue, uses Claude to ext
 | Frontend | Next.js (App Router), shadcn/ui |
 | Backend | Next.js API Routes |
 | Storage | Vercel KV (Redis) for job queue, settings, webhook logs |
-| Auth | HTTP Basic Auth |
+| Auth | Supabase session (admin/ops), cookie-password (sheets/briefing-assistant) |
 | AI | Claude (field mapping agent) |
 | Integrations | Monday.com API, Figma Plugin API |
 | Plugin | Figma plugin for canvas sync |
@@ -58,20 +58,19 @@ packages/
 
 ## Getting started
 
-Prerequisites: Node.js 18+, Vercel account (for KV), Monday.com API token, Figma API token.
+Prerequisites: Node.js 20.9+, Vercel account (for KV), Monday.com and Figma API access.
 
 ```bash
 npm install
-cp .env.example .env.local
 ```
 
-Configure `.env.local` with your keys. See [.env.example](./.env.example) for the full list.
+Configure your local project settings with the required Monday, Figma, Supabase, and Vercel KV credentials. See the repo's internal setup documentation for the full list of required fields.
 
 ```bash
 npm run dev        # Next.js admin panel (port 3846)
 ```
 
-For the Figma plugin, see `packages/figma-plugin/README.md`.
+For the Figma plugin, see `packages/figma-plugin/` (manifest and source).
 
 Deployment: see [DEPLOYMENT.md](./DEPLOYMENT.md) for the Vercel guide.
 
