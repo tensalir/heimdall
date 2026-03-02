@@ -583,6 +583,16 @@ const LABEL_FONT_SIZE = 14 * S
 const SUB_LABEL_FONT_SIZE = 12 * S
 const CONTENT_FONT_SIZE = 12 * S
 
+/**
+ * Exact production asset frame dimensions in Figma pixels.
+ * These are NOT multiplied by S -- they are final pixel sizes used directly.
+ */
+const ASSET_SIZES: Record<string, { w: number; h: number }> = {
+  '9x16': { w: 1440, h: 2560 },
+  '4x5':  { w: 1440, h: 1800 },
+  '1x1':  { w: 1440, h: 1440 },
+}
+
 function solidPaint(r: number, g: number, b: number): SolidPaint {
   return { type: 'SOLID', color: { r, g, b } }
 }
@@ -818,18 +828,26 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
   const root = figma.root
   try {
 
-  // Remove existing template page if present
+  // Reuse existing template page if present; otherwise create a new one.
+  let templatePage: PageNode | null = null
   for (let i = root.children.length - 1; i >= 0; i--) {
     const page = root.children[i]
     if (page.type === 'PAGE' && TEMPLATE_PAGE_NAMES.some((n) => (page as PageNode).name.indexOf(n) >= 0)) {
-      page.remove()
+      templatePage = page as PageNode
+      if (typeof (templatePage as any).loadAsync === 'function') {
+        try { await (templatePage as any).loadAsync() } catch (_) {}
+      }
+      for (let c = templatePage.children.length - 1; c >= 0; c--) {
+        templatePage.children[c].remove()
+      }
       break
     }
   }
-
-  const templatePage = figma.createPage()
-  templatePage.name = 'Briefing Template to Duplicate'
-  root.appendChild(templatePage)
+  if (!templatePage) {
+    templatePage = figma.createPage()
+    templatePage.name = 'Briefing Template to Duplicate'
+    root.appendChild(templatePage)
+  }
 
   const section = figma.createFrame()
   section.name = 'Name Briefing'
@@ -881,7 +899,7 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
   }
 
   const colW = 400 * S
-  const designW = 900 * S
+  const designW = 1200 * S
   const uploadsW = 280 * S
 
   const { wrapper: briefingWrapper, body: briefingCol } = makeColumnWithHeader('Briefing', colW)
@@ -982,7 +1000,7 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
   const { wrapper: designWrapper, body: designCol } = makeColumnWithHeader('Design', designW)
   row.appendChild(designWrapper)
   let designBlock = makeBlockFrame()
-  const sizes = ['4x5', '9x16', '1x1']
+  const sizes = ['9x16', '4x5', '1x1']
   for (const letter of ['A', 'B', 'C', 'D']) {
     const varFrame = figma.createFrame()
     varFrame.name = `Variation ${letter}`
@@ -999,17 +1017,18 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
     assetRow.name = 'Assets'
     assetRow.layoutMode = 'HORIZONTAL'
     assetRow.primaryAxisSizingMode = 'AUTO'
-    assetRow.counterAxisSizingMode = 'FIXED'
+    assetRow.counterAxisSizingMode = 'AUTO'
     assetRow.itemSpacing = 12 * S
     assetRow.fills = []
-    assetRow.resize(designW, 200 * S)
+    assetRow.clipsContent = false
     appendAndStretch(varFrame, assetRow)
     for (const size of sizes) {
+      const dim = ASSET_SIZES[size] ?? { w: 1440, h: 1440 }
       const f = figma.createFrame()
       f.name = 'NAME-EXP-' + size
-      f.resize((size === '4x5' ? 144 : size === '9x16' ? 108 : 144) * S, (size === '4x5' ? 180 : size === '9x16' ? 192 : 144) * S)
+      f.resize(dim.w, dim.h)
       f.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }]
-      assetRow.appendChild(f) // asset frames: do NOT stretch (keep design ratio sizes)
+      assetRow.appendChild(f)
     }
   }
 
@@ -1022,7 +1041,9 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
   referencesBody.name = 'References'
   templatePage.appendChild(referencesWrapper)
   referencesWrapper.x = section.x - uploadsW - 24 * S
-  referencesWrapper.y = section.y + 24 * S
+  // Align with the Columns row top (after section padding) so References
+  // sits level with Briefing/Copy/Design, not offset by the section padding.
+  referencesWrapper.y = section.y + section.paddingTop
 
   // Apply bold styling to all template text nodes
   async function boldAllText(node: BaseNode): Promise<void> {
@@ -1238,6 +1259,161 @@ async function migrateStatusWidgets(): Promise<MigrateStatusWidgetsResult> {
 }
 
 // =====================================================
+// Fix Layouts: batch-repair existing imported pages
+// =====================================================
+
+interface FixLayoutsResult {
+  error?: string
+  pagesFixed: number
+  pagesSkipped: number
+}
+
+/** Detect whether a page uses the Heimdall template structure. */
+function isHeimdallTemplatePage(page: PageNode): boolean {
+  const nameBriefing = page.children.find(
+    (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Name Briefing'
+  ) as FrameNode | undefined
+  if (!nameBriefing) return false
+  const hasColumnsRow = nameBriefing.children.some(
+    (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Columns'
+  )
+  return hasColumnsRow
+}
+
+/**
+ * Fix layout issues on all non-template Heimdall pages: re-anchor References,
+ * lock header widths, ensure hug-content, stretch children, and correct asset ratios.
+ */
+async function fixLayouts(): Promise<FixLayoutsResult> {
+  const result: FixLayoutsResult = { pagesFixed: 0, pagesSkipped: 0 }
+  const root = figma.root
+  try {
+    await figma.loadFontAsync(TEMPLATE_FONT)
+    await figma.loadFontAsync(TEMPLATE_FONT_BOLD)
+  } catch (_) {}
+
+  for (let i = 0; i < root.children.length; i++) {
+    const node = root.children[i]
+    if (node.type !== 'PAGE') continue
+    const page = node as PageNode
+    if (TEMPLATE_PAGE_NAMES.some((n) => page.name.indexOf(n) >= 0 || page.name === n)) continue
+
+    if (typeof (page as any).loadAsync === 'function') {
+      try { await (page as any).loadAsync() } catch (_) {}
+    }
+
+    if (!isHeimdallTemplatePage(page)) {
+      result.pagesSkipped++
+      continue
+    }
+
+    const nameBriefing = page.children.find(
+      (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Name Briefing'
+    ) as FrameNode
+
+    // Run normalization phases on the main layout
+    const analysis: LayoutAnalysis = { framesConverted: 0, framesHugged: 0, childrenStretched: 0, skippedFrames: [] }
+    await phaseFixTextNodes(nameBriefing)
+    phaseEnableAutoLayout(nameBriefing, analysis)
+    phaseEnsureHugContent(nameBriefing, analysis)
+    analysis.childrenStretched = phaseStretchChildren(nameBriefing)
+    phaseDisableClipping(nameBriefing)
+
+    // Fix asset frame proportions inside Design column variations
+    fixAssetFrameRatios(nameBriefing)
+
+    const gap = 24 * S
+    const columnsRow = nameBriefing.children.find(
+      (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Columns'
+    ) as FrameNode | undefined
+
+    // Widen Design Column (and its children) so the larger asset frames fit
+    const targetDesignW = 1200 * S
+    if (columnsRow) {
+      for (let ci = 0; ci < columnsRow.children.length; ci++) {
+        const col = columnsRow.children[ci]
+        if (col.type === 'FRAME' && (col as FrameNode).name === 'Design Column') {
+          const dc = col as FrameNode
+          if (dc.width < targetDesignW) {
+            dc.resize(targetDesignW, dc.height)
+            for (let vi = 0; vi < dc.children.length; vi++) {
+              const child = dc.children[vi]
+              if (child.type === 'FRAME' && (child as FrameNode).counterAxisSizingMode === 'FIXED') {
+                const cf = child as FrameNode
+                if (cf.width < targetDesignW) cf.resize(targetDesignW, cf.height)
+              }
+            }
+          }
+          break
+        }
+      }
+    }
+
+    // Re-anchor references column
+    const anchorY = columnsRow ? nameBriefing.y + columnsRow.y : nameBriefing.y
+
+    const uploadsBody = findUploadsBody(page)
+    if (uploadsBody) {
+      const wrapper = uploadsBody.parent
+      if (wrapper && wrapper.type === 'FRAME' && wrapper !== page) {
+        const wf = wrapper as FrameNode
+        wf.x = nameBriefing.x - wf.width - gap
+        wf.y = anchorY
+        // Run normalization on references wrapper too
+        phaseEnsureHugContent(wf, analysis)
+        phaseStretchChildren(wf)
+        phaseDisableClipping(wf)
+      }
+    }
+
+    result.pagesFixed++
+  }
+  return result
+}
+
+/** Walk a subtree and correct any asset frames whose dimensions have drifted. */
+function fixAssetFrameRatios(node: BaseNode): void {
+  if (node.type === 'FRAME') {
+    const frame = node as FrameNode
+    const name = frame.name
+
+    // Fix Assets rows: hug height, disable clipping, enforce canonical order
+    if (name === 'Assets' && frame.layoutMode === 'HORIZONTAL') {
+      if (frame.counterAxisSizingMode !== 'AUTO') {
+        frame.counterAxisSizingMode = 'AUTO'
+      }
+      frame.clipsContent = false
+
+      // Reorder children to match canonical size order: 9x16, 4x5, 1x1
+      const CANONICAL_ORDER = ['9x16', '4x5', '1x1']
+      const kids = [...frame.children] as SceneNode[]
+      const sorted = kids.slice().sort((a, b) => {
+        const aKey = CANONICAL_ORDER.findIndex((k) => a.name.toLowerCase().endsWith(k))
+        const bKey = CANONICAL_ORDER.findIndex((k) => b.name.toLowerCase().endsWith(k))
+        return (aKey === -1 ? 99 : aKey) - (bKey === -1 ? 99 : bKey)
+      })
+      for (let si = 0; si < sorted.length; si++) {
+        frame.insertChild(si, sorted[si])
+      }
+    }
+
+    const nameLower = name.toLowerCase()
+    for (const [key, dim] of Object.entries(ASSET_SIZES)) {
+      if (nameLower.endsWith(key.toLowerCase())) {
+        if (Math.abs(frame.width - dim.w) > 1 || Math.abs(frame.height - dim.h) > 1) {
+          frame.resize(dim.w, dim.h)
+        }
+        return
+      }
+    }
+  }
+  const container = node as { children?: readonly BaseNode[] }
+  if (container.children) {
+    for (const child of container.children) fixAssetFrameRatios(child)
+  }
+}
+
+// =====================================================
 // Smart Layout Normalization System
 // =====================================================
 // After content is synced from Monday, this system:
@@ -1443,20 +1619,35 @@ function phaseEnableAutoLayout(node: BaseNode, analysis: LayoutAnalysis): void {
  *
  * This ensures the Columns row expands to show the full Briefing column.
  */
+/** Column headers use HORIZONTAL layout but must keep FIXED width to fill their column. */
+function isColumnHeaderFrame(frame: FrameNode): boolean {
+  return frame.layoutMode === 'HORIZONTAL' && /header$/i.test(frame.name)
+}
+
 function phaseEnsureHugContent(node: BaseNode, analysis: LayoutAnalysis): void {
   if (node.type === 'FRAME') {
     const frame = node as FrameNode
     if (frame.layoutMode !== 'NONE') {
-      // Primary axis: always hug content
-      if (frame.primaryAxisSizingMode !== 'AUTO') {
-        frame.primaryAxisSizingMode = 'AUTO'
-        analysis.framesHugged++
-      }
-      // Counter axis: for HORIZONTAL frames, also hug so height grows
-      // to match the tallest child (e.g., Columns row matches Briefing col)
-      if (frame.layoutMode === 'HORIZONTAL' && frame.counterAxisSizingMode !== 'AUTO') {
-        frame.counterAxisSizingMode = 'AUTO'
-        analysis.framesHugged++
+      // Column headers must stay FIXED width so they match their parent column.
+      // They hug height (counter axis) only.
+      if (isColumnHeaderFrame(frame)) {
+        if (frame.primaryAxisSizingMode !== 'FIXED') {
+          frame.primaryAxisSizingMode = 'FIXED'
+          analysis.framesHugged++
+        }
+        if (frame.counterAxisSizingMode !== 'AUTO') {
+          frame.counterAxisSizingMode = 'AUTO'
+          analysis.framesHugged++
+        }
+      } else {
+        if (frame.primaryAxisSizingMode !== 'AUTO') {
+          frame.primaryAxisSizingMode = 'AUTO'
+          analysis.framesHugged++
+        }
+        if (frame.layoutMode === 'HORIZONTAL' && frame.counterAxisSizingMode !== 'AUTO') {
+          frame.counterAxisSizingMode = 'AUTO'
+          analysis.framesHugged++
+        }
       }
     }
   }
@@ -1806,16 +1997,23 @@ async function importImagesToPage(
   const nameBriefing = (page as PageNode).children.find((c) => c.type === 'FRAME' && (c as FrameNode).name === 'Name Briefing') as FrameNode | undefined
   if (nameBriefing) {
     const gap = 24 * S
-    // For column-wrapped structure, reposition the wrapper (auto-layout parent).
-    // Moving a child inside auto-layout has no effect; the wrapper is the free node.
+    // Align References to the Columns row top (not Name Briefing top) so it
+    // stays level with Briefing/Copy/Design and doesn't drift upward on import.
+    const columnsRow = nameBriefing.children.find(
+      (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Columns'
+    ) as FrameNode | undefined
+    const anchorY = columnsRow
+      ? nameBriefing.y + columnsRow.y
+      : nameBriefing.y
+
     const wrapper = uploadsBody.parent
     if (wrapper && wrapper.type === 'FRAME' && wrapper !== page) {
       const wf = wrapper as FrameNode
       wf.x = nameBriefing.x - wf.width - gap
-      wf.y = nameBriefing.y
+      wf.y = anchorY
     } else {
       uploadsBody.x = nameBriefing.x - uploadsBody.width - gap
-      uploadsBody.y = nameBriefing.y
+      uploadsBody.y = anchorY
     }
   }
 
@@ -2057,6 +2255,13 @@ var uiHtml = '<html><head><style>'
   + 'button:hover{background:#0b85e0;}'
   + '.secondary{background:#fff;color:#333;border:1px solid #ddd;width:auto;padding:6px 10px;}'
   + '.secondary:hover{background:#f6f6f6;}'
+  + '.outlined{background:transparent;color:#0d99ff;border:1.5px solid #0d99ff;}'
+  + '.outlined:hover{background:rgba(13,153,255,0.06);}'
+  + '.btn-row{display:flex;gap:8px;margin-top:8px;}'
+  + '.btn-row button{flex:1;}'
+  + '.small-row{display:flex;gap:8px;margin-top:6px;}'
+  + '.small-row button{flex:1;padding:5px 8px;font-size:10px;background:#fff;color:#555;border:1px solid #ddd;}'
+  + '.small-row button:hover{background:#f4f4f4;color:#333;}'
   + '#msg{font-size:11px;color:#666;margin-top:8px;min-height:20px;}'
   + '.err{color:#f24822;}'
   + '.list{list-style:none;padding:0;margin:8px 0;max-height:220px;overflow-y:auto;}'
@@ -2076,10 +2281,9 @@ var uiHtml = '<html><head><style>'
   + '  <p id="batch-label" style="margin:4px 0;font-size:12px;font-weight:600;"></p>'
   + '  <ul id="briefings-list" class="list"></ul>'
   + '  <p id="msg" style="margin:8px 0;min-height:20px;font-size:11px;color:#666;"></p>'
-  + '  <button id="sync">Sync</button>'
+  + '  <div class="btn-row"><button id="sync">Sync</button><button id="create-template" class="outlined">Create Template</button></div>'
+  + '  <div class="small-row"><button id="migrate-widgets">Migrate Status Widgets</button><button id="fix-layouts">Fix Layouts</button></div>'
   + '</div>'
-  + '<button id="create-template" style="margin-top:8px;">Create Auto-Layout Template</button>'
-  + '<button id="migrate-widgets" class="secondary" style="margin-top:6px;display:block;">Migrate Status Widgets</button>'
   + '<script>'
   + 'parent.postMessage({ pluginMessage: { type: "ui-boot" } }, "*");'
   + 'window.onerror = function(message, source, lineno, colno) {'
@@ -2145,6 +2349,11 @@ var uiHtml = '<html><head><style>'
   + '  document.getElementById("msg").textContent = "Migrating status widgets...";'
   + '  document.getElementById("msg").className = "";'
   + '  parent.postMessage({ pluginMessage: { type: "migrate-widgets" } }, "*");'
+  + '};'
+  + 'document.getElementById("fix-layouts").onclick = function() {'
+  + '  document.getElementById("msg").textContent = "Fixing layouts...";'
+  + '  document.getElementById("msg").className = "";'
+  + '  parent.postMessage({ pluginMessage: { type: "fix-layouts" } }, "*");'
   + '};'
   + 'function showBriefings(data) {'
   + '  currentBriefings = data.items || [];'
@@ -2372,6 +2581,11 @@ var uiHtml = '<html><head><style>'
   + '    }'
   + '    el.textContent = prev ? (prev + " | " + line) : line;'
   + '  }'
+  + '  if (d.type === "fix-layouts-done") {'
+  + '    var el = document.getElementById("msg");'
+  + '    if (d.error) { el.textContent = "Error: " + d.error; el.className = "err"; }'
+  + '    else { el.textContent = "Fixed " + (d.pagesFixed || 0) + " page(s), skipped " + (d.pagesSkipped || 0) + "."; el.className = ""; }'
+  + '  }'
   + '  if (d.type === "debug-log") {'
   + '    var el = document.getElementById("msg");'
   + '    el.style.whiteSpace = "pre-wrap";'
@@ -2441,6 +2655,15 @@ export function runSyncBriefings() {
         pagesMigrated: result.pagesMigrated,
         pagesSkipped: result.pagesSkipped,
         pagesFailed: result.pagesFailed,
+      })
+    }
+    if (msg.type === 'fix-layouts') {
+      const result = await fixLayouts()
+      figma.ui.postMessage({
+        type: 'fix-layouts-done',
+        error: result.error,
+        pagesFixed: result.pagesFixed,
+        pagesSkipped: result.pagesSkipped,
       })
     }
     if (msg.type === 'process-jobs' && msg.jobs) {
