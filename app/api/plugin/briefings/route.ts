@@ -9,6 +9,14 @@ export const dynamic = 'force-dynamic'
 
 const BOARD_ID = process.env.MONDAY_BOARD_ID ?? '9147622374'
 
+function buildSyncFileRef(fileKey: string, fileName: string): string {
+  const key = fileKey.trim()
+  if (key) return key
+  const name = fileName.trim().toLowerCase()
+  if (!name) return ''
+  return `name:${name}`
+}
+
 function loadBatchFileMap(): Record<string, string> {
   const raw = getEnv().HEIMDALL_BATCH_FILE_MAP
   if (!raw || typeof raw !== 'string') return {}
@@ -83,6 +91,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const fileName = String(body.fileName ?? '').trim()
     const fileKey = String(body.fileKey ?? '').trim()
+    const syncFileRef = buildSyncFileRef(fileKey, fileName)
     const explicitBatch = body.batch ? String(body.batch).trim() : undefined
 
     const env = getEnv()
@@ -141,7 +150,7 @@ export async function POST(request: NextRequest) {
     }
 
     const allItems = await readMondayBoardItems(BOARD_ID)
-    const syncs = fileKey ? await getSyncsForFile(fileKey) : []
+    const syncs = syncFileRef ? await getSyncsForFile(syncFileRef) : []
     const syncByItemId = new Map(syncs.map((s) => [s.monday_item_id, s]))
 
     const items: Array<{
@@ -182,8 +191,10 @@ export async function POST(request: NextRequest) {
       if (!statusMatch || !partnerMatch) continue
 
       const existing = syncByItemId.get(row.id)
+      const hasConcretePageId =
+        existing?.figma_page_id != null && String(existing.figma_page_id).trim() !== ''
       let syncState: 'new' | 'synced' | 'changed' = 'new'
-      if (existing) {
+      if (existing && hasConcretePageId) {
         syncState = 'synced'
         // TODO: compare monday_snapshot for "changed" when versioning is implemented
       }
@@ -201,7 +212,6 @@ export async function POST(request: NextRequest) {
       batchCanonical && parseBatchToCanonical(batchCanonical)
         ? parseBatchToCanonical(batchCanonical)!.expectedFileName.split(' - ')[0] ?? batchCanonical
         : batchCanonical ?? ''
-
     return NextResponse.json({
       batch: batchCanonical,
       batchLabel,

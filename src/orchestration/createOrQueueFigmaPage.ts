@@ -54,6 +54,7 @@ export async function createOrQueueFigmaPage(
     nodeMapping?: Array<{ nodeName: string; value: string }>
     frameRenames?: Array<{ oldName: string; newName: string }>
     images?: Array<{ url: string; name: string; source: string; assetId?: string }>
+    figmaFileKeyOverride?: string
   }
 ): Promise<CreateOrQueueResult> {
   const idempotencyKey = options.idempotencyKey ?? buildIdempotencyKey(briefing.mondayItemId, options.statusTransitionId)
@@ -90,13 +91,14 @@ export async function createOrQueueFigmaPage(
       expectedFileName: '',
     }
   }
+  const effectiveFigmaFileKey = options.figmaFileKeyOverride ?? target.figmaFileKey
 
   if (isDryRun()) {
     return {
       outcome: 'queued',
       idempotencyKey,
       message: '[DRY RUN] Would queue plugin sync',
-      figmaFileKey: target.figmaFileKey,
+      figmaFileKey: effectiveFigmaFileKey,
       expectedFileName: target.expectedFileName,
     }
   }
@@ -107,7 +109,7 @@ export async function createOrQueueFigmaPage(
       outcome: 'created',
       idempotencyKey,
       message: 'Server write path not implemented in V1',
-      figmaFileKey: target.figmaFileKey,
+      figmaFileKey: effectiveFigmaFileKey,
       expectedFileName: target.expectedFileName,
     }
   }
@@ -127,7 +129,7 @@ export async function createOrQueueFigmaPage(
     mondayItemId: briefing.mondayItemId,
     mondayBoardId: options.mondayBoardId,
     batchCanonical: target.batchCanonical,
-    figmaFileKey: target.figmaFileKey,
+    figmaFileKey: effectiveFigmaFileKey,
     expectedFileName: target.expectedFileName,
     experimentPageName: formatExperimentPageName(briefing),
     briefingPayload: briefing,
@@ -140,7 +142,7 @@ export async function createOrQueueFigmaPage(
     jobId: job.id,
     mondayItemId: briefing.mondayItemId,
     batchCanonical: target.batchCanonical,
-    figmaFileKey: target.figmaFileKey,
+    figmaFileKey: effectiveFigmaFileKey,
   })
 
   return {
@@ -148,7 +150,7 @@ export async function createOrQueueFigmaPage(
     idempotencyKey,
     job,
     message: 'Queued for plugin sync; open the monthly file and run Sync queued briefings',
-    figmaFileKey: target.figmaFileKey,
+    figmaFileKey: effectiveFigmaFileKey,
     expectedFileName: target.expectedFileName,
   }
 }

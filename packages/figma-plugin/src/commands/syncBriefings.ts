@@ -1850,10 +1850,21 @@ async function importImagesToPage(
   }
 
   let placed = 0
+  const existingImageNames = new Set<string>()
+  for (let i = 0; i < uploadsBody.children.length; i++) {
+    const child = uploadsBody.children[i]
+    const name = (child.name || '').trim().toLowerCase()
+    if (name) existingImageNames.add(name)
+  }
   for (const img of images) {
+    const dedupeName = (img.name || 'Briefing Image').trim().toLowerCase()
+    if (existingImageNames.has(dedupeName)) {
+      continue
+    }
     const result = await placeImageInUploads(uploadsBody, img.bytes, img.name)
     if (result.ok) {
       placed++
+      existingImageNames.add(dedupeName)
     } else {
       failures.push({ name: img.name, reason: result.reason })
     }
@@ -2207,7 +2218,7 @@ var uiHtml = '<html><head><style>'
   + '  document.getElementById("msg").textContent = "Queueing briefings...";'
   + '  document.getElementById("sync").disabled = true;'
   + '  var items = currentBriefings.map(function(it){ return { id: it.id, name: it.name, batch: it.batch }; });'
-  + '  requestJson(HEIMDALL_API + "/api/plugin/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileKey: fileKey || "", items: items }) })'
+  + '  requestJson(HEIMDALL_API + "/api/plugin/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileKey: fileKey || "", fileName: fileName || "", items: items }) })'
   + '    .then(function(data) {'
   + '      if (data.error) { document.getElementById("msg").textContent = data.error; document.getElementById("msg").className = "err"; isSyncing = false; document.getElementById("sync").disabled = false; return; }'
   + '      queuedJobIds = (data.jobs || []).map(function(j){ return j.id; });'

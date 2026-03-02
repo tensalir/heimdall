@@ -173,7 +173,8 @@ export async function hasSuccessfulImport(
   figmaFileKey: string
 ): Promise<boolean> {
   const record = await getSyncForItem(mondayItemId, figmaFileKey)
-  return record != null && record.figma_page_id != null && record.figma_page_id.trim() !== ''
+  const success = record != null && record.figma_page_id != null && record.figma_page_id.trim() !== ''
+  return success
 }
 
 /**

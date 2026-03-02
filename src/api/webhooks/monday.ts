@@ -354,7 +354,7 @@ export async function handleMondayWebhook(body: MondayWebhookPayload): Promise<{
 export async function queueMondayItem(
   boardId: string,
   itemId: string,
-  options?: { idempotencySuffix?: string; disableAiMapping?: boolean }
+  options?: { idempotencySuffix?: string; disableAiMapping?: boolean; figmaFileKeyOverride?: string }
 ): Promise<{
   outcome: string
   message: string
@@ -394,9 +394,13 @@ export async function queueMondayItem(
   let nodeMapping: Array<{ nodeName: string; value: string }> | undefined
   let frameRenames: Array<{ oldName: string; newName: string }> | undefined
   const target = resolveFigmaTarget(briefing.batchRaw ?? briefing.batchCanonical)
-  if (target?.figmaFileKey) {
+  const overrideFileKey = String(options?.figmaFileKeyOverride ?? '').trim()
+  const canReadTemplateFromOverride = !!overrideFileKey && !overrideFileKey.startsWith('name:')
+  const mappingFileKey = target?.figmaFileKey ?? (canReadTemplateFromOverride ? overrideFileKey : null)
+  const effectiveFigmaFileKey = target?.figmaFileKey ?? (overrideFileKey || null)
+  if (mappingFileKey) {
     try {
-      const tree = await getTemplateNodeTree(target.figmaFileKey)
+      const tree = await getTemplateNodeTree(mappingFileKey)
       const mondayDocContent = qDocId ? await getDocContent(qDocId) : null
       const mapping = await computeNodeMapping(item, tree, {
         mondayDocContent: mondayDocContent ?? undefined,
@@ -407,6 +411,14 @@ export async function queueMondayItem(
     } catch (err) {
       logger.error('mapping', 'Manual queue: mapping agent failed', err as Error, { itemId })
     }
+  } else {
+    const mondayDocContent = qDocId ? await getDocContent(qDocId) : null
+    const mapping = await computeNodeMapping(item, [], {
+      mondayDocContent: mondayDocContent ?? undefined,
+      disableAi: true,
+    })
+    nodeMapping = mapping.textMappings
+    frameRenames = mapping.frameRenames
   }
 
   const result = await createOrQueueFigmaPage(briefing, {
@@ -415,6 +427,7 @@ export async function queueMondayItem(
     statusTransitionId: suffix,
     nodeMapping,
     frameRenames,
+    figmaFileKeyOverride: effectiveFigmaFileKey ?? undefined,
   })
 
   return {

@@ -10,6 +10,16 @@ export const dynamic = 'force-dynamic'
 const BOARD_ID = process.env.MONDAY_BOARD_ID ?? '9147622374'
 const MAX_CONCURRENCY = 3
 
+function buildSyncFileRef(fileKey: string, fileName: string): string {
+  const key = fileKey.trim()
+  if (key) return key
+  const name = fileName.trim().toLowerCase()
+  if (!name) return ''
+  // Figma plugin sometimes cannot read fileKey in certain contexts; fileName fallback
+  // keeps sync/import audit records tied to the opened monthly file.
+  return `name:${name}`
+}
+
 async function mapConcurrent<T, R>(
   items: T[],
   concurrency: number,
@@ -40,6 +50,8 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const fileKey = String(body.fileKey ?? '').trim()
+    const fileName = String(body.fileName ?? '').trim()
+    const syncFileRef = buildSyncFileRef(fileKey, fileName)
     const items = Array.isArray(body.items) ? body.items : []
 
     if (items.length === 0) {
@@ -53,6 +65,9 @@ export async function POST(request: NextRequest) {
       const name = String(it.name ?? '').trim()
       const batch = String(it.batch ?? '').trim()
 
+      // Only hard-skip as "already imported" when a concrete fileKey exists.
+      // Name-based refs are used for audit/state continuity, but are too weak
+      // to block queueing because pages may be deleted manually in Figma.
       if (fileKey) {
         const alreadyImported = await hasSuccessfulImport(itemId, fileKey)
         if (alreadyImported) {
@@ -61,7 +76,7 @@ export async function POST(request: NextRequest) {
             mondayBoardId: BOARD_ID,
             mondayItemName: name,
             batchCanonical: batch,
-            figmaFileKey: fileKey,
+            figmaFileKey: syncFileRef,
             source: 'plugin_sync',
             outcome: 'skipped_already_imported',
             reason: 'Already successfully imported into this file',
@@ -72,15 +87,17 @@ export async function POST(request: NextRequest) {
 
       const result = await queueMondayItem(BOARD_ID, itemId, {
         idempotencySuffix: `plugin-${Date.now()}-${itemId}`,
+        disableAiMapping: true,
+        figmaFileKeyOverride: syncFileRef || undefined,
       })
 
-      if (fileKey && (result.outcome === 'queued' || result.outcome === 'skipped')) {
+      if (syncFileRef && (result.outcome === 'queued' || result.outcome === 'skipped')) {
         await appendImportEvent({
           mondayItemId: itemId,
           mondayBoardId: BOARD_ID,
           mondayItemName: name,
           batchCanonical: batch,
-          figmaFileKey: fileKey,
+          figmaFileKey: syncFileRef,
           idempotencyKey: null,
           source: 'plugin_sync',
           outcome: 'queued',
@@ -109,14 +126,14 @@ export async function POST(request: NextRequest) {
       if (result.outcome === 'queued' || result.outcome === 'skipped') {
         queued++
         if (result.job) jobs.push({ id: result.job.id, itemName: result.job.experimentPageName ?? name })
-        if (fileKey) {
+        if (syncFileRef) {
           syncPromises.push(
             upsertSync({
               mondayItemId: itemId,
               mondayBoardId: BOARD_ID,
               mondayItemName: name,
               batchCanonical: batch,
-              figmaFileKey: fileKey,
+              figmaFileKey: syncFileRef,
               mondaySnapshot: { name, batch, itemId },
             }).then(() => {})
           )
