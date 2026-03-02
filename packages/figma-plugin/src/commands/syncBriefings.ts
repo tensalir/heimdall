@@ -1987,18 +1987,17 @@ async function processJobs(jobs: QueuedJob[]): Promise<Array<{ idempotencyKey: s
           })
         }
         var mappedCount = await applyNodeMapping(contentRoot, mappingEntries, (job.frameRenames || []).slice())
-        if (mappedCount === 0) {
-          await fillTextNodes(contentRoot, briefing)
-          usedPlaceholderFallback = true
-          debugLog.push({
-            nodeName: '__MAPPING_FALLBACK__',
-            chars: 'Node mapping matched 0 nodes; used placeholder fallback.',
-            path: [],
-            matched: true,
-          })
-        }
+        debugLog.push({
+          nodeName: '__MAPPING_RESULT__',
+          chars: 'mappedCount=' + mappedCount + ' totalEntries=' + mappingEntries.length,
+          path: [],
+          matched: mappedCount > 0,
+        })
+        await fillTextNodes(contentRoot, briefing)
+        usedPlaceholderFallback = true
       } else {
         await fillTextNodes(contentRoot, briefing)
+        usedPlaceholderFallback = true
       }
 
       // See KNOWN CONSTRAINTS #4: normalizeLayout (6 phases, 840+ node

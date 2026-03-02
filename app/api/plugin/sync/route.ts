@@ -72,8 +72,6 @@ export async function POST(request: NextRequest) {
 
       const result = await queueMondayItem(BOARD_ID, itemId, {
         idempotencySuffix: `plugin-${Date.now()}-${itemId}`,
-        // Plugin sync should feel immediate: use deterministic mapping (no Claude roundtrip).
-        disableAiMapping: true,
       })
 
       if (fileKey && (result.outcome === 'queued' || result.outcome === 'skipped')) {
