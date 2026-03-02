@@ -10,6 +10,7 @@ export async function POST(request: Request) {
     const idempotencyKey = String(body.idempotencyKey ?? body.idempotency_key ?? '')
     const figmaPageId = String(body.figmaPageId ?? body.page_id ?? '')
     const figmaFileUrl = String(body.figmaFileUrl ?? body.file_url ?? '')
+    const pluginOutcome = String(body.outcome ?? 'created')
     
     if (!idempotencyKey) {
       return NextResponse.json({ error: 'idempotencyKey required' }, { status: 400 })
@@ -42,7 +43,7 @@ export async function POST(request: Request) {
         idempotencyKey: job.idempotencyKey,
         source: 'plugin_sync',
         outcome: 'completed',
-        reason: 'Job completed',
+        reason: pluginOutcome === 'updated' ? 'Updated existing page' : 'Created new page',
       })
     }
 
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
       jobId: job.id,
       idempotencyKey,
       figmaPageId,
+      pluginOutcome,
     })
 
     return NextResponse.json(

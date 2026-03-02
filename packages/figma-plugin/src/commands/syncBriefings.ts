@@ -1895,7 +1895,7 @@ async function processJobs(jobs: QueuedJob[]): Promise<Array<{ idempotencyKey: s
   ensureCategoryPages(root, jobs)
 
   var fileKey = figma.fileKey || ''
-  var results: Array<{ idempotencyKey: string; experimentPageName: string; pageId: string; fileUrl: string; error?: string }> = []
+  var results: Array<{ idempotencyKey: string; experimentPageName: string; pageId: string; fileUrl: string; error?: string; outcome?: string }> = []
 
   for (var i = 0; i < jobs.length; i++) {
     var job = jobs[i]
@@ -1903,18 +1903,25 @@ async function processJobs(jobs: QueuedJob[]): Promise<Array<{ idempotencyKey: s
       var briefing = job.briefingPayload as BriefingPayload
       var targetPage: PageNode | null = null
       var createdNew = false
-      for (var e = 0; e < root.children.length; e++) {
-        var existing = root.children[e]
-        if (existing.type === 'PAGE' && (existing as PageNode).name === job.experimentPageName) {
-          targetPage = existing as PageNode
-          break
+
+      // Match by Monday item ID (plugin data) first, then by name
+      if (job.mondayItemId) {
+        for (var e = 0; e < root.children.length; e++) {
+          var existing = root.children[e]
+          if (existing.type === 'PAGE' && (existing as PageNode).getPluginData('heimdallMondayItemId') === job.mondayItemId) {
+            targetPage = existing as PageNode
+            break
+          }
         }
       }
-
-      if (targetPage && !createdNew) {
-        var existingFileUrl = fileKey ? 'https://www.figma.com/design/' + fileKey : ''
-        results.push({ idempotencyKey: job.idempotencyKey, experimentPageName: job.experimentPageName, pageId: targetPage.id, fileUrl: existingFileUrl })
-        continue
+      if (!targetPage) {
+        for (var e = 0; e < root.children.length; e++) {
+          var existing = root.children[e]
+          if (existing.type === 'PAGE' && (existing as PageNode).name === job.experimentPageName) {
+            targetPage = existing as PageNode
+            break
+          }
+        }
       }
 
       if (!targetPage) {
@@ -2013,7 +2020,8 @@ async function processJobs(jobs: QueuedJob[]): Promise<Array<{ idempotencyKey: s
 
       var pageId = targetPage.id
       var fileUrl = 'https://www.figma.com/file/' + fileKey + '?node-id=' + encodeURIComponent(pageId.replace(':', '-'))
-      results.push({ idempotencyKey: job.idempotencyKey, experimentPageName: job.experimentPageName, pageId: pageId, fileUrl: fileUrl })
+      var outcome = createdNew ? 'created' : 'updated'
+      results.push({ idempotencyKey: job.idempotencyKey, experimentPageName: job.experimentPageName, pageId: pageId, fileUrl: fileUrl, outcome: outcome })
     } catch (e) {
       var errMsg = e instanceof Error ? e.message : 'Unknown error'
       results.push({ idempotencyKey: job.idempotencyKey, experimentPageName: job.experimentPageName, pageId: '', fileUrl: '', error: errMsg })
@@ -2249,7 +2257,7 @@ var uiHtml = '<html><head><style>'
   + '    });'
   + '}'
   + 'function reportResults(results) {'
-  + '  var done = 0; var failed = [];'
+  + '  var done = 0; var updated = 0; var failed = [];'
   + '  var promises = [];'
   + '  for (var i = 0; i < results.length; i++) {'
   + '    var r = results[i];'
@@ -2257,8 +2265,8 @@ var uiHtml = '<html><head><style>'
   + '      failed.push(r.experimentPageName);'
   + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/fail", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: r.error}) }).catch(function(){}));'
   + '    } else {'
-  + '      done++;'
-  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/complete", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({idempotencyKey: r.idempotencyKey, figmaPageId: r.pageId, figmaFileUrl: r.fileUrl}) }).catch(function(){}));'
+  + '      if (r.outcome === "updated") updated++; else done++;'
+  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/complete", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({idempotencyKey: r.idempotencyKey, figmaPageId: r.pageId, figmaFileUrl: r.fileUrl, outcome: r.outcome || "created"}) }).catch(function(){}));'
   + '    }'
   + '  }'
   + '  Promise.all(promises).then(function() {'
@@ -2266,7 +2274,8 @@ var uiHtml = '<html><head><style>'
   + '    var syncBtn = document.getElementById("sync");'
   + '    if (syncBtn) syncBtn.disabled = false;'
   + '    var el = document.getElementById("msg");'
-  + '    el.textContent = "Done: " + done + " page(s) created." + (failed.length ? " Failed: " + failed.join(", ") : "");'
+  + '    var msg = "Done: " + done + " created"; if (updated > 0) msg += ", " + updated + " updated"; msg += "."; if (failed.length) msg += " Failed: " + failed.join(", ");'
+  + '    el.textContent = msg;'
   + '    el.className = failed.length ? "err" : "";'
   + '  });'
   + '}'
