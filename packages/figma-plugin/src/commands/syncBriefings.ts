@@ -1911,6 +1911,12 @@ async function processJobs(jobs: QueuedJob[]): Promise<Array<{ idempotencyKey: s
         }
       }
 
+      if (targetPage && !createdNew) {
+        var existingFileUrl = fileKey ? 'https://www.figma.com/design/' + fileKey : ''
+        results.push({ idempotencyKey: job.idempotencyKey, experimentPageName: job.experimentPageName, pageId: targetPage.id, fileUrl: existingFileUrl })
+        continue
+      }
+
       if (!targetPage) {
         targetPage = templatePage.clone()
         targetPage.name = job.experimentPageName
