@@ -4,6 +4,7 @@ import { readMondayBoardItems } from '@/src/services/mondayBoardReader'
 import type { MondayBoardItemRow } from '@/src/services/mondayBoardReader'
 import { parseBatchToCanonical } from '@/src/domain/routing/batchToFile'
 import { getSyncsForFile } from '@/src/services/briefingSyncStore'
+import { getProjectFiles } from '@/src/integrations/figma/restClient'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,6 +17,8 @@ function buildSyncFileRef(fileKey: string, fileName: string): string {
   if (!name) return ''
   return `name:${name}`
 }
+
+const PERF_ADS_PROJECT_ID = '387033831'
 
 function loadBatchFileMap(): Record<string, string> {
   const raw = getEnv().HEIMDALL_BATCH_FILE_MAP
@@ -33,6 +36,26 @@ function loadBatchFileMap(): Record<string, string> {
     // ignore
   }
   return {}
+}
+
+/**
+ * Build a batch→fileKey map by combining Figma project auto-discovery with env overrides.
+ * Project files are matched by expected file name ("MONTH YEAR - PerformanceAds").
+ */
+async function loadCombinedBatchMap(): Promise<Record<string, string>> {
+  const envMap = loadBatchFileMap()
+  try {
+    const files = await getProjectFiles(PERF_ADS_PROJECT_ID)
+    for (const f of files) {
+      const p = parseBatchToCanonical(f.name.replace(/\s*-\s*PerformanceAds\s*$/i, '').trim())
+      if (p && !envMap[p.canonicalKey]) {
+        envMap[p.canonicalKey] = f.key
+      }
+    }
+  } catch {
+    // Figma API unavailable; env map is the fallback
+  }
+  return envMap
 }
 
 /** Build column map from board row (title -> value). */
@@ -110,7 +133,7 @@ export async function POST(request: NextRequest) {
       if (fromFileName) {
         batchCanonical = fromFileName
       } else {
-        const map = loadBatchFileMap()
+        const map = await loadCombinedBatchMap()
         const matching = fileKey
           ? Object.entries(map)
               .filter(([, v]) => v === fileKey)

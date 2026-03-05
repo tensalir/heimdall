@@ -15,6 +15,38 @@ import { figmaProvider } from '../integrations/providers/index.js'
 /** Resolved target plus parse detail for callers that need it (e.g. FigmaTargetResult). */
 export type ResolvedBatchTargetWithParse = ResolvedBatchTarget & { batchParse: BatchParseResult }
 
+const PERF_ADS_PROJECT_ID = '387033831'
+const PROJECT_CACHE_TTL_MS = 60_000
+
+let projectFileCache: { files: Array<{ key: string; name: string }>; ts: number } | null = null
+
+/**
+ * Fetch project files with a 60s in-memory cache.
+ * Returns an empty array on error so callers can fall through gracefully.
+ */
+async function getProjectFilesCached(): Promise<Array<{ key: string; name: string }>> {
+  if (projectFileCache && Date.now() - projectFileCache.ts < PROJECT_CACHE_TTL_MS) {
+    return projectFileCache.files
+  }
+  if (!figmaProvider.hasReadAccess()) return []
+  try {
+    const files = await figmaProvider.getProjectFiles(PERF_ADS_PROJECT_ID)
+    projectFileCache = { files, ts: Date.now() }
+    return files
+  } catch {
+    return projectFileCache?.files ?? []
+  }
+}
+
+/**
+ * Synchronous read of the project file cache (populated by async calls).
+ * Returns null when the cache is cold; callers should fall through to env map.
+ */
+function getProjectFileCacheSync(): Array<{ key: string; name: string }> | null {
+  if (!projectFileCache) return null
+  return projectFileCache.files
+}
+
 function loadBatchFileMap(): Record<string, string> {
   const env = getEnv()
   const raw = env.HEIMDALL_BATCH_FILE_MAP
@@ -69,7 +101,16 @@ export async function resolveBatchTarget(
     return { batch: batchRef, boardId, fileKey: override }
   }
 
-  // 2) Exact Figma filename match across configured teams
+  // 2) Auto-discover from PerformanceAds project
+  const projectFiles = await getProjectFilesCached()
+  const projectMatch = projectFiles.find(
+    (f) => f.name.trim().toUpperCase() === parse.expectedFileName.toUpperCase()
+  )
+  if (projectMatch) {
+    return { batch: batchRef, boardId, fileKey: projectMatch.key }
+  }
+
+  // 3) Exact Figma filename match across configured teams
   if (figmaProvider.hasReadAccess()) {
     const teamIdsRaw = process.env.FIGMA_TEAM_IDS
     if (teamIdsRaw) {
@@ -93,7 +134,7 @@ export async function resolveBatchTarget(
     }
   }
 
-  // 3) Fallback env map
+  // 4) Fallback env map
   const map = loadBatchFileMap()
   const fileKey = map[parse.canonicalKey] ?? null
 
@@ -117,6 +158,18 @@ export function resolveBatchTargetSync(
     expectedFileName: parse.expectedFileName,
   }
   const boardId = getMondayBoardId() || null
+
+  // Try warm project file cache first (populated by async resolveBatchTarget calls)
+  const cached = getProjectFileCacheSync()
+  if (cached) {
+    const match = cached.find(
+      (f) => f.name.trim().toUpperCase() === parse.expectedFileName.toUpperCase()
+    )
+    if (match) {
+      return { batch: batchRef, boardId, fileKey: match.key, batchParse: parse }
+    }
+  }
+
   const map = loadBatchFileMap()
   const fileKey = map[parse.canonicalKey] ?? null
   return { batch: batchRef, boardId, fileKey, batchParse: parse }
@@ -135,13 +188,24 @@ export function resolveBatchTargetByCanonicalKey(canonicalKey: string): Resolved
     expectedFileName,
   }
   const boardId = getMondayBoardId() || null
-  const map = loadBatchFileMap()
-  const fileKey = map[canonicalKey] ?? null
   const batchParse: BatchParseResult = {
     canonicalKey,
     expectedFileName,
     year: y,
     month: m,
   }
+
+  const cached = getProjectFileCacheSync()
+  if (cached) {
+    const match = cached.find(
+      (f) => f.name.trim().toUpperCase() === expectedFileName.toUpperCase()
+    )
+    if (match) {
+      return { batch: batchRef, boardId, fileKey: match.key, batchParse }
+    }
+  }
+
+  const map = loadBatchFileMap()
+  const fileKey = map[canonicalKey] ?? null
   return { batch: batchRef, boardId, fileKey, batchParse }
 }
