@@ -147,6 +147,8 @@ function AdTableRow({ ad }: { ad: MetaAdItem }) {
   )
 }
 
+const DEFAULT_BRANDS = ['Loop Earplugs', 'Bose', 'Sony', 'Apple AirPods']
+
 export default function MetaAdsLibraryPage() {
   const [ads, setAds] = useState<MetaAdItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -155,6 +157,7 @@ export default function MetaAdsLibraryPage() {
   const [error, setError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<string | null>(null)
+  const [didAutoSync, setDidAutoSync] = useState(false)
 
   const fetchAds = useCallback(async () => {
     setLoading(true)
@@ -170,17 +173,47 @@ export default function MetaAdsLibraryPage() {
         return
       }
       setAds(data.ads ?? [])
+      return data.ads ?? []
     } catch {
       setError('Request failed')
       setAds([])
+      return []
     } finally {
       setLoading(false)
     }
   }, [search])
 
+  const syncBrand = useCallback(async (query: string) => {
+    try {
+      await fetch('/api/briefing-assistant/meta-ads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ search_terms: query }),
+      })
+    } catch { /* best-effort */ }
+  }, [])
+
   useEffect(() => {
-    fetchAds()
-  }, [fetchAds])
+    ;(async () => {
+      const result = await fetchAds()
+      if (result.length === 0 && !didAutoSync) {
+        setDidAutoSync(true)
+        setSyncing(true)
+        setSyncResult(null)
+        try {
+          for (const brand of DEFAULT_BRANDS) {
+            await syncBrand(brand)
+          }
+          setSyncResult(`Auto-synced ads for ${DEFAULT_BRANDS.join(', ')}`)
+          await fetchAds()
+        } catch {
+          setError('Auto-sync failed')
+        } finally {
+          setSyncing(false)
+        }
+      }
+    })()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSync = useCallback(async () => {
     const query = search.trim()
@@ -304,6 +337,16 @@ export default function MetaAdsLibraryPage() {
           <div className="flex flex-col items-center justify-center py-20 gap-2">
             <p className="text-sm text-destructive">{error}</p>
             <Button variant="outline" size="sm" onClick={fetchAds}>Retry</Button>
+          </div>
+        ) : ads.length === 0 && syncing ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
+            <Loader2 className="h-8 w-8 animate-spin text-primary/40" />
+            <p className="text-sm text-muted-foreground">
+              Fetching competitor ads from Meta Ad Library...
+            </p>
+            <p className="text-xs text-muted-foreground/50">
+              Syncing {DEFAULT_BRANDS.join(', ')}
+            </p>
           </div>
         ) : ads.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
