@@ -61,3 +61,19 @@ The first implementation slice should prioritize `overview before rename`:
 - Add library configuration storage in Heimdall.
 - Pull inbox contents from Frontify into an aggregated admin overview.
 - Hold bulk rename/apply until the real library IDs and naming inputs are provided.
+
+## Naming logic source
+
+The Excel naming workbook has now been analysed and distilled into a Heimdall-local implementation note:
+
+- `docs/frontify-ugc-naming-logic.md`
+
+That note confirms the Frontify-friendly base naming rule should come from the workbook `Batch Name` layer:
+
+- `source.number.name[-variation].batchNumber`
+
+Then Heimdall can append the Frontify asset notation suffix where needed:
+
+- `.9x16`
+- `.4x5`
+- no suffix for the default/uncaptioned master
