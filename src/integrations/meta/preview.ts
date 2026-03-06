@@ -59,18 +59,68 @@ export async function getMetaAdPreviewPng(
 
   try {
     const page = await browser.newPage()
-    await page.setViewport({ width: 1200, height: 1600, deviceScaleFactor: 1 })
+    await page.setViewport({ width: 600, height: 900, deviceScaleFactor: 1 })
     await page.goto(buildMetaAdSnapshotUrl(libraryId), {
       waitUntil: 'networkidle2',
       timeout: 45000,
     })
 
-    // Give Meta's client-rendered snapshot a moment to settle.
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+
+    // Dismiss Meta's cookie consent by clicking "Decline optional cookies"
+    const buttons = await page.$$('div[role="button"], button, a[role="button"]')
+    for (const btn of buttons) {
+      const text = await btn.evaluate((el) => (el.textContent || '').trim())
+      if (/decline optional cookies/i.test(text)) {
+        await btn.click()
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+        break
+      }
+    }
+
+    // Force-remove any remaining overlay layers
+    await page.evaluate(() => {
+      document.querySelectorAll(
+        'div._10.uiLayer, div._3ixn, div._59s7, [role="dialog"]',
+      ).forEach((el) => el.remove())
+
+      // Remove any full-screen fixed/absolute overlays by checking computed style
+      document.querySelectorAll('div').forEach((el) => {
+        const style = window.getComputedStyle(el)
+        const rect = el.getBoundingClientRect()
+        if (
+          (style.position === 'fixed' || style.position === 'absolute') &&
+          rect.width > window.innerWidth * 0.8 &&
+          rect.height > window.innerHeight * 0.8 &&
+          parseInt(style.zIndex || '0', 10) > 5
+        ) {
+          el.remove()
+        }
+      })
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 300))
+
+    // Crop to the centered ad card container
+    const clip = await page.evaluate(() => {
+      const card = document.querySelector('div._8n-d')
+      if (card) {
+        const r = card.getBoundingClientRect()
+        if (r.width > 100 && r.height > 100) {
+          return {
+            x: Math.max(0, r.x),
+            y: Math.max(0, r.y),
+            width: Math.min(window.innerWidth, r.width),
+            height: Math.min(window.innerHeight, r.height),
+          }
+        }
+      }
+      return null
+    })
 
     const buffer = (await page.screenshot({
       type: 'png',
-      fullPage: false,
+      ...(clip ? { clip } : { fullPage: false }),
     })) as Buffer
 
     previewCache.set(cacheKey, {
