@@ -101,23 +101,6 @@ export async function getMetaAdPreviewPng(
 
     await new Promise((resolve) => setTimeout(resolve, 300))
 
-    // Crop to the centered ad card container
-    const clip = await page.evaluate(() => {
-      const card = document.querySelector('div._8n-d')
-      if (card) {
-        const r = card.getBoundingClientRect()
-        if (r.width > 100 && r.height > 100) {
-          return {
-            x: Math.max(0, r.x),
-            y: Math.max(0, r.y),
-            width: Math.min(window.innerWidth, r.width),
-            height: Math.min(window.innerHeight, r.height),
-          }
-        }
-      }
-      return null
-    })
-
     const clip = await page.evaluate(() => {
       const viewportWidth = window.innerWidth
       const viewportHeight = window.innerHeight
