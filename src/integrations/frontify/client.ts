@@ -3,6 +3,12 @@
  * Used for asset linking: list folders, optionally create folder for experiment code.
  */
 
+import {
+  DEFAULT_FRONTIFY_INBOX_NAME,
+  type FrontifyIntakeAssetItem,
+  type FrontifyIntakeDayFolder,
+} from '../../domain/frontifyIntake/types.js'
+
 const FRONTIFY_RETRY_ATTEMPTS = 3
 const FRONTIFY_RETRY_BASE_MS = 2000
 
@@ -22,6 +28,13 @@ function getGraphqlUrl(): string {
 export interface FrontifyFolder {
   id: string
   name: string
+}
+
+interface FrontifyFolderContents {
+  id: string
+  name: string
+  folders: FrontifyFolder[]
+  assets: FrontifyIntakeAssetItem[]
 }
 
 /**
@@ -119,26 +132,176 @@ export async function createLibraryFolder(
   parentFolderId?: string | null
 ): Promise<FrontifyFolder | null> {
   try {
-    // Frontify GraphQL may expose createLibrarySubFolder or similar.
-    // Attempt common mutation shape; adjust if introspection shows different name.
     const data = await frontifyGraphql<{
-      createLibrarySubFolder?: { folder?: { id: string; name: string } }
+      createFolder?: { folder?: { id: string; name: string } }
     }>(
-      `mutation CreateLibrarySubFolder($libraryId: ID!, $name: String!, $parentFolderId: ID) {
-        createLibrarySubFolder(input: { libraryId: $libraryId, name: $name, parentFolderId: $parentFolderId }) {
+      `mutation CreateFolder($parentId: ID!, $name: String!) {
+        createFolder(input: { parentId: $parentId, name: $name }) {
           folder {
             id
             name
           }
         }
       }`,
-      { libraryId, name: folderName, parentFolderId: parentFolderId ?? null }
+      { parentId: parentFolderId ?? libraryId, name: folderName }
     )
-    const folder = data?.createLibrarySubFolder?.folder
+    const folder = data?.createFolder?.folder
     return folder ? { id: folder.id, name: folder.name } : null
   } catch {
-    // Mutation may not exist or have different shape; fall back to URL-only mode
+    // Keep callers resilient if folder creation is unavailable in a given instance.
     return null
+  }
+}
+
+function mapAssetItem(asset: {
+  id: string
+  title: string
+  createdAt: string
+  modifiedAt?: string | null
+  status: string
+  author?: string | null
+}): FrontifyIntakeAssetItem {
+  return {
+    id: asset.id,
+    title: asset.title,
+    createdAt: asset.createdAt,
+    modifiedAt: asset.modifiedAt ?? null,
+    status: asset.status,
+    author: asset.author ?? null,
+  }
+}
+
+function sortAssetsByCreatedAt<T extends { createdAt: string }>(items: T[]): T[] {
+  return [...items].sort((a, b) => {
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  })
+}
+
+function sortDayFolders(items: FrontifyIntakeDayFolder[]): FrontifyIntakeDayFolder[] {
+  return [...items].sort((a, b) => b.name.localeCompare(a.name, undefined, { numeric: true }))
+}
+
+/**
+ * Read a Frontify folder (SubFolder) and return its child folders plus asset items.
+ */
+export async function getFolderContents(folderId: string): Promise<FrontifyFolderContents | null> {
+  const data = await frontifyGraphql<{
+    node?: {
+      id: string
+      name?: string
+      folders?: { items?: Array<{ id: string; name: string }> }
+      assets?: {
+        items?: Array<{
+          id: string
+          title: string
+          createdAt: string
+          modifiedAt?: string | null
+          status: string
+          author?: string | null
+        }>
+      }
+    }
+  }>(
+    `query GetFolderContents($folderId: ID!) {
+      node(id: $folderId) {
+        id
+        ... on SubFolder {
+          name
+          folders(limit: 100) {
+            items {
+              id
+              name
+            }
+          }
+          assets(limit: 100) {
+            items {
+              id
+              title
+              createdAt
+              modifiedAt
+              status
+              author
+            }
+          }
+        }
+      }
+    }`,
+    { folderId }
+  )
+
+  const node = data?.node
+  if (!node?.name) return null
+
+  return {
+    id: node.id,
+    name: node.name,
+    folders: node.folders?.items ?? [],
+    assets: sortAssetsByCreatedAt((node.assets?.items ?? []).map(mapAssetItem)),
+  }
+}
+
+/**
+ * Read the auto-created Asset Submission Inbox and return dated subfolders + assets.
+ * This powers Heimdall's operator-facing intake overview.
+ */
+export async function getSubmissionInboxOverview(
+  libraryId: string,
+  inboxFolderName = DEFAULT_FRONTIFY_INBOX_NAME
+): Promise<{
+  inboxFolderId: string | null
+  rootAssets: FrontifyIntakeAssetItem[]
+  dayFolders: FrontifyIntakeDayFolder[]
+  totalAssets: number
+}> {
+  const inboxFolder = await findFolderByName(libraryId, inboxFolderName)
+  if (!inboxFolder) {
+    return {
+      inboxFolderId: null,
+      rootAssets: [],
+      dayFolders: [],
+      totalAssets: 0,
+    }
+  }
+
+  const inboxContents = await getFolderContents(inboxFolder.id)
+  if (!inboxContents) {
+    return {
+      inboxFolderId: inboxFolder.id,
+      rootAssets: [],
+      dayFolders: [],
+      totalAssets: 0,
+    }
+  }
+
+  const dayFolderContents = await Promise.all(
+    inboxContents.folders.map(async (folder) => {
+      const contents = await getFolderContents(folder.id)
+      return contents
+        ? {
+            id: contents.id,
+            name: contents.name,
+            assetCount: contents.assets.length,
+            assets: contents.assets,
+          }
+        : {
+            id: folder.id,
+            name: folder.name,
+            assetCount: 0,
+            assets: [],
+          }
+    })
+  )
+
+  const rootAssets = inboxContents.assets
+  const dayFolders = sortDayFolders(dayFolderContents)
+  const totalAssets =
+    rootAssets.length + dayFolders.reduce((sum, folder) => sum + folder.assetCount, 0)
+
+  return {
+    inboxFolderId: inboxFolder.id,
+    rootAssets,
+    dayFolders,
+    totalAssets,
   }
 }
 

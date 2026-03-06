@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { mondayGraphql } from '@/src/integrations/monday/client'
+import { frontifyProvider } from '@/src/integrations/providers/frontifyProvider'
 
 type ServiceStatus = 'ok' | 'error' | 'unconfigured'
 
@@ -41,13 +42,28 @@ async function checkKV(): Promise<ServiceStatus> {
   }
 }
 
+async function checkFrontify(): Promise<ServiceStatus> {
+  if (!frontifyProvider.isConfigured()) return 'unconfigured'
+  try {
+    const ok = await frontifyProvider.healthCheck()
+    return ok ? 'ok' : 'error'
+  } catch {
+    return 'error'
+  }
+}
+
 export async function GET() {
-  const [monday, figma, kv] = await Promise.all([checkMonday(), checkFigma(), checkKV()])
+  const [monday, figma, kv, frontify] = await Promise.all([
+    checkMonday(),
+    checkFigma(),
+    checkKV(),
+    checkFrontify(),
+  ])
   return NextResponse.json(
     {
       ok: monday !== 'error' && kv !== 'error',
       service: 'heimdall',
-      services: { monday, figma, kv },
+      services: { monday, figma, kv, frontify },
     },
     { status: 200 }
   )

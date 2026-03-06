@@ -46,6 +46,14 @@ function getAccessToken(): string | null {
   return process.env.META_AD_LIBRARY_ACCESS_TOKEN ?? null
 }
 
+export function buildMetaAdSnapshotUrl(libraryId: string): string {
+  const token = getAccessToken()
+  if (!token) {
+    throw new Error('META_AD_LIBRARY_ACCESS_TOKEN not configured')
+  }
+  return `https://www.facebook.com/ads/archive/render_ad/?id=${encodeURIComponent(libraryId)}&access_token=${encodeURIComponent(token)}`
+}
+
 export function isMetaAdLibraryAvailable(): boolean {
   return !!getAccessToken()
 }
@@ -124,7 +132,6 @@ export function normalizeMetaAd(ad: MetaAdLibraryAd): {
   const bodyText = bodies[0] ?? null
   const pageName = ad.page_name ?? 'Unknown'
   const platforms = (ad.publisher_platforms ?? []).join(', ')
-  const snapshotUrl = ad.ad_snapshot_url ?? null
 
   return {
     external_id: ad.id,
@@ -132,8 +139,10 @@ export function normalizeMetaAd(ad: MetaAdLibraryAd): {
     preview: bodyText?.slice(0, 200) ?? '',
     page_name: pageName,
     body_text: bodyText,
-    link_url: snapshotUrl,
-    thumbnail_url: snapshotUrl,
+    // Do not persist Meta's tokenized snapshot URL into public-facing fields.
+    // We generate signed snapshot/preview URLs server-side per request instead.
+    link_url: null,
+    thumbnail_url: null,
     media_type: 'image',
     platform: platforms || 'meta',
     is_active: !ad.ad_delivery_stop_time,

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { Network, Settings, Puzzle, MessageSquare, LayoutGrid, ScrollText, LogOut, TrendingUp, Kanban } from 'lucide-react'
+import { Network, Settings, Puzzle, MessageSquare, LayoutGrid, ScrollText, LogOut, TrendingUp, Kanban, Inbox } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-auth'
 
 interface NavItem {
@@ -36,6 +36,7 @@ const sections: NavSection[] = [
   {
     label: 'Tools',
     items: [
+      { name: 'Frontify Intake', href: '/admin/frontify-intake', icon: Inbox },
       { name: 'Heimdall Plugin', href: '/admin/plugin', icon: Puzzle },
       { name: 'Feedback Summarizer', href: '/sheets', icon: MessageSquare },
       { name: 'Briefing Assistant', href: '/briefing-assistant', icon: LayoutGrid, external: true },

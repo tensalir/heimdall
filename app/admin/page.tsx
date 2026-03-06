@@ -15,6 +15,7 @@ interface HealthServices {
   monday: 'ok' | 'error' | 'unconfigured'
   figma: 'ok' | 'error' | 'unconfigured'
   kv: 'ok' | 'error' | 'unconfigured'
+  frontify: 'ok' | 'error' | 'unconfigured'
 }
 
 interface SetupChecks {
@@ -306,7 +307,7 @@ export default function ConnectionsPage() {
         <ConnectionTile
           name="Frontify"
           description="Asset management and brand guidelines"
-          status="placeholder"
+          status={health?.frontify ?? 'unconfigured'}
         />
       </div>
 

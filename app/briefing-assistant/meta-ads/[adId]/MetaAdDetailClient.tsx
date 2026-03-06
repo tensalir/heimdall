@@ -172,7 +172,7 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
               className="inline-flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
             >
               <ExternalLink className="h-3 w-3" />
-              {ad.link_url}
+              Open archived ad on Meta
             </a>
           )}
         </div>

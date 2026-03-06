@@ -1,4 +1,8 @@
 import type { PendingSyncJob, PendingSyncJobState } from '../src/jobs/types.js'
+import {
+  frontifyIntakeSettingsSchema,
+  type FrontifyIntakeSettings,
+} from '../src/domain/frontifyIntake/types.js'
 
 /**
  * Vercel KV persistence layer for Heimdall.
@@ -266,6 +270,21 @@ export async function getFilterSettings(): Promise<FilterSettings> {
 
 export async function setFilterSettings(settings: FilterSettings): Promise<void> {
   await kvSet('heimdall:settings:filters', JSON.stringify(settings))
+}
+
+export async function getFrontifyIntakeSettings(): Promise<FrontifyIntakeSettings> {
+  const data = await kvGet('heimdall:settings:frontify-intake')
+  if (!data) return frontifyIntakeSettingsSchema.parse({})
+  try {
+    return frontifyIntakeSettingsSchema.parse(JSON.parse(data))
+  } catch {
+    return frontifyIntakeSettingsSchema.parse({})
+  }
+}
+
+export async function setFrontifyIntakeSettings(settings: FrontifyIntakeSettings): Promise<void> {
+  const normalized = frontifyIntakeSettingsSchema.parse(settings)
+  await kvSet('heimdall:settings:frontify-intake', JSON.stringify(normalized))
 }
 
 // ============================================================================

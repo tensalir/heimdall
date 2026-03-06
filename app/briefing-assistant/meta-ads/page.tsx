@@ -69,6 +69,7 @@ function AdGalleryCard({ ad }: { ad: MetaAdItem }) {
             src={ad.thumbnail_url}
             alt={ad.page_name}
             className="w-full h-full object-cover"
+            loading="lazy"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
@@ -122,7 +123,7 @@ function AdTableRow({ ad }: { ad: MetaAdItem }) {
     >
       <div className="w-12 h-12 rounded bg-muted/30 overflow-hidden flex-shrink-0">
         {ad.thumbnail_url ? (
-          <img src={ad.thumbnail_url} alt="" className="w-full h-full object-cover" />
+          <img src={ad.thumbnail_url} alt="" className="w-full h-full object-cover" loading="lazy" />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <ImageIcon className="h-4 w-4 text-muted-foreground/20" />
@@ -235,12 +236,22 @@ export default function MetaAdsLibraryPage() {
         setError(data.error ?? 'Sync failed')
         return
       }
-      setSyncResult(`Synced ${data.ingested ?? 0} ads from Meta (${data.fetched ?? 0} fetched)`)
-      await fetchAds()
+      setSyncResult(`Synced ${data.ingested ?? 0} ads from Meta (${data.fetched ?? 0} fetched). Showing latest ingested ads.`)
+      setSearch('')
+      setLoading(true)
+      const refreshRes = await fetch('/api/briefing-assistant/meta-ads')
+      const refreshData = await refreshRes.json()
+      if (!refreshRes.ok) {
+        setError(refreshData.error ?? 'Failed to refresh ads after sync')
+        setAds([])
+        return
+      }
+      setAds(refreshData.ads ?? [])
     } catch {
       setError('Sync request failed')
     } finally {
       setSyncing(false)
+      setLoading(false)
     }
   }, [search, fetchAds])
 
