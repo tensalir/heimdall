@@ -10,8 +10,9 @@ import {
   Filter,
   ImageIcon,
   Play,
-  BarChart3,
+  RefreshCw,
   ExternalLink,
+  CheckCircle2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -44,10 +45,10 @@ function ScorePill({ value, label }: { value: number | null; label: string }) {
   if (value == null) return null
   const color =
     value >= 80
-      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+      ? 'bg-emerald-500/15 text-emerald-600'
       : value >= 60
-        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-        : 'bg-red-500/15 text-red-600 dark:text-red-400'
+        ? 'bg-amber-500/15 text-amber-600'
+        : 'bg-red-500/15 text-red-600'
   return (
     <span className={cn('inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold', color)}>
       {value}
@@ -152,6 +153,8 @@ export default function MetaAdsLibraryPage() {
   const [viewMode, setViewMode] = useState<ViewMode>('gallery')
   const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<string | null>(null)
 
   const fetchAds = useCallback(async () => {
     setLoading(true)
@@ -179,6 +182,35 @@ export default function MetaAdsLibraryPage() {
     fetchAds()
   }, [fetchAds])
 
+  const handleSync = useCallback(async () => {
+    const query = search.trim()
+    if (!query) {
+      setError('Enter a brand name or keyword in the search box, then click Sync.')
+      return
+    }
+    setSyncing(true)
+    setError(null)
+    setSyncResult(null)
+    try {
+      const res = await fetch('/api/briefing-assistant/meta-ads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ search_terms: query }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error ?? 'Sync failed')
+        return
+      }
+      setSyncResult(`Synced ${data.ingested ?? 0} ads from Meta (${data.fetched ?? 0} fetched)`)
+      await fetchAds()
+    } catch {
+      setError('Sync request failed')
+    } finally {
+      setSyncing(false)
+    }
+  }, [search, fetchAds])
+
   return (
     <div className="flex flex-col h-full">
       <header className="flex-shrink-0 border-b border-border bg-card/60 px-6 py-4">
@@ -186,7 +218,7 @@ export default function MetaAdsLibraryPage() {
           <div>
             <h1 className="text-lg font-bold tracking-tight text-foreground">Meta Ads Library</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Browse and analyse ads from Meta Ad Library with AI-powered scoring
+              Search competitor ads from Meta, sync them, and get AI-powered scoring
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -194,13 +226,25 @@ export default function MetaAdsLibraryPage() {
               variant="outline"
               size="sm"
               className="gap-1.5"
-              onClick={() => {/* sync trigger */}}
+              onClick={handleSync}
+              disabled={syncing}
             >
-              <BarChart3 className="h-3.5 w-3.5" />
-              Sync
+              {syncing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              {syncing ? 'Syncing...' : 'Sync'}
             </Button>
           </div>
         </div>
+
+        {syncResult && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-emerald-600 bg-emerald-500/10 rounded-md px-3 py-1.5">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {syncResult}
+          </div>
+        )}
 
         <div className="flex items-center gap-3 mt-4">
           <div className="relative flex-1 max-w-md">
@@ -208,8 +252,9 @@ export default function MetaAdsLibraryPage() {
             <input
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by brand, keyword, or ad text..."
+              onChange={(e) => { setSearch(e.target.value); setSyncResult(null) }}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSync() }}
+              placeholder="Enter brand name or keyword, then Sync..."
               className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
             />
           </div>
@@ -261,9 +306,12 @@ export default function MetaAdsLibraryPage() {
             <Button variant="outline" size="sm" onClick={fetchAds}>Retry</Button>
           </div>
         ) : ads.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-2">
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
             <ImageIcon className="h-10 w-10 text-muted-foreground/20" />
-            <p className="text-sm text-muted-foreground">No ads found. Try syncing or adjusting your search.</p>
+            <p className="text-sm text-muted-foreground">No ads found.</p>
+            <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
+              Type a competitor brand name (e.g. &quot;Bose&quot;, &quot;Sony&quot;) in the search box above and click Sync to fetch ads from Meta.
+            </p>
           </div>
         ) : viewMode === 'gallery' ? (
           <div className="p-6 grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
