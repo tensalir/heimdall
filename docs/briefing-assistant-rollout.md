@@ -1,40 +1,71 @@
-# Briefing Assistant Rollout and Validation
+# Briefing Assistant v2 — Rollout
 
-New Briefing Assistant lives at `/sheets/briefing-assistant` and uses APIs under `/api/briefing-assistant/`. This doc describes staged rollout and parity checks.
+The Briefing Assistant has been rebuilt as a standalone multi-module tool at `/briefing-assistant`. It replaces the legacy sprint/split-based workflow with a research-driven creative workspace.
 
-## Non-breaking acceptance checklist (before merge)
+## What Changed
 
-Verify these existing flows still work:
+### Replaced
+- Legacy sprint overview at `/briefing-assistant` (list of sprints with create modal)
+- Legacy sprint workspace at `/briefing-assistant/[sprintId]` (split engine + assignment table)
+- Old `(overview)` and `(sheet)` route groups
 
-- [ ] **`/sheets`** — Overview page loads with both Figma Comments and Stakeholder tabs; Briefing Assistant card appears under Stakeholder tab.
-- [ ] **`/sheets/stakeholder`** — Imports Excel, renders rounds, generates summaries, sends to Monday.
-- [ ] **`/sheets/project/[projectId]`** — File grid and comment sheet flow unchanged.
-- [ ] **Monday webhook pipeline** — Webhook received, item fetched, briefing mapped, job queued.
-- [ ] **Figma plugin sync** — Pending jobs picked up and pages created correctly.
-- [ ] **`/admin`** — Panel, connections, logs all functional.
-- [ ] **TypeScript** — No new errors in existing files (`npm run build` and `tsc` pass).
-- [ ] **API contracts** — No changes to existing API route signatures or response shapes (only new routes under `briefing-assistant`).
+### New Modules
+| Module | Route | Status |
+|--------|-------|--------|
+| Overview dashboard | `/briefing-assistant` | Shipped |
+| Meta Ads Library | `/briefing-assistant/meta-ads` | Shipped |
+| Trends | `/briefing-assistant/trends` | Shipped |
+| Social Comments | `/briefing-assistant/social-comments` | Shipped |
+| Create Ads (three-panel) | `/briefing-assistant/create-ads` | Shipped |
+| Workflows | `/briefing-assistant/workflows` | Shipped |
 
-## Staged rollout (plan)
+### New Backend
+| Endpoint | Purpose |
+|----------|---------|
+| `GET/POST /api/briefing-assistant/meta-ads` | Search + sync Meta ads |
+| `GET /api/briefing-assistant/meta-ads/[adId]` | Ad detail with scores |
+| `GET /api/briefing-assistant/source-items` | Source picker for Create Ads |
+| `GET /api/briefing-assistant/source-items/[itemId]` | Single source item |
+| `GET /api/briefing-assistant/trends` | Trend items |
+| `GET /api/briefing-assistant/social-comments` | Social comment items |
+| `GET/POST /api/briefing-assistant/workflows` | Workflow runs |
+| `POST /api/briefing-assistant/analysis` | AI creative scoring |
+| `POST /api/briefing-assistant/generate-asset` | Sacrificial asset generation |
 
-1. **Ship** — Deploy with new `sheets/briefing-assistant` and `api/briefing-assistant/*` behind existing auth/routes.
-2. **Shadow** — Run new flow in parallel with current briefing-assistant outputs where applicable.
-3. **Validate** — Confirm:
-   - Split totals reconcile with expected monthly targets (e.g. January 210 assets / 53 briefs).
-   - Generated angles can cite source snippets (evidence adapters).
-   - Approved briefs create/attach proper Monday docs via `send-to-monday`.
-   - Key fields survive Monday → Heimdall → Figma handoff (BriefingDTO compatibility).
-   - Sheet interactions stay consistent with existing reviewer flows.
-4. **Deprecate** — Once parity is validated, retire the legacy canvas-first path in the **old repo** (outside Heimdall).
+### New Tables (migration 015)
+- `briefing_source_items` — Normalized source data (ads, trends, comments, workflow outputs)
+- `briefing_analysis_scores` — AI analysis scores per source item
+- `briefing_generated_assets` — Generated sacrificial assets
+- `briefing_workflow_runs` — Workflow execution history
 
-## New routes and APIs (additive only)
+### New Integrations
+- `src/integrations/meta/client.ts` — Meta Ad Library API client
+- `src/integrations/vesper/client.ts` — Vesper/Nano Banana generation gateway
+- `src/domain/briefingAssistant/scoring/rubric.ts` — Performance Creatives 101 scoring rubric
 
-| Route | Purpose |
-|-------|---------|
-| `GET /sheets/briefing-assistant` | Briefing Assistant sheet UI |
-| `POST /api/briefing-assistant/split` | Run split engine (batchKey, totalAssets, maxBriefs) |
-| `POST /api/briefing-assistant/angles` | Get angles for an assignment (evidence-based stub) |
-| `POST /api/briefing-assistant/approve` | Validate working doc state |
-| `POST /api/briefing-assistant/send-to-monday` | Create item/doc, queue Figma sync |
+## Auth Fix
 
-No existing route signatures or response shapes were changed.
+The sheets auth cookie was scoped to `/sheets` path only, which caused briefing-assistant routes to fail authentication when `SHEETS_PASSWORD` was enabled. The cookie path has been changed to `/` in `app/api/sheets/auth/route.ts` so it covers both `/sheets/*` and `/briefing-assistant/*`.
+
+## What Still Works
+
+These existing systems are unchanged and fully functional:
+- `/admin` — Admin dashboard, connections, settings, logs
+- `/ops` — Briefing pipeline operations
+- `/forecast` — Revenue forecasting
+- `/sheets` — Comment sheets and feedback summarizer
+- All existing API routes under `/api/briefing-assistant/sprints/*` still exist for any external references
+- Monday.com webhook pipeline
+- Figma plugin sync
+
+## Env Requirements
+
+New optional env vars for full functionality:
+```
+META_AD_LIBRARY_ACCESS_TOKEN=   # Meta Ad Library API access
+GEMINI_API_KEY=                 # Direct Nano Banana generation (fallback)
+VESPER_API_URL=                 # Vesper instance for image generation
+VESPER_API_SECRET=              # Optional: Vesper server-to-server auth
+```
+
+Existing env vars remain unchanged.

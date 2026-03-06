@@ -6,20 +6,27 @@ feedback surfaces. Named after the Norse guardian of the Bifrost bridge.
 ## Route Architecture
 
 ```
-/                   → Redirects to /admin
-/admin/*            → Admin dashboard (Basic Auth via ADMIN_PASSWORD)
-/sheets/*           → Comment sheets (cookie auth via SHEETS_PASSWORD)
-/sheets/login       → Password gate for sheets
-/api/*              → Shared API layer (CORS enabled, no page auth)
+/                          → Redirects to /admin
+/admin/*                   → Admin dashboard (Supabase session auth)
+/sheets/*                  → Comment sheets (cookie auth via SHEETS_PASSWORD)
+/sheets/login              → Password gate for sheets
+/briefing-assistant/*      → Standalone Briefing Assistant tool (cookie auth)
+/forecast/*                → Forecast module (Supabase session auth)
+/feedback/*                → Feedback module (Supabase session auth)
+/ops/*                     → Operations pipeline (Supabase session auth)
+/api/*                     → Shared API layer (CORS enabled, no page auth)
 ```
 
 ## Capability Namespaces
 
-| Namespace    | Audience     | Auth              | Purpose                                 |
-|-------------|-------------|-------------------|-----------------------------------------|
-| `/admin`    | Internal    | Basic Auth        | Operational dashboard, job queue, config|
-| `/sheets`   | Reviewers   | Cookie / password | Shareable feedback artifacts            |
-| `/api`      | Machines    | CORS only         | Plugin, dashboard, and automation APIs  |
+| Namespace              | Audience     | Auth              | Purpose                                      |
+|------------------------|-------------|-------------------|----------------------------------------------|
+| `/admin`               | Internal    | Supabase session  | Operational dashboard, job queue, config      |
+| `/sheets`              | Reviewers   | Cookie / password | Shareable feedback artifacts                  |
+| `/briefing-assistant`  | Creative Strategy | Cookie / password | Standalone creative briefing tool        |
+| `/forecast`            | Internal    | Supabase session  | Revenue forecasting and asset planning        |
+| `/ops`                 | Internal    | Supabase session  | Briefing pipeline operations                  |
+| `/api`                 | Machines    | CORS only         | Plugin, dashboard, and automation APIs        |
 
 ### Rules
 
@@ -28,6 +35,37 @@ feedback surfaces. Named after the Norse guardian of the Bifrost bridge.
   groups and share backend APIs.
 - Sheet URLs are permanent once shared. Never rename; add redirects.
 - Admin auth and reviewer auth are independent by design.
+- The Briefing Assistant is a standalone tool with its own sidebar navigation,
+  separate from the Heimdall admin panel. It shares global tokens and auth.
+
+## Briefing Assistant v2
+
+The Briefing Assistant is a standalone multi-module tool at `/briefing-assistant`.
+It has its own left sidebar with five modules:
+
+| Module              | Route                                    | Purpose                                    |
+|---------------------|------------------------------------------|--------------------------------------------|
+| Overview            | `/briefing-assistant`                    | Dashboard with module cards and activity   |
+| Meta Ads Library    | `/briefing-assistant/meta-ads`           | Search, browse, and analyse ads from Meta  |
+| Trends              | `/briefing-assistant/trends`             | Emerging creative trends and formats       |
+| Social Comments     | `/briefing-assistant/social-comments`    | Qualitative insights from social/reviews   |
+| Create Ads          | `/briefing-assistant/create-ads`         | Three-panel workflow: source → brief → asset |
+| Workflows           | `/briefing-assistant/workflows`          | Automated research agents and reports      |
+
+### Data Architecture
+
+- **Source items** (`briefing_source_items`): Normalized ads, trends, comments, and workflow outputs.
+- **Analysis scores** (`briefing_analysis_scores`): AI-scored creative evaluation per source item.
+- **Generated assets** (`briefing_generated_assets`): Sacrificial assets from Nano Banana via Vesper.
+- **Workflow runs** (`briefing_workflow_runs`): Execution history for automated research agents.
+
+### Integration Points
+
+- **Meta Ad Library API** (`src/integrations/meta/client.ts`): Fetches ads from Meta Ad Library.
+- **Vesper Gateway** (`src/integrations/vesper/client.ts`): Image generation via Vesper or direct Gemini API.
+- **Scoring Rubric** (`src/domain/briefingAssistant/scoring/rubric.ts`): Performance Creatives 101 framework.
+- **Monday.com**: Existing send-to-Monday pipeline for briefings.
+- **Evidence RAG**: Existing vector search for angle generation.
 
 ## Adding a New Feature
 
@@ -72,6 +110,9 @@ New features should use these services instead of calling Monday/Figma clients d
 | Supabase     | Comment cache, summaries       | `SUPABASE_URL`           |
 | Vercel KV    | Job queue, operational state   | `KV_REST_API_URL`        |
 | Anthropic    | AI node mapping, summaries     | `ANTHROPIC_API_KEY`      |
+| Meta Ad Library | Ad ingestion for briefing   | `META_AD_LIBRARY_ACCESS_TOKEN` |
+| Gemini       | Nano Banana image generation   | `GEMINI_API_KEY`         |
+| Vesper       | Image generation gateway       | `VESPER_API_URL`         |
 
 ## Figma Plugin
 

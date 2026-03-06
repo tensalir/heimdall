@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
     maxAge: COOKIE_MAX_AGE,
-    path: '/sheets',
+    path: '/',
   })
 
   return response

@@ -1,12 +1,16 @@
-/**
- * Briefing Assistant root layout — pass-through only.
- * (overview) route group adds Nav for /briefing-assistant and /briefing-assistant/new.
- * (sheet) route group uses full-screen layout for /briefing-assistant/[sprintId].
- */
+import { BriefingSidebar } from '@/components/briefing-assistant/BriefingSidebar'
+
 export default function BriefingAssistantLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  return <>{children}</>
+  return (
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
+      <BriefingSidebar />
+      <main className="flex-1 overflow-y-auto">
+        {children}
+      </main>
+    </div>
+  )
 }

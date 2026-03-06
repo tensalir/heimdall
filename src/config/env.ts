@@ -56,6 +56,14 @@ const envSchema = z.object({
   MONDAY_ASSETS_BOARD_IDS: z.string().optional(),
   /** Monday: status value that triggers asset link (e.g. "Approved"). Comparison is case-insensitive. */
   MONDAY_ASSETS_STATUS_APPROVED: z.string().optional(),
+  /** Meta Ad Library API access token for ad ingestion. */
+  META_AD_LIBRARY_ACCESS_TOKEN: z.string().min(1).optional(),
+  /** Vesper image generation gateway URL. */
+  VESPER_API_URL: z.string().url().optional(),
+  /** Vesper server-to-server auth secret. */
+  VESPER_API_SECRET: z.string().min(1).optional(),
+  /** Gemini API key for direct Nano Banana generation (Vesper fallback). */
+  GEMINI_API_KEY: z.string().min(1).optional(),
 })
 
 export type Env = z.infer<typeof envSchema>
