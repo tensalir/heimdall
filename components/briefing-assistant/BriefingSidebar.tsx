@@ -34,7 +34,7 @@ const sections: NavSection[] = [
     items: [
       { label: 'Meta Ads Library', href: '/briefing-assistant/meta-ads', icon: ImageIcon },
       { label: 'Trends', href: '/briefing-assistant/trends', icon: TrendingUp },
-      { label: 'Social Comments', href: '/briefing-assistant/social-comments', icon: MessageCircle },
+      { label: 'Social Listening', href: '/briefing-assistant/social-comments', icon: MessageCircle },
     ],
   },
 ]

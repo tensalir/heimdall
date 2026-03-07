@@ -1,49 +1,88 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
+import { TOPICS } from '@/src/services/socialListeningDiscoveryService'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * GET /api/briefing-assistant/social-comments?q=...
- * Returns social-comment-type source items.
+ * GET /api/briefing-assistant/social-comments?q=...&topic=...&sinceWeeks=4&sort=relevance
+ * Returns social-comment-type source items with filtering, sorting, and topic metadata.
  */
 export async function GET(req: NextRequest) {
   const db = getSupabase()
   if (!db) {
-    return NextResponse.json({ comments: [] })
+    return NextResponse.json({
+      comments: [],
+      topics: TOPICS.map((t) => ({ id: t.id, label: t.label })),
+    })
   }
 
   const { searchParams } = new URL(req.url)
   const q = searchParams.get('q')?.trim() || null
+  const topic = searchParams.get('topic')?.trim() || null
+  const sinceWeeks = parseInt(searchParams.get('sinceWeeks') ?? '8', 10) || 8
+  const sort = searchParams.get('sort') ?? 'recent'
+
+  const sinceDate = new Date()
+  sinceDate.setDate(sinceDate.getDate() - sinceWeeks * 7)
 
   let query = db
     .from('briefing_source_items')
-    .select('id, title, preview, body_text, platform, link_url, tags, created_at, raw_data')
+    .select('id, title, preview, body_text, platform, link_url, tags, created_at, started_at, raw_data')
     .eq('source_type', 'social_comment')
-    .order('created_at', { ascending: false })
-    .limit(100)
+    .not('external_id', 'like', 'social-digest-%')
+    .gte('created_at', sinceDate.toISOString())
+    .limit(80)
 
-  if (q) query = query.ilike('body_text', `%${q}%`)
+  if (q) query = query.or(`body_text.ilike.%${q}%,title.ilike.%${q}%`)
+  if (topic) query = query.contains('tags', [topic])
+
+  if (sort === 'relevance') {
+    query = query.order('created_at', { ascending: false })
+  } else {
+    query = query.order('created_at', { ascending: false })
+  }
 
   const { data, error } = await query
   if (error) {
-    return NextResponse.json({ comments: [] })
+    return NextResponse.json({
+      comments: [],
+      topics: TOPICS.map((t) => ({ id: t.id, label: t.label })),
+    })
   }
 
-  const comments = (data ?? []).map((row: Record<string, unknown>) => {
+  let comments = (data ?? []).map((row: Record<string, unknown>) => {
     const raw = (row.raw_data ?? {}) as Record<string, unknown>
     return {
       id: row.id,
+      title: row.title ?? '',
       platform: row.platform ?? 'unknown',
-      author: raw.author as string | null ?? null,
-      text: row.body_text ?? row.preview ?? '',
+      author: (raw.author as string | null) ?? null,
+      subreddit: (raw.subreddit as string | null) ?? null,
+      text: (row.body_text ?? row.preview ?? '') as string,
       sentiment: (raw.sentiment as string) ?? 'neutral',
-      engagement_count: raw.engagement_count as number | null ?? null,
+      relevance_score: (raw.relevance_score as number) ?? null,
+      authenticity_score: (raw.authenticity_score as number) ?? null,
+      creative_angles: (raw.creative_angles as string[]) ?? [],
+      language_hooks: (raw.language_hooks as string[]) ?? [],
+      highlights: (raw.highlights as string[]) ?? [],
+      engagement_count: (raw.engagement_count as number | null) ?? null,
       source_url: row.link_url,
       captured_at: row.created_at,
+      published_at: row.started_at ?? null,
       tags: row.tags ?? [],
     }
   })
 
-  return NextResponse.json({ comments })
+  if (sort === 'relevance') {
+    comments = comments.sort(
+      (a: { relevance_score: number | null }, b: { relevance_score: number | null }) =>
+        (b.relevance_score ?? 0) - (a.relevance_score ?? 0),
+    )
+  }
+
+  return NextResponse.json({
+    comments,
+    topics: TOPICS.map((t) => ({ id: t.id, label: t.label })),
+  })
 }

@@ -37,8 +37,8 @@ const modules: ModuleCard[] = [
     accent: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
   },
   {
-    title: 'Social Comments',
-    description: 'Mine qualitative insights from social media comments and reviews.',
+    title: 'Social Listening',
+    description: 'Real Reddit conversations about hearing protection, noise sensitivity, and Loop — scored for authenticity.',
     href: '/briefing-assistant/social-comments',
     icon: MessageCircle,
     accent: 'bg-violet-500/10 text-violet-600 dark:text-violet-400',

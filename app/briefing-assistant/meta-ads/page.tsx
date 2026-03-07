@@ -436,6 +436,8 @@ const SURFACE_CONFIG: Record<BrowseSurface, { label: string; icon: typeof Sparkl
   saved: { label: 'Saved', icon: Bookmark },
 }
 
+const clientAdCache = new Map<string, MetaAdItem[]>()
+
 export default function MetaAdsLibraryPage() {
   const [allAds, setAllAds] = useState<MetaAdItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -452,36 +454,44 @@ export default function MetaAdsLibraryPage() {
   const { followedBrands, toggleBrand, isFollowing } = useFollowedBrands()
 
   const fetchAds = useCallback(async (overrideSurface?: BrowseSurface, overrideSearch?: string) => {
-    setLoading(true)
     setError(null)
+    const params = new URLSearchParams()
+    const currentSurface = overrideSurface ?? surface
+    params.set('surface', currentSurface)
+    params.set('sort', filters.sort || 'longest_running')
+    params.set('limit', '200')
+
+    if (currentSurface === 'discovery') {
+      params.set('quality', filters.quality || 'not_rejected')
+    } else if (currentSurface === 'top_picks') {
+      params.set('quality', 'all')
+    }
+
+    const searchQ = overrideSearch ?? search
+    if (searchQ.trim()) params.set('q', searchQ.trim())
+
+    if (filters.content_style) params.set('content_style', filters.content_style)
+    if (filters.target_market) params.set('target_market', filters.target_market)
+    if (filters.language) params.set('language', filters.language)
+    if (filters.format) params.set('format', filters.format)
+    if (filters.status === 'active') params.set('active', 'true')
+    if (filters.min_days_running) params.set('min_days_running', filters.min_days_running)
+
+    if (currentSurface === 'following') {
+      const pageIds = Array.from(followedBrands.keys())
+      if (pageIds.length > 0) params.set('followed_page_ids', pageIds.join(','))
+    }
+
+    const cacheKey = params.toString()
+    const stale = clientAdCache.get(cacheKey)
+    if (stale) {
+      setAllAds(stale)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
+
     try {
-      const params = new URLSearchParams()
-      const currentSurface = overrideSurface ?? surface
-      params.set('surface', currentSurface)
-      params.set('sort', filters.sort || 'longest_running')
-      params.set('limit', '200')
-
-      if (currentSurface === 'discovery') {
-        params.set('quality', filters.quality || 'not_rejected')
-      } else if (currentSurface === 'top_picks') {
-        params.set('quality', 'all')
-      }
-
-      const searchQ = overrideSearch ?? search
-      if (searchQ.trim()) params.set('q', searchQ.trim())
-
-      if (filters.content_style) params.set('content_style', filters.content_style)
-      if (filters.target_market) params.set('target_market', filters.target_market)
-      if (filters.language) params.set('language', filters.language)
-      if (filters.format) params.set('format', filters.format)
-      if (filters.status === 'active') params.set('active', 'true')
-      if (filters.min_days_running) params.set('min_days_running', filters.min_days_running)
-
-      if (currentSurface === 'following') {
-        const pageIds = Array.from(followedBrands.keys())
-        if (pageIds.length > 0) params.set('followed_page_ids', pageIds.join(','))
-      }
-
       const res = await fetch(`/api/briefing-assistant/meta-ads?${params}`)
       const data = await res.json()
 
@@ -494,19 +504,23 @@ export default function MetaAdsLibraryPage() {
       if (!res.ok) {
         if (data.token_expired) {
           setTokenWarning(data.error)
-          setAllAds([])
+          if (!stale) setAllAds([])
         } else {
           setError(data.error ?? 'Failed to fetch ads')
-          setAllAds([])
+          if (!stale) setAllAds([])
         }
-        return []
+        return stale ?? []
       }
-      setAllAds(data.ads ?? [])
-      return data.ads ?? []
+      const fresh = data.ads ?? []
+      clientAdCache.set(cacheKey, fresh)
+      setAllAds(fresh)
+      return fresh
     } catch {
-      setError('Request failed')
-      setAllAds([])
-      return []
+      if (!stale) {
+        setError('Request failed')
+        setAllAds([])
+      }
+      return stale ?? []
     } finally {
       setLoading(false)
     }

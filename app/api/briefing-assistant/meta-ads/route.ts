@@ -30,7 +30,7 @@ type SupabaseDb = NonNullable<ReturnType<typeof getSupabase>>
 // ---------------------------------------------------------------------------
 
 const browseCache = new Map<string, { data: unknown; ts: number }>()
-const BROWSE_CACHE_TTL_MS = 30_000
+const BROWSE_CACHE_TTL_MS = 60_000
 
 function getCached(key: string): unknown | null {
   const entry = browseCache.get(key)
@@ -112,7 +112,9 @@ export async function GET(req: NextRequest) {
 
   const cacheKey = searchParams.toString()
   const cached = getCached(cacheKey)
-  if (cached) return NextResponse.json(cached)
+  if (cached) return NextResponse.json(cached, {
+    headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' },
+  })
 
   const legacyTab = searchParams.get('tab')
   let surface: BrowseSurface = 'discovery'
@@ -291,7 +293,12 @@ export async function GET(req: NextRequest) {
 
   const payload = { ads, watchlist_status: watchlistStatus, surface }
   setCache(cacheKey, payload)
-  return NextResponse.json(payload)
+
+  lazyMirrorPass(db, ads).catch(() => {})
+
+  return NextResponse.json(payload, {
+    headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' },
+  })
 }
 
 let _watchlistSyncRunning = false
@@ -359,6 +366,32 @@ async function triggerWatchlistSync(db: SupabaseDb) {
     }
   } finally {
     _watchlistSyncRunning = false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lazy media mirror: progressively move Meta CDN thumbnails to Supabase
+// ---------------------------------------------------------------------------
+
+const LAZY_MIRROR_MAX = 5
+let _lazyMirrorRunning = false
+
+async function lazyMirrorPass(
+  db: SupabaseDb,
+  ads: Array<{ id: string; thumbnail_url: string | null }>,
+) {
+  if (_lazyMirrorRunning) return
+  const candidates = ads
+    .filter((a) => a.thumbnail_url && isValidMediaUrl(a.thumbnail_url) && !a.thumbnail_url!.includes('supabase'))
+    .map((a) => a.id)
+    .slice(0, LAZY_MIRROR_MAX)
+  if (candidates.length === 0) return
+
+  _lazyMirrorRunning = true
+  try {
+    await runThumbnailWarmup(db, candidates)
+  } finally {
+    _lazyMirrorRunning = false
   }
 }
 

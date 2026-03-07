@@ -3,5 +3,15 @@
   "devCommand": "next dev",
   "installCommand": "npm install",
   "framework": "nextjs",
-  "outputDirectory": ".next"
+  "outputDirectory": ".next",
+  "crons": [
+    {
+      "path": "/api/briefing-assistant/trends/discover",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/briefing-assistant/social-comments/discover",
+      "schedule": "0 8 * * *"
+    }
+  ]
 }
