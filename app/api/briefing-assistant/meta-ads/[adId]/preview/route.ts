@@ -37,17 +37,25 @@ export async function GET(
       item.external_id,
       item.id,
     )
+    const cacheControl =
+      process.env.NODE_ENV === 'production'
+        ? 'public, max-age=21600, s-maxage=21600'
+        : 'no-store'
     return new NextResponse(buffer, {
       headers: {
         'Content-Type': mimeType,
-        'Cache-Control': 'public, max-age=21600, s-maxage=21600',
+        'Cache-Control': cacheControl,
       },
     })
   } catch {
+    const cacheControl =
+      process.env.NODE_ENV === 'production'
+        ? 'public, max-age=3600, s-maxage=3600'
+        : 'no-store'
     return new NextResponse(buildMetaPreviewPlaceholderSvg(label), {
       headers: {
         'Content-Type': 'image/svg+xml',
-        'Cache-Control': 'public, max-age=3600, s-maxage=3600',
+        'Cache-Control': cacheControl,
       },
     })
   }

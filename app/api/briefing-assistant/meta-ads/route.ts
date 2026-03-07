@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
       id, source_type, external_id, title, preview, thumbnail_url, creative_url,
       body_text, link_url, media_type, platform, page_name, is_active,
       started_at, ended_at, spend_lower, spend_upper, impressions_lower, impressions_upper,
-      tags, created_at
+      tags, created_at, updated_at
     `)
     .eq('source_type', 'meta_ad')
     .order('created_at', { ascending: false })
@@ -57,12 +57,13 @@ export async function GET(req: NextRequest) {
 
   const ads = (items ?? []).map((item: Record<string, unknown>) => {
     const scores = scoreMap.get(item.id as string)
+    const previewVersion = encodeURIComponent(String(item.updated_at ?? item.created_at ?? '1'))
     return {
       id: item.id,
       ad_id: item.external_id,
       page_name: item.page_name ?? item.title,
-      creative_url: `/api/briefing-assistant/meta-ads/${item.id}/preview`,
-      thumbnail_url: `/api/briefing-assistant/meta-ads/${item.id}/preview`,
+      creative_url: `/api/briefing-assistant/meta-ads/${item.id}/preview?v=${previewVersion}`,
+      thumbnail_url: `/api/briefing-assistant/meta-ads/${item.id}/preview?v=${previewVersion}`,
       media_type: item.media_type ?? 'image',
       body_text: item.body_text,
       link_url: `/api/briefing-assistant/meta-ads/${item.id}/snapshot`,

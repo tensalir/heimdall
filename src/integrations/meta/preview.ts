@@ -101,136 +101,51 @@ export async function getMetaAdPreviewPng(
 
     await new Promise((resolve) => setTimeout(resolve, 300))
 
+    // Meta consistently renders the archived ad card inside div._8n-d.
+    // Prefer clipping that exact container so the preview fills the frame.
     const clip = await page.evaluate(() => {
-      const viewportWidth = window.innerWidth
-      const viewportHeight = window.innerHeight
+      const card = document.querySelector('div._8n-d')
+      if (card instanceof HTMLElement) {
+        const rect = card.getBoundingClientRect()
+        if (rect.width > 100 && rect.height > 100) {
+          return {
+            x: Math.max(0, rect.x),
+            y: Math.max(0, rect.y),
+            width: Math.min(window.innerWidth, rect.width),
+            height: Math.min(window.innerHeight, rect.height),
+          }
+        }
+      }
 
-      const isVisible = (el: Element) => {
+      // Fallback: crop to the largest visible media element.
+      const mediaNodes = Array.from(
+        document.querySelectorAll('img, video, canvas'),
+      ).filter((el) => {
         const rect = el.getBoundingClientRect()
         const style = window.getComputedStyle(el)
         return (
-          rect.width > 0 &&
-          rect.height > 0 &&
+          rect.width > 150 &&
+          rect.height > 150 &&
           style.visibility !== 'hidden' &&
           style.display !== 'none' &&
           parseFloat(style.opacity || '1') > 0
         )
-      }
-
-      const getRect = (el: Element) => {
-        const rect = el.getBoundingClientRect()
-        return {
-          x: rect.x,
-          y: rect.y,
-          width: rect.width,
-          height: rect.height,
-          centerX: rect.x + rect.width / 2,
-          area: rect.width * rect.height,
-        }
-      }
-
-      // Remove cookie / consent overlays that otherwise screenshot like popup windows.
-      const overlaySelectors = [
-        'div._10.uiLayer._4-hy',
-        'div._59s7._9l2g',
-        '[role="dialog"]',
-        '[aria-label*="cookie" i]',
-      ]
-      for (const selector of overlaySelectors) {
-        document.querySelectorAll(selector).forEach((node) => {
-          ;(node as HTMLElement).style.display = 'none'
-        })
-      }
-      document.querySelectorAll('div, section, aside').forEach((node) => {
-        const text = (node.textContent || '').toLowerCase()
-        const rect = getRect(node)
-        if (
-          text.includes('cookies') &&
-          rect.width > viewportWidth * 0.4 &&
-          rect.height > viewportHeight * 0.2
-        ) {
-          ;(node as HTMLElement).style.display = 'none'
-        }
       })
 
-      const mediaNodes = Array.from(
-        document.querySelectorAll('img, video, canvas'),
-      ).filter(isVisible)
+      if (mediaNodes.length > 0) {
+        const best = mediaNodes
+          .map((el) => ({ el, rect: el.getBoundingClientRect() }))
+          .sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height)[0]
 
-      let bestClip: { x: number; y: number; width: number; height: number } | null = null
-
-      for (const media of mediaNodes) {
-        const mediaRect = getRect(media)
-        if (
-          mediaRect.width < 180 ||
-          mediaRect.height < 180 ||
-          mediaRect.area < 70000
-        ) {
-          continue
-        }
-
-        let parent = media.parentElement
-        while (parent && parent !== document.body) {
-          const rect = getRect(parent)
-          const centered = Math.abs(rect.centerX - viewportWidth / 2) < viewportWidth * 0.2
-          const widthFits =
-            rect.width >= Math.max(280, mediaRect.width - 8) &&
-            rect.width <= Math.min(viewportWidth * 0.7, mediaRect.width + 180)
-          const heightFits =
-            rect.height >= Math.max(320, mediaRect.height + 80) &&
-            rect.height <= Math.min(viewportHeight * 0.95, 1100)
-
-          if (isVisible(parent) && centered && widthFits && heightFits) {
-            bestClip = {
-              x: Math.max(0, rect.x - 12),
-              y: Math.max(0, rect.y - 12),
-              width: Math.min(viewportWidth, rect.width + 24),
-              height: Math.min(viewportHeight, rect.height + 24),
-            }
-            break
-          }
-          parent = parent.parentElement
-        }
-
-        if (!bestClip) {
-          bestClip = {
-            x: Math.max(0, mediaRect.x - 12),
-            y: Math.max(0, mediaRect.y - 12),
-            width: Math.min(viewportWidth, mediaRect.width + 24),
-            height: Math.min(viewportHeight, mediaRect.height + 24),
-          }
-        }
-
-        if (bestClip) break
-      }
-
-      if (!bestClip) {
-        const candidates = Array.from(
-          document.querySelectorAll('div, section, article, a'),
-        ).filter(isVisible)
-        const card = candidates
-          .map((el) => ({ el, rect: getRect(el) }))
-          .filter(
-            ({ rect }) =>
-              rect.width >= 280 &&
-              rect.width <= viewportWidth * 0.7 &&
-              rect.height >= 320 &&
-              rect.height <= 1100 &&
-              Math.abs(rect.centerX - viewportWidth / 2) < viewportWidth * 0.2,
-          )
-          .sort((a, b) => b.rect.area - a.rect.area)[0]
-
-        if (card) {
-          bestClip = {
-            x: Math.max(0, card.rect.x - 12),
-            y: Math.max(0, card.rect.y - 12),
-            width: Math.min(viewportWidth, card.rect.width + 24),
-            height: Math.min(viewportHeight, card.rect.height + 24),
-          }
+        return {
+          x: Math.max(0, best.rect.x - 8),
+          y: Math.max(0, best.rect.y - 8),
+          width: Math.min(window.innerWidth, best.rect.width + 16),
+          height: Math.min(window.innerHeight, best.rect.height + 16),
         }
       }
 
-      return bestClip
+      return null
     })
 
     const buffer = (await page.screenshot({
