@@ -51,7 +51,7 @@ const ADMIN_SECTIONS: NavSection[] = [
     items: [
       { name: 'Heimdall Plugin', href: '/admin/plugin', icon: Puzzle },
       { name: 'Feedback Summarizer', href: '/sheets', icon: MessageSquare },
-      { name: 'Briefing Assistant', href: '/briefing-assistant', icon: LayoutGrid },
+      { name: 'Mimir', href: '/briefing-assistant', icon: LayoutGrid },
     ],
   },
   {
@@ -67,7 +67,7 @@ const USER_SECTIONS: NavSection[] = [
     label: 'Tools',
     items: [
       { name: 'Feedback Summarizer', href: '/sheets', icon: MessageSquare },
-      { name: 'Briefing Assistant', href: '/briefing-assistant', icon: LayoutGrid },
+      { name: 'Mimir', href: '/briefing-assistant', icon: LayoutGrid },
     ],
   },
 ]

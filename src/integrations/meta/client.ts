@@ -5,6 +5,8 @@
  */
 
 const META_AD_LIBRARY_API = 'https://graph.facebook.com/v21.0/ads_archive'
+const META_RETRY_ATTEMPTS = 3
+const META_RETRY_BASE_MS = 2000
 
 export interface MetaAdLibraryParams {
   search_terms?: string
@@ -29,6 +31,7 @@ export interface MetaAdLibraryAd {
   page_id?: string
   page_name?: string
   publisher_platforms?: string[]
+  languages?: string[]
   spend?: { lower_bound: string; upper_bound: string }
   impressions?: { lower_bound: string; upper_bound: string }
   currency?: string
@@ -80,6 +83,7 @@ export async function searchMetaAdLibrary(
     'page_id',
     'page_name',
     'publisher_platforms',
+    'languages',
     'spend',
     'impressions',
     'currency',
@@ -98,18 +102,34 @@ export async function searchMetaAdLibrary(
   url.searchParams.set('limit', String(params.limit ?? 25))
   if (params.after) url.searchParams.set('after', params.after)
 
-  const res = await fetch(url.toString())
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Meta Ad Library API ${res.status}: ${text}`)
+  let lastError: Error | null = null
+  for (let attempt = 1; attempt <= META_RETRY_ATTEMPTS; attempt++) {
+    const res = await fetch(url.toString())
+    if (res.status === 429 && attempt < META_RETRY_ATTEMPTS) {
+      const retryAfter = res.headers.get('Retry-After')
+      const waitMs = retryAfter
+        ? Math.min(Number(retryAfter) * 1000, 30000)
+        : META_RETRY_BASE_MS * attempt
+      await new Promise((r) => setTimeout(r, waitMs))
+      continue
+    }
+    if (!res.ok) {
+      lastError = new Error(`Meta Ad Library API ${res.status}: ${await res.text()}`)
+      if (res.status >= 500 && attempt < META_RETRY_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, META_RETRY_BASE_MS * attempt))
+        continue
+      }
+      throw lastError
+    }
+    return (await res.json()) as MetaAdLibraryResponse
   }
-  return (await res.json()) as MetaAdLibraryResponse
+  throw lastError ?? new Error('Meta Ad Library API: rate limited')
 }
 
 /**
  * Normalize a Meta Ad Library API response ad into our internal source item shape.
  */
-export function normalizeMetaAd(ad: MetaAdLibraryAd): {
+export interface NormalizedMetaAd {
   external_id: string
   title: string
   preview: string
@@ -117,6 +137,7 @@ export function normalizeMetaAd(ad: MetaAdLibraryAd): {
   body_text: string | null
   link_url: string | null
   thumbnail_url: string | null
+  creative_url: string | null
   media_type: 'image' | 'video'
   platform: string
   is_active: boolean
@@ -127,7 +148,9 @@ export function normalizeMetaAd(ad: MetaAdLibraryAd): {
   impressions_lower: number | null
   impressions_upper: number | null
   raw_data: Record<string, unknown>
-} {
+}
+
+export function normalizeMetaAd(ad: MetaAdLibraryAd): NormalizedMetaAd {
   const bodies = ad.ad_creative_bodies ?? []
   const bodyText = bodies[0] ?? null
   const pageName = ad.page_name ?? 'Unknown'
@@ -139,10 +162,9 @@ export function normalizeMetaAd(ad: MetaAdLibraryAd): {
     preview: bodyText?.slice(0, 200) ?? '',
     page_name: pageName,
     body_text: bodyText,
-    // Do not persist Meta's tokenized snapshot URL into public-facing fields.
-    // We generate signed snapshot/preview URLs server-side per request instead.
-    link_url: null,
+    link_url: ad.ad_snapshot_url ?? null,
     thumbnail_url: null,
+    creative_url: null,
     media_type: 'image',
     platform: platforms || 'meta',
     is_active: !ad.ad_delivery_stop_time,

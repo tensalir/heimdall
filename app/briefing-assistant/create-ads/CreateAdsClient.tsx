@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
 import {
   Loader2,
   ImageIcon,
@@ -12,6 +13,7 @@ import {
   MessageCircle,
   TrendingUp,
   Workflow,
+  ArrowLeft,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -102,7 +104,7 @@ function SourcePanel({
             Change
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto scrollbar-subtle p-4 space-y-4">
           {source.thumbnail_url && (
             <div className="rounded-lg border border-border overflow-hidden">
               <img src={source.thumbnail_url} alt="" className="w-full aspect-[4/5] object-cover" />
@@ -131,7 +133,7 @@ function SourcePanel({
           Select Source
         </h3>
       </div>
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto scrollbar-subtle p-4">
         {sourcesLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -209,7 +211,7 @@ function BriefingPanel({
           Auto-fill
         </Button>
       </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto scrollbar-subtle p-4 space-y-4">
         {SECTION_KEYS.map((key) => (
           <div key={key} className="space-y-1">
             <label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
@@ -258,7 +260,7 @@ function AssetsPanel({
           Generate
         </Button>
       </div>
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 overflow-y-auto scrollbar-subtle p-4">
         {assets.length === 0 ? (
           <div className="text-center py-16">
             <PaintbrushIcon className="h-8 w-8 text-muted-foreground/15 mx-auto mb-3" />
@@ -387,11 +389,17 @@ export function CreateAdsClient({
 
   return (
     <div className="flex flex-col h-full">
-      <header className="flex-shrink-0 border-b border-border bg-card/60 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-bold tracking-tight text-foreground">Create Ads</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">
+      <header className="flex-shrink-0 border-b border-border bg-card/60 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <Link
+            href="/briefing-assistant"
+            className="flex items-center justify-center w-8 h-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-sm font-bold tracking-tight text-foreground">Create Ads</h1>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
               Select a source, build a briefing, and generate sacrificial assets
             </p>
           </div>
@@ -403,13 +411,13 @@ export function CreateAdsClient({
       </header>
 
       <div className="flex-1 flex min-h-0">
-        <div className="w-80 flex-shrink-0 border-r border-border bg-card/30 overflow-hidden">
+        <div className="w-[340px] flex-shrink-0 border-r border-border bg-card/30 overflow-hidden">
           <SourcePanel source={source} onSelect={setSource} />
         </div>
         <div className="flex-1 border-r border-border overflow-hidden">
           <BriefingPanel sections={sections} onSectionChange={handleSectionChange} onGenerate={handleGenerateBrief} generating={generatingBrief} hasSource={!!source} />
         </div>
-        <div className="w-80 flex-shrink-0 bg-card/30 overflow-hidden">
+        <div className="w-[340px] flex-shrink-0 bg-card/30 overflow-hidden">
           <AssetsPanel assets={assets} onGenerate={handleGenerateAssets} generating={generatingAssets} hasSource={!!source} hasBriefing={hasBriefing} />
         </div>
       </div>

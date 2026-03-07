@@ -21,7 +21,7 @@ export async function GET(
   const { adId } = await params
   const { data: item } = await db
     .from('briefing_source_items')
-    .select('id, external_id, page_name, title')
+    .select('id, external_id, page_name, title, link_url')
     .eq('id', adId)
     .single()
 
@@ -36,10 +36,11 @@ export async function GET(
     const { buffer, mimeType } = await getMetaAdPreviewPng(
       item.external_id,
       item.id,
+      item.link_url,
     )
     const cacheControl =
       process.env.NODE_ENV === 'production'
-        ? 'public, max-age=21600, s-maxage=21600'
+        ? 'public, max-age=21600, s-maxage=21600, stale-while-revalidate=86400'
         : 'no-store'
     return new NextResponse(buffer, {
       headers: {
@@ -48,14 +49,10 @@ export async function GET(
       },
     })
   } catch {
-    const cacheControl =
-      process.env.NODE_ENV === 'production'
-        ? 'public, max-age=3600, s-maxage=3600'
-        : 'no-store'
     return new NextResponse(buildMetaPreviewPlaceholderSvg(label), {
       headers: {
         'Content-Type': 'image/svg+xml',
-        'Cache-Control': cacheControl,
+        'Cache-Control': 'no-store',
       },
     })
   }

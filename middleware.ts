@@ -2,13 +2,14 @@
  * Heimdall middleware — route-based auth + CORS + legacy redirects.
  *
  * Auth zones:
- *   /admin/*      → Supabase session (magic link / email+password)
- *   /forecast/*   → Supabase session (same as admin)
- *   /feedback/*   → Supabase session (same as admin)
- *   /sheets/*     → Cookie-based auth with SHEETS_PASSWORD
- *   /api/*        → CORS headers only (Figma plugin needs open access)
- *   /auth/*       → No auth (callback handler)
- *   /             → No auth (landing redirect)
+ *   /admin/*              → Supabase session (magic link / email+password)
+ *   /forecast/*           → Supabase session (same as admin)
+ *   /feedback/*           → Supabase session (same as admin)
+ *   /briefing-assistant/* → Supabase session preferred; BRIEFING_LOCAL_PASSWORD fallback for localhost dev
+ *   /sheets/*             → Cookie-based auth with SHEETS_PASSWORD
+ *   /api/*                → CORS headers only (Figma plugin needs open access)
+ *   /auth/*               → No auth (callback handler)
+ *   /                     → No auth (landing redirect)
  *
  * Legacy redirects keep old URLs working during migration.
  */
@@ -154,6 +155,67 @@ function handleSheetsAuth(request: NextRequest): NextResponse | null {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Briefing Assistant auth — Supabase preferred, local password fbk  */
+/* ------------------------------------------------------------------ */
+
+const BRIEFING_COOKIE_NAME = 'heimdall-briefing-token'
+
+async function handleBriefingAuth(request: NextRequest): Promise<NextResponse> {
+  const { pathname } = request.nextUrl
+
+  if (pathname === '/briefing-assistant/login') return NextResponse.next()
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  if (supabaseUrl && supabaseAnonKey) {
+    let response = NextResponse.next({ request: { headers: request.headers } })
+    const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value }) => {
+            request.cookies.set(name, value)
+          })
+          response = NextResponse.next({ request: { headers: request.headers } })
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response.cookies.set(name, value, options)
+          })
+        },
+      },
+    })
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) return response
+  }
+
+  const localPassword = process.env.BRIEFING_LOCAL_PASSWORD
+  if (localPassword) {
+    const token = request.cookies.get(BRIEFING_COOKIE_NAME)?.value
+    if (token) {
+      try {
+        const decoded = Buffer.from(token, 'base64').toString('ascii')
+        if (decoded === localPassword) return NextResponse.next()
+      } catch { /* invalid token */ }
+    }
+  }
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    if (!localPassword) return NextResponse.next()
+    const url = request.nextUrl.clone()
+    url.pathname = '/briefing-assistant/login'
+    url.searchParams.set('redirect', pathname)
+    return NextResponse.redirect(url)
+  }
+
+  const url = request.nextUrl.clone()
+  url.pathname = '/login'
+  url.searchParams.set('next', pathname)
+  return NextResponse.redirect(url)
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main middleware                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -191,11 +253,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // 7. Briefing Assistant: same cookie-based auth as sheets (Creative Strategists)
+  // 7. Briefing Assistant: Supabase session preferred, local password fallback
   if (pathname.startsWith('/briefing-assistant')) {
-    const denied = handleSheetsAuth(request)
-    if (denied) return denied
-    return NextResponse.next()
+    return handleBriefingAuth(request)
   }
 
   // 8. Everything else (root landing, etc.)

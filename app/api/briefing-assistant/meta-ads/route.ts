@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
 import { searchMetaAdLibrary, normalizeMetaAd, isMetaAdLibraryAvailable } from '@/src/integrations/meta/client'
 import { buildScoringPrompt, computeOverallScore, RUBRIC_VERSION } from '@/src/domain/briefingAssistant/scoring/rubric'
+import { tryLightweightExtract } from '@/src/integrations/meta/preview'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,16 +58,18 @@ export async function GET(req: NextRequest) {
 
   const ads = (items ?? []).map((item: Record<string, unknown>) => {
     const scores = scoreMap.get(item.id as string)
-    const previewVersion = encodeURIComponent(String(item.updated_at ?? item.created_at ?? '1'))
+    const fallbackPreview = `/api/briefing-assistant/meta-ads/${item.id}/preview`
+    const thumb = (item.thumbnail_url as string | null) || fallbackPreview
+    const creative = (item.creative_url as string | null) || fallbackPreview
     return {
       id: item.id,
       ad_id: item.external_id,
       page_name: item.page_name ?? item.title,
-      creative_url: `/api/briefing-assistant/meta-ads/${item.id}/preview?v=${previewVersion}`,
-      thumbnail_url: `/api/briefing-assistant/meta-ads/${item.id}/preview?v=${previewVersion}`,
+      creative_url: creative,
+      thumbnail_url: thumb,
       media_type: item.media_type ?? 'image',
       body_text: item.body_text,
-      link_url: `/api/briefing-assistant/meta-ads/${item.id}/snapshot`,
+      link_url: (item.link_url as string | null) || `/api/briefing-assistant/meta-ads/${item.id}/snapshot`,
       started_at: item.started_at,
       ended_at: item.ended_at,
       is_active: item.is_active ?? false,
@@ -131,41 +134,46 @@ export async function POST(req: NextRequest) {
     })
 
     const ingestedIds: string[] = []
-    for (const ad of result.data) {
-      const normalized = normalizeMetaAd(ad)
+    const rows = result.data.map((ad) => {
+      const n = normalizeMetaAd(ad)
+      return {
+        source_type: 'meta_ad' as const,
+        external_id: n.external_id,
+        title: n.title,
+        preview: n.preview,
+        page_name: n.page_name,
+        body_text: n.body_text,
+        link_url: n.link_url,
+        creative_url: n.creative_url,
+        media_type: n.media_type,
+        platform: n.platform,
+        is_active: n.is_active,
+        started_at: n.started_at,
+        ended_at: n.ended_at,
+        spend_lower: n.spend_lower,
+        spend_upper: n.spend_upper,
+        impressions_lower: n.impressions_lower,
+        impressions_upper: n.impressions_upper,
+        raw_data: n.raw_data,
+      }
+    })
+
+    const BATCH_SIZE = 20
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const batch = rows.slice(i, i + BATCH_SIZE)
       const { data: upserted, error: upsertErr } = await db
         .from('briefing_source_items')
-        .upsert(
-          {
-            source_type: 'meta_ad',
-            external_id: normalized.external_id,
-            title: normalized.title,
-            preview: normalized.preview,
-            page_name: normalized.page_name,
-            body_text: normalized.body_text,
-            link_url: normalized.link_url,
-            thumbnail_url: normalized.thumbnail_url,
-            media_type: normalized.media_type,
-            platform: normalized.platform,
-            is_active: normalized.is_active,
-            started_at: normalized.started_at,
-            ended_at: normalized.ended_at,
-            spend_lower: normalized.spend_lower,
-            spend_upper: normalized.spend_upper,
-            impressions_lower: normalized.impressions_lower,
-            impressions_upper: normalized.impressions_upper,
-            raw_data: normalized.raw_data,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'source_type,external_id' },
-        )
+        .upsert(batch, { onConflict: 'source_type,external_id' })
         .select('id')
-      if (!upsertErr && upserted?.[0]?.id) {
-        ingestedIds.push(upserted[0].id)
+      if (!upsertErr && upserted) {
+        for (const row of upserted) {
+          if (row.id) ingestedIds.push(row.id)
+        }
       }
     }
 
     runAutoAnalysis(db, ingestedIds).catch(console.error)
+    runThumbnailWarmup(db, ingestedIds).catch(console.error)
 
     return NextResponse.json({
       ok: true,
@@ -254,4 +262,51 @@ async function runAutoAnalysis(
       console.error(`[auto-analysis] Failed for ${itemId}:`, e instanceof Error ? e.message : e)
     }
   }
+}
+
+const WARMUP_CONCURRENCY = 3
+const WARMUP_MAX_PER_SYNC = 15
+
+async function runThumbnailWarmup(
+  db: NonNullable<ReturnType<typeof getSupabase>>,
+  itemIds: string[],
+) {
+  if (itemIds.length === 0) return
+  const batch = itemIds.slice(0, WARMUP_MAX_PER_SYNC)
+
+  const { data: items } = await db
+    .from('briefing_source_items')
+    .select('id, link_url, thumbnail_url')
+    .in('id', batch)
+
+  const needsWarmup = (items ?? []).filter(
+    (i: { thumbnail_url: string | null }) => !i.thumbnail_url,
+  )
+  if (needsWarmup.length === 0) return
+
+  const queue = [...needsWarmup]
+  const workers = Array.from({ length: WARMUP_CONCURRENCY }, async () => {
+    while (queue.length > 0) {
+      const item = queue.shift()
+      if (!item) break
+      try {
+        if (!item.link_url) continue
+        const result = await tryLightweightExtract(item.link_url)
+        if (!result) continue
+
+        const blob = result.buffer
+        const dataUri = `data:${result.mimeType};base64,${blob.toString('base64')}`
+
+        await db
+          .from('briefing_source_items')
+          .update({ thumbnail_url: dataUri })
+          .eq('id', item.id)
+          .is('thumbnail_url', null)
+      } catch (e) {
+        console.error(`[thumbnail-warmup] Failed for ${item.id}:`, e instanceof Error ? e.message : e)
+      }
+    }
+  })
+
+  await Promise.allSettled(workers)
 }

@@ -81,10 +81,15 @@ export default function BriefingAssistantOverviewPage() {
   return (
     <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-8">
       <header>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">
-          Briefing Assistant
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <div>
+          <h1 className="text-2xl font-bold tracking-[0.2em] uppercase text-foreground">
+            MIMIR
+          </h1>
+          <p className="text-[10px] font-semibold tracking-[0.35em] uppercase text-muted-foreground/60 mt-0.5">
+            BRIEFING ASSISTANT
+          </p>
+        </div>
+        <p className="text-sm text-muted-foreground mt-3">
           Research, analyse, and create performance ads from a single workspace.
         </p>
       </header>

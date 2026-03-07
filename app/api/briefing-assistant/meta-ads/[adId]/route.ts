@@ -39,15 +39,16 @@ export async function GET(
     .limit(1)
     .maybeSingle()
 
+  const fallbackPreview = `/api/briefing-assistant/meta-ads/${item.id}/preview`
   const ad = {
     id: item.id,
     ad_id: item.external_id,
     page_name: item.page_name ?? item.title,
-    creative_url: `/api/briefing-assistant/meta-ads/${item.id}/preview?v=${encodeURIComponent(String(item.updated_at ?? item.created_at ?? '1'))}`,
-    thumbnail_url: `/api/briefing-assistant/meta-ads/${item.id}/preview?v=${encodeURIComponent(String(item.updated_at ?? item.created_at ?? '1'))}`,
+    creative_url: item.creative_url || item.thumbnail_url || fallbackPreview,
+    thumbnail_url: item.thumbnail_url || item.creative_url || fallbackPreview,
     media_type: item.media_type ?? 'image',
     body_text: item.body_text,
-    link_url: `/api/briefing-assistant/meta-ads/${item.id}/snapshot`,
+    link_url: item.link_url || `/api/briefing-assistant/meta-ads/${item.id}/snapshot`,
     started_at: item.started_at,
     ended_at: item.ended_at,
     is_active: item.is_active ?? false,

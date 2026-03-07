@@ -11,6 +11,7 @@ import {
   Loader2,
   PaintbrushIcon,
   BarChart3,
+  Bookmark,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -44,11 +45,39 @@ interface AdDetail extends MetaAdItem {
   analysis_summary?: string | null
 }
 
+function useSavedState(adId: string) {
+  const [saved, setSaved] = useState(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      const raw = localStorage.getItem('heimdall:saved-ads')
+      return raw ? (JSON.parse(raw) as string[]).includes(adId) : false
+    } catch {
+      return false
+    }
+  })
+
+  const toggle = useCallback(() => {
+    setSaved((prev) => {
+      const next = !prev
+      try {
+        const raw = localStorage.getItem('heimdall:saved-ads')
+        const ids: string[] = raw ? JSON.parse(raw) : []
+        const updated = next ? [...ids.filter((id) => id !== adId), adId] : ids.filter((id) => id !== adId)
+        localStorage.setItem('heimdall:saved-ads', JSON.stringify(updated))
+      } catch { /* ignore */ }
+      return next
+    })
+  }, [adId])
+
+  return { saved, toggle }
+}
+
 export function MetaAdDetailClient({ adId }: { adId: string }) {
   const router = useRouter()
   const [ad, setAd] = useState<AdDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const { saved, toggle: toggleSaved } = useSavedState(adId)
 
   const fetchAd = useCallback(async () => {
     if (!adId) return
@@ -93,7 +122,7 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto">
+    <div className="flex flex-col h-full overflow-y-auto scrollbar-subtle">
       <header className="flex-shrink-0 border-b border-border bg-card/60 px-6 py-4">
         <div className="flex items-center gap-3">
           <Link
@@ -117,6 +146,15 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
               )}
             </div>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className={cn('gap-1.5', saved && 'bg-primary/10 border-primary/30 text-primary')}
+            onClick={toggleSaved}
+          >
+            <Bookmark className={cn('h-3.5 w-3.5', saved && 'fill-current')} />
+            {saved ? 'Saved' : 'Save'}
+          </Button>
           <Button
             size="sm"
             className="gap-1.5"
