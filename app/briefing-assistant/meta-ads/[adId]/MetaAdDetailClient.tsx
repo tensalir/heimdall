@@ -13,9 +13,12 @@ import {
   BarChart3,
   UserPlus,
   UserCheck,
+  Eye,
+  Download,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { AtlasBrowserModal } from '@/components/briefing-assistant/AtlasBrowserModal'
 import type { MetaAdItem } from '../page'
 
 function ScoreBar({ label, value }: { label: string; value: number | null }) {
@@ -76,12 +79,90 @@ function useFollowBrand(pageId: string | null, pageName: string) {
   return { following, toggle }
 }
 
+function DetailImage({ ad, onAtlasView }: { ad: AdDetail; onAtlasView: () => void }) {
+  const [imgState, setImgState] = useState<'loading' | 'loaded' | 'error'>('loading')
+  const mediaSrc = ad.creative_url || ad.thumbnail_url || ''
+  const previewFallback = `/api/briefing-assistant/meta-ads/${ad.id}/preview`
+  const [activeSrc, setActiveSrc] = useState(mediaSrc || previewFallback)
+
+  return (
+    <div className="rounded-lg border border-border bg-muted/20 overflow-hidden max-w-lg mx-auto">
+      <div className="relative aspect-[4/5]">
+        {imgState === 'loading' && (
+          <div className="absolute inset-0 flex items-center justify-center z-10">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/30" />
+          </div>
+        )}
+        {imgState === 'error' ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-6">
+            <ImageIcon className="h-10 w-10 text-muted-foreground/15" />
+            <p className="text-xs text-muted-foreground/50 text-center">
+              Preview not available
+            </p>
+            <button
+              type="button"
+              onClick={onAtlasView}
+              className="text-xs text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
+            >
+              <Eye className="h-3 w-3" />
+              Open Atlas View instead
+            </button>
+          </div>
+        ) : (
+          <img
+            src={activeSrc}
+            alt={ad.page_name}
+            className={cn(
+              'w-full h-full object-contain transition-opacity duration-300',
+              imgState === 'loaded' ? 'opacity-100' : 'opacity-0',
+            )}
+            onLoad={() => setImgState('loaded')}
+            onError={() => {
+              if (activeSrc !== previewFallback && previewFallback) {
+                setActiveSrc(previewFallback)
+              } else {
+                setImgState('error')
+              }
+            }}
+          />
+        )}
+        {ad.media_type === 'video' && imgState === 'loaded' && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="flex items-center justify-center w-14 h-14 rounded-full bg-black/50 text-white">
+              <Play className="h-6 w-6 ml-0.5" />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function MetaAdDetailClient({ adId }: { adId: string }) {
   const router = useRouter()
   const [ad, setAd] = useState<AdDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [atlasOpen, setAtlasOpen] = useState(false)
+  const [mirroring, setMirroring] = useState(false)
   const { following, toggle: toggleFollow } = useFollowBrand(ad?.page_id ?? null, ad?.page_name ?? '')
+
+  const handleMirrorDownload = useCallback(async () => {
+    if (!ad) return
+    setMirroring(true)
+    try {
+      const res = await fetch('/api/briefing-assistant/meta-ads?action=mirror-media', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: ad.id, type: ad.media_type }),
+      })
+      if (res.ok) {
+        await fetchAd()
+      }
+    } catch { /* ignore */ } finally {
+      setMirroring(false)
+    }
+  }, [ad]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchAd = useCallback(async () => {
     if (!adId) return
@@ -162,6 +243,25 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
             </Button>
           )}
           <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => setAtlasOpen(true)}
+          >
+            <Eye className="h-3.5 w-3.5" />
+            Atlas View
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={handleMirrorDownload}
+            disabled={mirroring}
+          >
+            {mirroring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            {mirroring ? 'Mirroring...' : 'Save to CDN'}
+          </Button>
+          <Button
             size="sm"
             className="gap-1.5"
             onClick={() => router.push(`/briefing-assistant/create-ads?source=meta-ad&sourceId=${ad.id}`)}
@@ -172,30 +272,21 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
         </div>
       </header>
 
+      {atlasOpen && (
+        <AtlasBrowserModal
+          adId={ad.id}
+          adName={ad.page_name}
+          linkUrl={ad.link_url}
+          onClose={() => setAtlasOpen(false)}
+        />
+      )}
+
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-0">
         <div className="p-6 space-y-6 border-r border-border">
-          <div className="rounded-lg border border-border bg-muted/20 overflow-hidden max-w-lg mx-auto">
-            {ad.thumbnail_url || ad.creative_url ? (
-              <div className="relative aspect-[4/5]">
-                <img
-                  src={ad.creative_url || ad.thumbnail_url || ''}
-                  alt={ad.page_name}
-                  className="w-full h-full object-contain"
-                />
-                {ad.media_type === 'video' && (
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="flex items-center justify-center w-14 h-14 rounded-full bg-black/50 text-white">
-                      <Play className="h-6 w-6 ml-0.5" />
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="aspect-[4/5] flex items-center justify-center">
-                <ImageIcon className="h-12 w-12 text-muted-foreground/15" />
-              </div>
-            )}
-          </div>
+          <DetailImage
+            ad={ad}
+            onAtlasView={() => setAtlasOpen(true)}
+          />
 
           {ad.body_text && (
             <div>

@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
-import { extractMediaFromSnapshot } from '@/src/integrations/meta/preview'
-import { mirrorMediaAsset } from '@/src/integrations/meta/mediaMirror'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,7 +13,8 @@ function isValidMediaUrl(url: string | null): boolean {
 /**
  * GET /api/briefing-assistant/meta-ads/[adId]
  * Returns a single ad with full analysis scores.
- * Triggers hot-set video promotion for video ads on detail open.
+ * No longer auto-mirrors videos on browse; mirroring is user-triggered
+ * via POST ?action=mirror-media on the main meta-ads route.
  */
 export async function GET(
   _req: NextRequest,
@@ -47,10 +46,6 @@ export async function GET(
     .then(() => {})
     .catch(() => {})
 
-  if (item.media_type === 'video' && !isValidMediaUrl(item.creative_url)) {
-    promoteVideoInBackground(db, item).catch(() => {})
-  }
-
   const { data: scores } = await db
     .from('briefing_analysis_scores')
     .select('*')
@@ -63,6 +58,7 @@ export async function GET(
   const ad = {
     id: item.id,
     ad_id: item.external_id,
+    page_id: item.page_id ?? null,
     page_name: item.page_name ?? item.title,
     creative_url: isValidMediaUrl(item.creative_url) ? item.creative_url : (isValidMediaUrl(item.thumbnail_url) ? item.thumbnail_url : fallbackPreview),
     thumbnail_url: isValidMediaUrl(item.thumbnail_url) ? item.thumbnail_url : fallbackPreview,
@@ -87,30 +83,4 @@ export async function GET(
   }
 
   return NextResponse.json({ ad })
-}
-
-async function promoteVideoInBackground(
-  db: NonNullable<ReturnType<typeof getSupabase>>,
-  item: Record<string, unknown>,
-) {
-  const videoSource = (item.source_video_url as string) || null
-  if (videoSource) {
-    const mirrored = await mirrorMediaAsset(db, videoSource, item.id as string, 'video')
-    if (mirrored) {
-      await db.from('briefing_source_items').update({ creative_url: mirrored }).eq('id', item.id)
-    }
-    return
-  }
-
-  const linkUrl = item.link_url as string | null
-  if (!linkUrl) return
-
-  const media = await extractMediaFromSnapshot(linkUrl)
-  if (!media?.videoUrl) return
-
-  const mirrored = await mirrorMediaAsset(db, media.videoUrl, item.id as string, 'video')
-  const update: Record<string, string> = { source_video_url: media.videoUrl }
-  if (mirrored) update.creative_url = mirrored
-
-  await db.from('briefing_source_items').update(update).eq('id', item.id)
 }

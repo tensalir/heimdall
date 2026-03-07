@@ -96,13 +96,50 @@ The sync and preview endpoints surface structured error messages when the token 
 - `Meta Ad Library token expired or invalid` — token needs rotation
 - `Meta Ad Library API 400/401/190` — token was rejected by Meta
 
+## Browser-Primary Ingestion
+
+The Meta Ads Library is now ingested via browser scraping by default, with the Graph API as a fallback. This avoids bulk media storage while still showing ads quickly in the library UI.
+
+### Source mode
+
+Set `META_ADS_SOURCE_MODE` to control the ingestion source:
+
+| Value | Behavior |
+|-------|----------|
+| `auto` (default) | Browser scrape first; falls back to API if browser returns 0 results |
+| `browser` | Browser scrape only |
+| `api` | Graph API only (requires `META_AD_LIBRARY_ACCESS_TOKEN`) |
+
+### Region and proxy
+
+- `META_ADS_DEFAULT_REGION` — ISO country code for scraping (default `US`). The UI region filter overrides this per-request.
+- `META_ADS_PROXY_URL` — HTTP or SOCKS proxy URL for the headless browser. Useful when the server is in the EU and Meta returns sparse results for certain regions.
+
+### Atlas Browser View
+
+The "Atlas View" button on gallery cards and the detail page opens a modal that renders a full-page screenshot of the ad as it appears on the Meta Ads Library. This uses the endpoint:
+
+```
+GET /api/briefing-assistant/meta-ads/<id>/atlas?width=600&height=900
+```
+
+Responses are cached for 1 hour. Pass `&fresh=true` to bypass cache.
+
 ## Media Mirror Pipeline
 
-Ad thumbnails and videos are mirrored to Supabase Storage (`briefing-media` bucket) for reliable, fast display. The pipeline:
+Ad thumbnails and videos are mirrored to Supabase Storage (`briefing-media` bucket) on demand, not during browse time.
 
-1. **On sync**: newly ingested ads trigger background extraction (Puppeteer renders the snapshot page, extracts CDN media URLs) followed by mirroring to storage.
-2. **On preview request**: if a card's `thumbnail_url` is invalid (render_ad HTML, data URI, or missing), the `/preview` endpoint triggers self-healing extraction + mirror in the background.
-3. **Manual backfill**: `POST /api/briefing-assistant/meta-ads?action=warm-thumbnails` processes up to 50 ads with missing or invalid thumbnails per call. Call repeatedly until `remaining` reaches 0.
+1. **On sync**: newly ingested ads get thumbnail extraction via Puppeteer + poster mirroring to storage in background.
+2. **On preview request**: if a card's `thumbnail_url` is invalid, the `/preview` endpoint triggers self-healing extraction + mirror in the background.
+3. **On-demand mirror**: users can explicitly mirror media (thumbnail + video) by clicking "Save to CDN" on the detail page, or via:
+```bash
+curl -X POST "https://your-domain/api/briefing-assistant/meta-ads?action=mirror-media" \
+  -H "Content-Type: application/json" \
+  -d '{"item_id":"<uuid>","type":"video"}'
+```
+4. **Manual backfill**: `POST /api/briefing-assistant/meta-ads?action=warm-thumbnails` processes up to 50 ads with missing thumbnails per call.
+
+Video mirroring no longer happens automatically when a user opens the detail page. This keeps storage costs low and makes media downloads an explicit user action.
 
 ### Storage setup
 
@@ -112,8 +149,12 @@ The `briefing-media` bucket is created by migration `017_briefing_media_storage.
 
 `GET /api/briefing-assistant/meta-ads?check=health` returns:
 - `token.configured` / `token.valid` — Meta API token status
-- `ads.total` / `ads.with_thumbnail` / `ads.missing_thumbnail` — thumbnail coverage
-- `ads.video_count` — detected video ads
+- `provider.mode` / `provider.default_region` / `provider.proxy_configured` — ingestion source configuration
+- `provider.browser_sourced_ads` / `provider.api_sourced_ads` — ads by source
+- `ads.total` / `ads.poster_mirrored` / `ads.poster_missing` — thumbnail coverage
+- `ads.poster_direct_thumb` — ads with direct CDN thumbnails (not yet mirrored)
+- `ads.video_detected` / `ads.video_promoted` — video ad state
+- `ads.fallback_rate` — percentage of ads falling back to `/preview`
 
 ### Full backfill procedure
 
@@ -130,17 +171,12 @@ The media pipeline uses tiered storage to balance cost and quality:
 | Tier | Poster | Video | Retention | When |
 |------|--------|-------|-----------|------|
 | `poster_only` | Mirrored to storage | Not mirrored (source URL stored) | 90 days since last updated | Default for competitor ads |
-| `video_promoted` | Mirrored | Mirrored | 14 days idle, extends on view | Detail opened, saved, played, or used in workflow |
+| `video_promoted` | Mirrored | Mirrored | 14 days idle, extends on view | User clicks "Save to CDN", or ad is used in workflow |
 | `first_party` | Mirrored | Mirrored | Permanent | Your own brand's ads / Frontify assets |
 
 ### Video promotion
 
-Videos are promoted to durable storage automatically when:
-- A user opens the ad detail page
-- A user saves/follows the ad
-- The ad is used in Create Ads or a workflow
-
-You can also promote manually:
+Videos are promoted to durable storage when a user explicitly triggers it via the "Save to CDN" button on the detail page, or via:
 ```bash
 curl -X POST "https://your-domain/api/briefing-assistant/meta-ads?action=promote-video" \
   -H "Content-Type: application/json" \

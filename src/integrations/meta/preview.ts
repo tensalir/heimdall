@@ -114,15 +114,20 @@ let _browser: Browser | null = null
 let _browserLaunchPromise: Promise<Browser> | null = null
 let _activeTabs = 0
 
-async function getSharedBrowser(): Promise<Browser> {
+export async function getSharedBrowser(): Promise<Browser> {
   if (_browser?.connected) return _browser
   if (_browserLaunchPromise) return _browserLaunchPromise
 
   _browserLaunchPromise = (async () => {
     const executablePath = await getBrowserExecutablePath()
+    const proxyUrl = process.env.META_ADS_PROXY_URL
+    const launchArgs = [...chromium.args]
+    if (proxyUrl) {
+      launchArgs.push(`--proxy-server=${proxyUrl}`)
+    }
     const browser = await puppeteer.launch({
       executablePath,
-      args: chromium.args,
+      args: launchArgs,
       headless: true,
     })
     browser.on('disconnected', () => {
@@ -138,17 +143,69 @@ async function getSharedBrowser(): Promise<Browser> {
   return _browserLaunchPromise
 }
 
-async function waitForPoolSlot(): Promise<void> {
+export async function waitForPoolSlot(): Promise<void> {
   while (_activeTabs >= BROWSER_POOL_CONCURRENCY) {
     await new Promise((r) => setTimeout(r, 200))
   }
+}
+
+export function incrementActiveTabs() { _activeTabs++ }
+export function decrementActiveTabs() { _activeTabs-- }
+
+// ---------------------------------------------------------------------------
+// Core: refresh stale tokens in stored snapshot URLs
+// ---------------------------------------------------------------------------
+
+export function refreshSnapshotUrl(storedUrl: string | null, externalId?: string): string | null {
+  const token = process.env.META_AD_LIBRARY_ACCESS_TOKEN
+  if (!storedUrl) {
+    if (!externalId) return null
+    if (!token) return `https://www.facebook.com/ads/library/?id=${encodeURIComponent(externalId)}`
+    return `https://www.facebook.com/ads/archive/render_ad/?id=${encodeURIComponent(externalId)}&access_token=${encodeURIComponent(token)}`
+  }
+
+  if (!token) return storedUrl
+
+  try {
+    const url = new URL(storedUrl)
+    if (url.searchParams.has('access_token')) {
+      url.searchParams.set('access_token', token)
+      return url.toString()
+    }
+    if (url.pathname.includes('/render_ad') || url.pathname.includes('/ads_archive')) {
+      url.searchParams.set('access_token', token)
+      return url.toString()
+    }
+  } catch { /* not a valid URL, return as-is */ }
+
+  return storedUrl
+}
+
+// ---------------------------------------------------------------------------
+// Core: detect login walls on Meta pages
+// ---------------------------------------------------------------------------
+
+export async function isLoginWall(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const html = document.documentElement.innerHTML.toLowerCase()
+    if (html.includes('log into facebook') || html.includes('log in to facebook')) return true
+    if (html.includes('create new account') && html.includes('password')) return true
+
+    const forms = document.querySelectorAll('form[action*="login"]')
+    if (forms.length > 0) return true
+
+    const inputs = document.querySelectorAll('input[name="email"], input[name="pass"]')
+    if (inputs.length >= 2) return true
+
+    return false
+  })
 }
 
 // ---------------------------------------------------------------------------
 // Core: dismiss cookie overlays on Meta pages
 // ---------------------------------------------------------------------------
 
-async function dismissOverlays(page: Page): Promise<void> {
+export async function dismissOverlays(page: Page): Promise<void> {
   const buttons = await page.$$('div[role="button"], button, a[role="button"]')
   for (const btn of buttons) {
     const text = await btn.evaluate((el) => (el.textContent || '').trim())
@@ -186,6 +243,9 @@ async function dismissOverlays(page: Page): Promise<void> {
 export async function extractMediaFromSnapshot(
   snapshotUrl: string,
 ): Promise<ExtractedMedia | null> {
+  const freshUrl = refreshSnapshotUrl(snapshotUrl)
+  if (!freshUrl) return null
+
   await waitForPoolSlot()
   _activeTabs++
   try {
@@ -193,10 +253,15 @@ export async function extractMediaFromSnapshot(
     const page = await browser.newPage()
     try {
       await page.setViewport({ width: 600, height: 900, deviceScaleFactor: 1 })
-      await page.goto(snapshotUrl, { waitUntil: 'networkidle2', timeout: 45000 })
+      await page.goto(freshUrl, { waitUntil: 'networkidle2', timeout: 45000 })
       await new Promise((r) => setTimeout(r, 2500))
       await dismissOverlays(page)
       await new Promise((r) => setTimeout(r, 500))
+
+      if (await isLoginWall(page)) {
+        console.warn('[preview] Login wall detected, skipping extraction')
+        return null
+      }
 
       const media = await page.evaluate(() => {
         const isCdnUrl = (src: string) =>
@@ -268,6 +333,7 @@ export async function extractMediaFromSnapshot(
 async function screenshotSnapshot(
   targetUrl: string,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
+  const freshUrl = refreshSnapshotUrl(targetUrl) || targetUrl
   await waitForPoolSlot()
   _activeTabs++
   const browser = await getSharedBrowser()
@@ -275,10 +341,15 @@ async function screenshotSnapshot(
     const page = await browser.newPage()
     try {
       await page.setViewport({ width: 600, height: 900, deviceScaleFactor: 1 })
-      await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 45000 })
+      await page.goto(freshUrl, { waitUntil: 'networkidle2', timeout: 45000 })
       await new Promise((r) => setTimeout(r, 2000))
       await dismissOverlays(page)
       await new Promise((r) => setTimeout(r, 300))
+
+      if (await isLoginWall(page)) {
+        console.warn('[preview] Login wall detected in screenshot, returning placeholder')
+        return { buffer: buildMetaPreviewPlaceholderSvg('Login required'), mimeType: 'image/svg+xml' }
+      }
 
       const clip = await page.evaluate(() => {
         const card = document.querySelector('div._8n-d')
@@ -355,7 +426,7 @@ export async function getMetaAdPreviewPng(
   if (existing) return existing
 
   const promise = (async (): Promise<{ buffer: Buffer; mimeType: string }> => {
-    const targetUrl = snapshotUrl || buildFallbackRenderUrl(libraryId)
+    const targetUrl = refreshSnapshotUrl(snapshotUrl ?? null, libraryId) || buildFallbackRenderUrl(libraryId)
 
     if (targetUrl) {
       const media = await extractMediaFromSnapshot(targetUrl)

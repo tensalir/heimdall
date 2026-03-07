@@ -58,6 +58,14 @@ const envSchema = z.object({
   MONDAY_ASSETS_STATUS_APPROVED: z.string().optional(),
   /** Meta Ad Library API access token for ad ingestion. */
   META_AD_LIBRARY_ACCESS_TOKEN: z.string().min(1).optional(),
+  /** Apify API token for Meta ads scraping via Apify Actors. */
+  APIFY_API_TOKEN: z.string().min(1).optional(),
+  /** Source mode for Meta ads ingestion: 'apify' | 'browser' | 'api' | 'auto' (default). */
+  META_ADS_SOURCE_MODE: z.enum(['apify', 'browser', 'api', 'auto']).optional(),
+  /** Default region for Meta ads scraping (ISO country code, e.g. 'US'). */
+  META_ADS_DEFAULT_REGION: z.string().optional(),
+  /** HTTP/SOCKS proxy URL for browser scraping (EU reliability). */
+  META_ADS_PROXY_URL: z.string().optional(),
   /** Vesper image generation gateway URL. */
   VESPER_API_URL: z.string().url().optional(),
   /** Vesper server-to-server auth secret. */
