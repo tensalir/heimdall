@@ -462,7 +462,7 @@ export default function MetaAdsLibraryPage() {
       params.set('limit', '200')
 
       if (currentSurface === 'discovery') {
-        params.set('quality', filters.quality || 'approved')
+        params.set('quality', filters.quality || 'not_rejected')
       } else if (currentSurface === 'top_picks') {
         params.set('quality', 'all')
       }
@@ -708,7 +708,8 @@ export default function MetaAdsLibraryPage() {
                 label="Quality"
                 value={filters.quality}
                 options={[
-                  { value: 'approved', label: 'Approved' },
+                  { value: 'not_rejected', label: 'Curated (hide rejected)' },
+                  { value: 'approved', label: 'Approved only' },
                   { value: 'all', label: 'All' },
                   { value: 'rejected', label: 'Rejected' },
                 ]}

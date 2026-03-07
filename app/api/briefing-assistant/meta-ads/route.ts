@@ -84,7 +84,7 @@ function thumbnailStatus(url: string | null): 'ready' | 'pending' | 'invalid' {
  * Query params:
  *   surface           — 'discovery' | 'top_picks' | 'following' | 'saved' (default: 'discovery')
  *   tab               — legacy alias for surface (maps use-cases/trending -> discovery)
- *   quality           — 'approved' (default for discovery) | 'all' | 'rejected' | 'manual_pick'
+ *   quality           — 'not_rejected' (default for discovery) | 'approved' | 'all' | 'rejected' | 'manual_pick'
  *   q                 — text search across body_text, page_name, title
  *   content_style     — comma-separated content style tags
  *   target_market     — 'b2b' | 'b2c'
@@ -122,7 +122,7 @@ export async function GET(req: NextRequest) {
     surface = 'following'
   }
 
-  const qualityFilter = searchParams.get('quality') || (surface === 'discovery' ? 'approved' : 'all')
+  const qualityFilter = searchParams.get('quality') || (surface === 'discovery' ? 'not_rejected' : 'all')
   const q = searchParams.get('q')?.trim() || null
   const contentStyleFilter = searchParams.get('content_style')?.split(',').filter(Boolean) || []
   const targetMarketFilter = searchParams.get('target_market') || null
@@ -177,7 +177,8 @@ export async function GET(req: NextRequest) {
     query = query.in('id', savedIds)
   }
 
-  if (qualityFilter === 'approved') query = query.eq('quality_status', 'approved')
+  if (qualityFilter === 'not_rejected') query = query.neq('quality_status', 'rejected')
+  else if (qualityFilter === 'approved') query = query.eq('quality_status', 'approved')
   else if (qualityFilter === 'rejected') query = query.eq('quality_status', 'rejected')
   else if (qualityFilter === 'manual_pick') query = query.eq('quality_status', 'manual_pick')
 
