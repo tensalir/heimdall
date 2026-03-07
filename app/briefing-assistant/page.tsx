@@ -82,8 +82,8 @@ export default function BriefingAssistantOverviewPage() {
     <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-8">
       <header>
         <div>
-          <h1 className="text-2xl font-bold tracking-[0.2em] uppercase text-foreground">
-            MIMIR
+          <h1 className="text-[3.1rem] font-bold tracking-[0.36em] leading-none uppercase text-foreground">
+            MIᛗIR
           </h1>
           <p className="text-[10px] font-semibold tracking-[0.35em] uppercase text-muted-foreground/60 mt-0.5">
             BRIEFING ASSISTANT

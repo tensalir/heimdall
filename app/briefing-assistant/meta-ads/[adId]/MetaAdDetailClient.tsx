@@ -11,7 +11,8 @@ import {
   Loader2,
   PaintbrushIcon,
   BarChart3,
-  Bookmark,
+  UserPlus,
+  UserCheck,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -39,37 +40,40 @@ function ScoreBar({ label, value }: { label: string; value: number | null }) {
 }
 
 interface AdDetail extends MetaAdItem {
+  page_id: string | null
   score_attention?: number | null
   score_clarity?: number | null
   score_cta?: number | null
   analysis_summary?: string | null
 }
 
-function useSavedState(adId: string) {
-  const [saved, setSaved] = useState(() => {
-    if (typeof window === 'undefined') return false
+function useFollowBrand(pageId: string | null, pageName: string) {
+  const [following, setFollowing] = useState(() => {
+    if (typeof window === 'undefined' || !pageId) return false
     try {
-      const raw = localStorage.getItem('heimdall:saved-ads')
-      return raw ? (JSON.parse(raw) as string[]).includes(adId) : false
+      const raw = localStorage.getItem('heimdall:followed-brands')
+      return raw ? Object.keys(JSON.parse(raw)).includes(pageId) : false
     } catch {
       return false
     }
   })
 
   const toggle = useCallback(() => {
-    setSaved((prev) => {
+    if (!pageId) return
+    setFollowing((prev) => {
       const next = !prev
       try {
-        const raw = localStorage.getItem('heimdall:saved-ads')
-        const ids: string[] = raw ? JSON.parse(raw) : []
-        const updated = next ? [...ids.filter((id) => id !== adId), adId] : ids.filter((id) => id !== adId)
-        localStorage.setItem('heimdall:saved-ads', JSON.stringify(updated))
+        const raw = localStorage.getItem('heimdall:followed-brands')
+        const map: Record<string, string> = raw ? JSON.parse(raw) : {}
+        if (next) map[pageId] = pageName
+        else delete map[pageId]
+        localStorage.setItem('heimdall:followed-brands', JSON.stringify(map))
       } catch { /* ignore */ }
       return next
     })
-  }, [adId])
+  }, [pageId, pageName])
 
-  return { saved, toggle }
+  return { following, toggle }
 }
 
 export function MetaAdDetailClient({ adId }: { adId: string }) {
@@ -77,7 +81,7 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
   const [ad, setAd] = useState<AdDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const { saved, toggle: toggleSaved } = useSavedState(adId)
+  const { following, toggle: toggleFollow } = useFollowBrand(ad?.page_id ?? null, ad?.page_name ?? '')
 
   const fetchAd = useCallback(async () => {
     if (!adId) return
@@ -146,15 +150,17 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
               )}
             </div>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className={cn('gap-1.5', saved && 'bg-primary/10 border-primary/30 text-primary')}
-            onClick={toggleSaved}
-          >
-            <Bookmark className={cn('h-3.5 w-3.5', saved && 'fill-current')} />
-            {saved ? 'Saved' : 'Save'}
-          </Button>
+          {ad.page_id && (
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn('gap-1.5', following && 'bg-primary/10 border-primary/30 text-primary')}
+              onClick={toggleFollow}
+            >
+              {following ? <UserCheck className="h-3.5 w-3.5" /> : <UserPlus className="h-3.5 w-3.5" />}
+              {following ? 'Following' : 'Follow'}
+            </Button>
+          )}
           <Button
             size="sm"
             className="gap-1.5"

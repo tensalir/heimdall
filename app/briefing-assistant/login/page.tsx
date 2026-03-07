@@ -47,8 +47,8 @@ function BriefingLoginForm() {
           <div className="flex items-center justify-center w-14 h-14 mx-auto mb-4 rounded-2xl bg-card border border-border">
             <Lock className="h-6 w-6 text-primary" />
           </div>
-          <h1 className="text-xl font-bold tracking-[0.2em] uppercase text-foreground mb-0.5">
-            MIMIR
+          <h1 className="text-[34px] font-bold tracking-[0.36em] leading-none uppercase text-foreground mb-0.5">
+            MIᛗIR
           </h1>
           <p className="text-[9px] font-semibold tracking-[0.35em] uppercase text-muted-foreground/60 mb-2">
             BRIEFING ASSISTANT

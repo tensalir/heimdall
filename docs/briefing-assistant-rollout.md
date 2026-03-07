@@ -95,3 +95,67 @@ The sync and preview endpoints surface structured error messages when the token 
 - `META_AD_LIBRARY_ACCESS_TOKEN not configured` — env var is missing
 - `Meta Ad Library token expired or invalid` — token needs rotation
 - `Meta Ad Library API 400/401/190` — token was rejected by Meta
+
+## Media Mirror Pipeline
+
+Ad thumbnails and videos are mirrored to Supabase Storage (`briefing-media` bucket) for reliable, fast display. The pipeline:
+
+1. **On sync**: newly ingested ads trigger background extraction (Puppeteer renders the snapshot page, extracts CDN media URLs) followed by mirroring to storage.
+2. **On preview request**: if a card's `thumbnail_url` is invalid (render_ad HTML, data URI, or missing), the `/preview` endpoint triggers self-healing extraction + mirror in the background.
+3. **Manual backfill**: `POST /api/briefing-assistant/meta-ads?action=warm-thumbnails` processes up to 50 ads with missing or invalid thumbnails per call. Call repeatedly until `remaining` reaches 0.
+
+### Storage setup
+
+The `briefing-media` bucket is created by migration `017_briefing_media_storage.sql`. It must be **public** for gallery cards to load images directly. Run the migration via the Supabase dashboard SQL editor if it hasn't been applied.
+
+### Health check
+
+`GET /api/briefing-assistant/meta-ads?check=health` returns:
+- `token.configured` / `token.valid` — Meta API token status
+- `ads.total` / `ads.with_thumbnail` / `ads.missing_thumbnail` — thumbnail coverage
+- `ads.video_count` — detected video ads
+
+### Full backfill procedure
+
+After a token rotation or initial setup:
+```bash
+# Repeat until remaining=0
+curl -X POST "https://your-domain/api/briefing-assistant/meta-ads?action=warm-thumbnails"
+```
+
+## Atria-Style Media Tiers
+
+The media pipeline uses tiered storage to balance cost and quality:
+
+| Tier | Poster | Video | Retention | When |
+|------|--------|-------|-----------|------|
+| `poster_only` | Mirrored to storage | Not mirrored (source URL stored) | 90 days since last updated | Default for competitor ads |
+| `video_promoted` | Mirrored | Mirrored | 14 days idle, extends on view | Detail opened, saved, played, or used in workflow |
+| `first_party` | Mirrored | Mirrored | Permanent | Your own brand's ads / Frontify assets |
+
+### Video promotion
+
+Videos are promoted to durable storage automatically when:
+- A user opens the ad detail page
+- A user saves/follows the ad
+- The ad is used in Create Ads or a workflow
+
+You can also promote manually:
+```bash
+curl -X POST "https://your-domain/api/briefing-assistant/meta-ads?action=promote-video" \
+  -H "Content-Type: application/json" \
+  -d '{"item_id":"<uuid>"}'
+```
+
+### Storage cleanup
+
+Run periodically to reclaim space from stale competitor media:
+```bash
+curl -X POST "https://your-domain/api/briefing-assistant/meta-ads?action=cleanup-media"
+```
+
+First-party assets are never cleaned up automatically.
+
+### Schema migration
+
+Run `supabase/migrations/018_media_tier_lifecycle.sql` via the Supabase SQL Editor to add the media lifecycle columns (`media_tier`, `source_video_url`, `video_status`, `last_viewed_at`, `last_played_at`, `media_mirrored_at`). The application works without these columns but provides richer tier-aware behavior when they are present.

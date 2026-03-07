@@ -146,8 +146,11 @@ export async function searchMetaAdLibrary(
 /**
  * Normalize a Meta Ad Library API response ad into our internal source item shape.
  */
+export type MediaTier = 'poster_only' | 'video_promoted' | 'first_party'
+
 export interface NormalizedMetaAd {
   external_id: string
+  page_id: string | null
   title: string
   preview: string
   page_name: string
@@ -156,6 +159,7 @@ export interface NormalizedMetaAd {
   thumbnail_url: string | null
   creative_url: string | null
   media_type: 'image' | 'video'
+  media_tier: MediaTier
   platform: string
   is_active: boolean
   started_at: string | null
@@ -167,7 +171,15 @@ export interface NormalizedMetaAd {
   raw_data: Record<string, unknown>
 }
 
-export function normalizeMetaAd(ad: MetaAdLibraryAd): NormalizedMetaAd {
+/**
+ * Normalize a Meta ad for ingestion.
+ * Pass `tier` = 'first_party' when syncing your own brand's ads;
+ * defaults to 'poster_only' for competitor ads.
+ */
+export function normalizeMetaAd(
+  ad: MetaAdLibraryAd,
+  tier: MediaTier = 'poster_only',
+): NormalizedMetaAd {
   const bodies = ad.ad_creative_bodies ?? []
   const bodyText = bodies[0] ?? null
   const pageName = ad.page_name ?? 'Unknown'
@@ -175,6 +187,7 @@ export function normalizeMetaAd(ad: MetaAdLibraryAd): NormalizedMetaAd {
 
   return {
     external_id: ad.id,
+    page_id: ad.page_id ?? null,
     title: pageName,
     preview: bodyText?.slice(0, 200) ?? '',
     page_name: pageName,
@@ -183,6 +196,7 @@ export function normalizeMetaAd(ad: MetaAdLibraryAd): NormalizedMetaAd {
     thumbnail_url: null,
     creative_url: null,
     media_type: 'image',
+    media_tier: tier,
     platform: platforms || 'meta',
     is_active: !ad.ad_delivery_stop_time,
     started_at: ad.ad_delivery_start_time ?? null,

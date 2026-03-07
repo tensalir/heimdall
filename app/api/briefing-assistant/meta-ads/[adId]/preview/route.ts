@@ -3,9 +3,25 @@ import { getSupabase } from '@/lib/supabase'
 import {
   buildMetaPreviewPlaceholderSvg,
   getMetaAdPreviewPng,
+  extractMediaFromSnapshot,
 } from '@/src/integrations/meta/preview'
+import { mirrorMediaAsset } from '@/src/integrations/meta/mediaMirror'
 
 export const dynamic = 'force-dynamic'
+
+function isValidMediaUrl(url: string | null): boolean {
+  if (!url) return false
+  if (url.startsWith('data:')) return false
+  if (url.startsWith('/api/')) return false
+  if (url.includes('/ads/archive/render_ad/')) return false
+  if (url.includes('/ads/library/?id=')) return false
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
 
 export async function GET(
   _req: NextRequest,
@@ -21,7 +37,7 @@ export async function GET(
   const { adId } = await params
   const { data: item } = await db
     .from('briefing_source_items')
-    .select('id, external_id, page_name, title, link_url')
+    .select('id, external_id, page_name, title, link_url, thumbnail_url')
     .eq('id', adId)
     .single()
 
@@ -30,6 +46,12 @@ export async function GET(
     return new NextResponse(buildMetaPreviewPlaceholderSvg(label), {
       headers: { 'Content-Type': 'image/svg+xml' },
     })
+  }
+
+  if (item.link_url && !isValidMediaUrl(item.thumbnail_url)) {
+    selfHealMedia(db, item.id, item.link_url).catch((e) =>
+      console.error(`[preview-self-heal] ${item.id}:`, e instanceof Error ? e.message : e),
+    )
   }
 
   try {
@@ -56,4 +78,32 @@ export async function GET(
       },
     })
   }
+}
+
+async function selfHealMedia(
+  db: NonNullable<ReturnType<typeof getSupabase>>,
+  itemId: string,
+  linkUrl: string,
+) {
+  const media = await extractMediaFromSnapshot(linkUrl)
+  if (!media?.thumbnailUrl) return
+
+  const mirrored = await mirrorMediaAsset(db, media.thumbnailUrl, itemId, 'thumb')
+  const thumbUrl = mirrored ?? media.thumbnailUrl
+
+  const update: Record<string, string> = {
+    thumbnail_url: thumbUrl,
+    media_type: media.type,
+  }
+
+  if (media.videoUrl) {
+    update.source_video_url = media.videoUrl
+  }
+
+  await db
+    .from('briefing_source_items')
+    .update(update)
+    .eq('id', itemId)
+
+  console.log(`[preview-self-heal] Healed poster for ${itemId}: ${media.type}, thumb=${thumbUrl.substring(0, 60)}...`)
 }
