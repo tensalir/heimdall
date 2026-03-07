@@ -15,12 +15,18 @@ import {
   UserPlus,
   UserCheck,
   AlertTriangle,
+  Eye,
+  Star,
+  Bookmark,
+  Sparkles,
+  TrendingUp,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { AtlasBrowserModal } from '@/components/briefing-assistant/AtlasBrowserModal'
 
 type ViewMode = 'gallery' | 'table'
-type LibraryTab = 'use-cases' | 'trending' | 'following'
+type BrowseSurface = 'discovery' | 'top_picks' | 'following' | 'saved'
 
 export interface MetaAdItem {
   id: string
@@ -44,6 +50,18 @@ export interface MetaAdItem {
   score_hook: number | null
   score_overall: number | null
   tags: string[]
+  quality_status: string
+  quality_score: number | null
+  quality_summary: string | null
+  content_style_tags: string[]
+  hook_type: string | null
+  proof_type: string | null
+  creator_style: string | null
+  target_market: string | null
+  days_running: number | null
+  language: string | null
+  is_top_pick: boolean
+  source_provider: string | null
 }
 
 interface Filters {
@@ -51,8 +69,11 @@ interface Filters {
   platform: string
   status: string
   sort: string
-  region: string
-  use_case: string
+  content_style: string
+  target_market: string
+  language: string
+  quality: string
+  min_days_running: string
 }
 
 const INITIAL_FILTERS: Filters = {
@@ -60,27 +81,34 @@ const INITIAL_FILTERS: Filters = {
   platform: '',
   status: '',
   sort: 'longest_running',
-  region: 'US',
-  use_case: '',
+  content_style: '',
+  target_market: '',
+  language: '',
+  quality: '',
+  min_days_running: '',
 }
 
 const PAGE_SIZE = 20
 
-const USE_CASES = [
-  { value: '', label: 'All Use Cases' },
-  { value: 'sleep', label: 'Sleep' },
-  { value: 'focus', label: 'Focus' },
-  { value: 'lifestyle', label: 'Lifestyle' },
+const CONTENT_STYLE_OPTIONS = [
+  { value: 'testimonial_review', label: 'Testimonial / Review' },
+  { value: 'before_after', label: 'Before & After' },
+  { value: 'facts_stats', label: 'Facts & Stats' },
+  { value: 'features_benefits', label: 'Features & Benefits' },
+  { value: 'promotion_discount', label: 'Promotion / Discount' },
+  { value: 'reasons_why', label: 'Reasons Why' },
+  { value: 'us_vs_them', label: 'Us vs Them' },
+  { value: 'ugc', label: 'UGC' },
+  { value: 'comparison', label: 'Comparison' },
+  { value: 'demo', label: 'Demo' },
+  { value: 'storytelling', label: 'Storytelling' },
 ]
 
-const REGIONS = [
-  { value: 'US', label: 'United States' },
-  { value: 'GB', label: 'United Kingdom' },
-  { value: 'NL', label: 'Netherlands' },
-  { value: 'DE', label: 'Germany' },
-  { value: 'BE', label: 'Belgium' },
-  { value: 'AU', label: 'Australia' },
-  { value: 'FR', label: 'France' },
+const DAYS_RUNNING_OPTIONS = [
+  { value: '7', label: '7+ days' },
+  { value: '30', label: '30+ days' },
+  { value: '90', label: '90+ days' },
+  { value: '180', label: '180+ days' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -135,6 +163,47 @@ function ScorePill({ value, label }: { value: number | null; label: string }) {
   )
 }
 
+function QualityBadge({ status }: { status: string }) {
+  if (status === 'manual_pick') {
+    return (
+      <span className="inline-flex items-center gap-0.5 rounded-md bg-violet-500/15 text-violet-600 px-1.5 py-0.5 text-[10px] font-semibold">
+        <Star className="h-2.5 w-2.5" /> Pick
+      </span>
+    )
+  }
+  if (status === 'approved') return null
+  if (status === 'rejected') {
+    return (
+      <span className="rounded-md bg-red-500/10 text-red-500/70 px-1.5 py-0.5 text-[10px] font-semibold">
+        Rejected
+      </span>
+    )
+  }
+  return (
+    <span className="rounded-md bg-muted/50 text-muted-foreground/50 px-1.5 py-0.5 text-[10px] font-semibold">
+      Pending
+    </span>
+  )
+}
+
+function StyleTag({ tag }: { tag: string }) {
+  return (
+    <span className="rounded bg-primary/8 text-primary/70 px-1.5 py-0.5 text-[9px] font-medium">
+      {tag.replace(/_/g, ' ')}
+    </span>
+  )
+}
+
+function DaysRunningBadge({ days }: { days: number | null }) {
+  if (days == null || days < 7) return null
+  const color = days >= 90 ? 'text-emerald-600' : days >= 30 ? 'text-amber-600' : 'text-muted-foreground'
+  return (
+    <span className={cn('text-[10px] font-semibold', color)}>
+      {days}D
+    </span>
+  )
+}
+
 function AdCardImage({
   src,
   alt,
@@ -146,9 +215,9 @@ function AdCardImage({
   isVideo: boolean
   status: 'ready' | 'pending' | 'invalid'
 }) {
-  const shouldAttemptLoad = status === 'ready' && !!src
+  const shouldAttemptLoad = !!src && status !== 'pending'
   const [imgState, setImgState] = useState<'loading' | 'loaded' | 'error'>(
-    shouldAttemptLoad ? 'loading' : 'error',
+    shouldAttemptLoad ? 'loading' : (status === 'pending' ? 'loading' : 'error'),
   )
 
   return (
@@ -195,30 +264,42 @@ function AdGalleryCard({
   ad,
   isFollowingBrand,
   onToggleFollow,
+  onAtlasView,
 }: {
   ad: MetaAdItem
   isFollowingBrand: boolean
   onToggleFollow: () => void
+  onAtlasView: () => void
 }) {
   return (
     <div className="group relative flex flex-col rounded-lg border border-border bg-card overflow-hidden hover:border-primary/30 hover:shadow-md transition-all duration-200">
-      {ad.page_id && (
+      <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
         <button
           type="button"
-          onClick={(e) => { e.preventDefault(); onToggleFollow() }}
-          className={cn(
-            'absolute top-2 right-2 z-10 flex items-center justify-center w-7 h-7 rounded-md transition-all',
-            isFollowingBrand
-              ? 'bg-primary/90 text-primary-foreground'
-              : 'bg-black/40 text-white opacity-0 group-hover:opacity-100',
-          )}
-          aria-label={isFollowingBrand ? 'Unfollow brand' : 'Follow brand'}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onAtlasView() }}
+          className="flex items-center justify-center w-7 h-7 rounded-md bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-all"
+          aria-label="Atlas quick view"
         >
-          {isFollowingBrand
-            ? <UserCheck className="h-3.5 w-3.5" />
-            : <UserPlus className="h-3.5 w-3.5" />}
+          <Eye className="h-3.5 w-3.5" />
         </button>
-      )}
+        {ad.page_id && (
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggleFollow() }}
+            className={cn(
+              'flex items-center justify-center w-7 h-7 rounded-md transition-all',
+              isFollowingBrand
+                ? 'bg-primary/90 text-primary-foreground'
+                : 'bg-black/40 text-white opacity-0 group-hover:opacity-100',
+            )}
+            aria-label={isFollowingBrand ? 'Unfollow brand' : 'Follow brand'}
+          >
+            {isFollowingBrand
+              ? <UserCheck className="h-3.5 w-3.5" />
+              : <UserPlus className="h-3.5 w-3.5" />}
+          </button>
+        )}
+      </div>
       <Link href={`/briefing-assistant/meta-ads/${ad.id}`}>
         <AdCardImage
           src={ad.thumbnail_url}
@@ -226,21 +307,39 @@ function AdGalleryCard({
           isVideo={ad.media_type === 'video'}
           status={ad.thumbnail_status ?? 'pending'}
         />
-        {ad.is_active && (
-          <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-emerald-500/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-            Active
-          </span>
-        )}
+        <div className="absolute top-2 left-2 flex items-center gap-1">
+          {ad.is_active && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+              Active
+            </span>
+          )}
+          {ad.is_top_pick && (
+            <span className="inline-flex items-center gap-0.5 rounded-md bg-violet-500/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+              <Star className="h-2.5 w-2.5" />
+            </span>
+          )}
+        </div>
         <div className="p-3 flex-1 flex flex-col gap-1.5">
-          <p className="text-xs font-semibold text-foreground truncate">{ad.page_name}</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-foreground truncate">{ad.page_name}</p>
+            <DaysRunningBadge days={ad.days_running} />
+          </div>
           {ad.body_text && (
             <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
               {ad.body_text}
             </p>
           )}
+          {ad.content_style_tags.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap">
+              {ad.content_style_tags.slice(0, 2).map((tag) => (
+                <StyleTag key={tag} tag={tag} />
+              ))}
+            </div>
+          )}
           <div className="flex items-center gap-1.5 mt-auto pt-1.5">
+            <QualityBadge status={ad.quality_status} />
+            <ScorePill value={ad.quality_score} label="quality" />
             <ScorePill value={ad.score_hook} label="hook" />
-            <ScorePill value={ad.score_overall} label="overall" />
           </div>
         </div>
       </Link>
@@ -275,18 +374,24 @@ function AdTableRow({ ad }: { ad: MetaAdItem }) {
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-foreground truncate">{ad.page_name}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm font-medium text-foreground truncate">{ad.page_name}</p>
+          {ad.is_top_pick && <Star className="h-3 w-3 text-violet-500 flex-shrink-0" />}
+        </div>
         <p className="text-xs text-muted-foreground truncate">{ad.body_text || '\u2014'}</p>
       </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <ScorePill value={ad.score_hook} label="hook" />
-        <ScorePill value={ad.score_overall} label="overall" />
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {ad.content_style_tags.slice(0, 1).map((tag) => (
+          <StyleTag key={tag} tag={tag} />
+        ))}
       </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <ScorePill value={ad.quality_score} label="Q" />
+        <ScorePill value={ad.score_hook} label="hook" />
+      </div>
+      <DaysRunningBadge days={ad.days_running} />
       <span className="text-[10px] text-muted-foreground/50 flex-shrink-0 w-16 text-right">
         {ad.media_type}
-      </span>
-      <span className="text-[10px] text-muted-foreground/50 flex-shrink-0 w-20 text-right">
-        {ad.started_at ? new Date(ad.started_at).toLocaleDateString() : '\u2014'}
       </span>
     </Link>
   )
@@ -324,10 +429,11 @@ function FilterDropdown({
 // Page
 // ---------------------------------------------------------------------------
 
-const TAB_LABELS: Record<LibraryTab, string> = {
-  'use-cases': 'Use Cases',
-  'trending': 'Trending',
-  'following': 'Following',
+const SURFACE_CONFIG: Record<BrowseSurface, { label: string; icon: typeof Sparkles }> = {
+  discovery: { label: 'Discovery', icon: Sparkles },
+  top_picks: { label: 'Top Picks', icon: TrendingUp },
+  following: { label: 'Following', icon: UserCheck },
+  saved: { label: 'Saved', icon: Bookmark },
 }
 
 export default function MetaAdsLibraryPage() {
@@ -338,26 +444,40 @@ export default function MetaAdsLibraryPage() {
   const [error, setError] = useState<string | null>(null)
   const [tokenWarning, setTokenWarning] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [atlasAd, setAtlasAd] = useState<MetaAdItem | null>(null)
   const [syncResult, setSyncResult] = useState<string | null>(null)
-  const [tab, setTab] = useState<LibraryTab>('use-cases')
+  const [surface, setSurface] = useState<BrowseSurface>('discovery')
   const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS)
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const { followedBrands, toggleBrand, isFollowing } = useFollowedBrands()
 
-  const fetchAds = useCallback(async (overrideTab?: LibraryTab, overrideSearch?: string) => {
+  const fetchAds = useCallback(async (overrideSurface?: BrowseSurface, overrideSearch?: string) => {
     setLoading(true)
     setError(null)
     try {
       const params = new URLSearchParams()
-      const currentTab = overrideTab ?? tab
-      params.set('tab', currentTab)
+      const currentSurface = overrideSurface ?? surface
+      params.set('surface', currentSurface)
       params.set('sort', filters.sort || 'longest_running')
       params.set('limit', '200')
+
+      if (currentSurface === 'discovery') {
+        params.set('quality', filters.quality || 'approved')
+      } else if (currentSurface === 'top_picks') {
+        params.set('quality', 'all')
+      }
 
       const searchQ = overrideSearch ?? search
       if (searchQ.trim()) params.set('q', searchQ.trim())
 
-      if (currentTab === 'following') {
+      if (filters.content_style) params.set('content_style', filters.content_style)
+      if (filters.target_market) params.set('target_market', filters.target_market)
+      if (filters.language) params.set('language', filters.language)
+      if (filters.format) params.set('format', filters.format)
+      if (filters.status === 'active') params.set('active', 'true')
+      if (filters.min_days_running) params.set('min_days_running', filters.min_days_running)
+
+      if (currentSurface === 'following') {
         const pageIds = Array.from(followedBrands.keys())
         if (pageIds.length > 0) params.set('followed_page_ids', pageIds.join(','))
       }
@@ -390,11 +510,11 @@ export default function MetaAdsLibraryPage() {
     } finally {
       setLoading(false)
     }
-  }, [tab, search, filters.sort, followedBrands])
+  }, [surface, search, filters, followedBrands])
 
   useEffect(() => {
     fetchAds()
-  }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [surface]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSync = useCallback(async () => {
     const query = search.trim()
@@ -418,48 +538,35 @@ export default function MetaAdsLibraryPage() {
       }
       setSyncResult(`Synced ${data.ingested ?? 0} ads from Meta (${data.fetched ?? 0} fetched).`)
       setSearch('')
-      await fetchAds(tab, '')
+      await fetchAds(surface, '')
     } catch {
       setError('Sync request failed')
     } finally {
       setSyncing(false)
     }
-  }, [search, fetchAds, tab])
+  }, [search, fetchAds, surface])
 
   const filteredAds = useMemo(() => {
     let result = [...allAds]
 
-    if (filters.format) {
-      result = result.filter((ad) => ad.media_type === filters.format)
-    }
     if (filters.platform) {
       result = result.filter((ad) =>
         ad.platform.toLowerCase().includes(filters.platform.toLowerCase()),
       )
     }
-    if (filters.status === 'active') {
-      result = result.filter((ad) => ad.is_active)
-    } else if (filters.status === 'inactive') {
+    if (filters.status === 'inactive') {
       result = result.filter((ad) => !ad.is_active)
-    }
-    if (filters.use_case && tab === 'use-cases') {
-      const uc = filters.use_case.toLowerCase()
-      result = result.filter((ad) =>
-        (ad.body_text ?? '').toLowerCase().includes(uc) ||
-        (ad.page_name ?? '').toLowerCase().includes(uc) ||
-        ad.tags.some((t) => t.toLowerCase().includes(uc)),
-      )
     }
 
     return result
-  }, [allAds, filters, tab])
+  }, [allAds, filters])
 
   const visibleAds = filteredAds.slice(0, visibleCount)
   const hasMore = visibleCount < filteredAds.length
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE)
-  }, [tab, filters])
+  }, [surface, filters])
 
   const updateFilter = useCallback(<K extends keyof Filters>(key: K, value: Filters[K]) => {
     setFilters((prev) => ({ ...prev, [key]: value }))
@@ -472,7 +579,7 @@ export default function MetaAdsLibraryPage() {
           <div>
             <h1 className="text-lg font-bold tracking-tight text-foreground">Meta Ads Library</h1>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Discover competitor ads, track trends, and follow brands
+              Curated ad inspiration with quality filtering and pattern detection
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -508,24 +615,29 @@ export default function MetaAdsLibraryPage() {
         )}
 
         <div className="flex items-center border-b border-border -mx-6 px-6 mb-4">
-          {(['use-cases', 'trending', 'following'] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={cn(
-                'px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px',
-                tab === t
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border',
-              )}
-            >
-              {TAB_LABELS[t]}
-              {t === 'following' && followedBrands.size > 0 && (
-                <span className="ml-1.5 text-[10px] opacity-60">{followedBrands.size}</span>
-              )}
-            </button>
-          ))}
+          {(['discovery', 'top_picks', 'following', 'saved'] as const).map((s) => {
+            const config = SURFACE_CONFIG[s]
+            const Icon = config.icon
+            return (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSurface(s)}
+                className={cn(
+                  'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px',
+                  surface === s
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border',
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {config.label}
+                {s === 'following' && followedBrands.size > 0 && (
+                  <span className="ml-1 text-[10px] opacity-60">{followedBrands.size}</span>
+                )}
+              </button>
+            )
+          })}
         </div>
 
         <div className="flex items-center gap-3">
@@ -541,20 +653,21 @@ export default function MetaAdsLibraryPage() {
             />
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {tab === 'use-cases' && (
-              <FilterDropdown
-                label="Use Case"
-                value={filters.use_case}
-                options={USE_CASES.filter((u) => u.value !== '')}
-                onChange={(v) => updateFilter('use_case', v)}
-              />
-            )}
+          <div className="flex items-center gap-1.5 flex-wrap">
             <FilterDropdown
-              label="Region"
-              value={filters.region}
-              options={REGIONS}
-              onChange={(v) => updateFilter('region', v)}
+              label="Content Style"
+              value={filters.content_style}
+              options={CONTENT_STYLE_OPTIONS}
+              onChange={(v) => updateFilter('content_style', v)}
+            />
+            <FilterDropdown
+              label="Market"
+              value={filters.target_market}
+              options={[
+                { value: 'b2b', label: 'B2B' },
+                { value: 'b2c', label: 'B2C' },
+              ]}
+              onChange={(v) => updateFilter('target_market', v)}
             />
             <FilterDropdown
               label="Format"
@@ -566,13 +679,18 @@ export default function MetaAdsLibraryPage() {
               onChange={(v) => updateFilter('format', v)}
             />
             <FilterDropdown
+              label="Min Run"
+              value={filters.min_days_running}
+              options={DAYS_RUNNING_OPTIONS}
+              onChange={(v) => updateFilter('min_days_running', v)}
+            />
+            <FilterDropdown
               label="Platform"
               value={filters.platform}
               options={[
                 { value: 'facebook', label: 'Facebook' },
                 { value: 'instagram', label: 'Instagram' },
                 { value: 'messenger', label: 'Messenger' },
-                { value: 'audience_network', label: 'Audience Network' },
               ]}
               onChange={(v) => updateFilter('platform', v)}
             />
@@ -585,12 +703,25 @@ export default function MetaAdsLibraryPage() {
               ]}
               onChange={(v) => updateFilter('status', v)}
             />
+            {surface === 'discovery' && (
+              <FilterDropdown
+                label="Quality"
+                value={filters.quality}
+                options={[
+                  { value: 'approved', label: 'Approved' },
+                  { value: 'all', label: 'All' },
+                  { value: 'rejected', label: 'Rejected' },
+                ]}
+                onChange={(v) => updateFilter('quality', v)}
+              />
+            )}
             <FilterDropdown
               label="Sort"
               value={filters.sort}
               options={[
                 { value: 'longest_running', label: 'Longest running' },
                 { value: 'newest', label: 'Newest first' },
+                { value: 'quality', label: 'Highest quality' },
                 { value: 'score', label: 'Highest score' },
               ]}
               onChange={(v) => updateFilter('sort', v)}
@@ -642,14 +773,20 @@ export default function MetaAdsLibraryPage() {
           <div className="flex flex-col items-center justify-center py-20 gap-3">
             <ImageIcon className="h-10 w-10 text-muted-foreground/20" />
             <p className="text-sm text-muted-foreground">
-              {tab === 'following'
+              {surface === 'following'
                 ? 'No followed brands yet.'
-                : 'No ads found. The library is loading in the background.'}
+                : surface === 'saved'
+                  ? 'No saved ads yet.'
+                  : surface === 'top_picks'
+                    ? 'No top picks yet. Quality analysis is running in the background.'
+                    : 'No ads found. The library is loading in the background.'}
             </p>
             <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
-              {tab === 'following'
-                ? 'Follow brands from the Use Cases or Trending tabs to see their ads here.'
-                : 'Try syncing a brand name above, or wait for the default watchlist to populate.'}
+              {surface === 'following'
+                ? 'Follow brands from the Discovery tab to see their ads here.'
+                : surface === 'discovery'
+                  ? 'Try syncing a brand name above, or wait for the default watchlist to populate.'
+                  : 'Check back soon or adjust your filters.'}
             </p>
           </div>
         ) : viewMode === 'gallery' ? (
@@ -663,6 +800,7 @@ export default function MetaAdsLibraryPage() {
                   onToggleFollow={() => {
                     if (ad.page_id) toggleBrand(ad.page_id, ad.page_name)
                   }}
+                  onAtlasView={() => setAtlasAd(ad)}
                 />
               ))}
             </div>
@@ -684,9 +822,10 @@ export default function MetaAdsLibraryPage() {
               <div className="flex items-center gap-4 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50 bg-muted/20 border-b border-border">
                 <span className="w-12" />
                 <span className="flex-1">Ad</span>
+                <span className="w-24">Style</span>
                 <span className="w-32 text-right">Scores</span>
+                <span className="w-12 text-right">Days</span>
                 <span className="w-16 text-right">Type</span>
-                <span className="w-20 text-right">Started</span>
               </div>
               {visibleAds.map((ad) => (
                 <AdTableRow key={ad.id} ad={ad} />
@@ -706,6 +845,15 @@ export default function MetaAdsLibraryPage() {
           </div>
         )}
       </div>
+
+      {atlasAd && (
+        <AtlasBrowserModal
+          adId={atlasAd.id}
+          adName={atlasAd.page_name}
+          linkUrl={atlasAd.link_url}
+          onClose={() => setAtlasAd(null)}
+        />
+      )}
     </div>
   )
 }

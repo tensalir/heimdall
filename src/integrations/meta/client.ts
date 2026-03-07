@@ -169,6 +169,15 @@ export interface NormalizedMetaAd {
   impressions_lower: number | null
   impressions_upper: number | null
   raw_data: Record<string, unknown>
+  language?: string | null
+  cta_text?: string | null
+  cta_type?: string | null
+  collation_count?: number | null
+  categories?: string[] | null
+  link_caption?: string | null
+  link_description?: string | null
+  snapshot_title?: string | null
+  source_provider?: string
 }
 
 /**
@@ -184,6 +193,10 @@ export function normalizeMetaAd(
   const bodyText = bodies[0] ?? null
   const pageName = ad.page_name ?? 'Unknown'
   const platforms = (ad.publisher_platforms ?? []).join(', ')
+
+  const linkCaptions = ad.ad_creative_link_captions ?? []
+  const linkDescs = ad.ad_creative_link_descriptions ?? []
+  const linkTitles = ad.ad_creative_link_titles ?? []
 
   return {
     external_id: ad.id,
@@ -206,5 +219,10 @@ export function normalizeMetaAd(
     impressions_lower: ad.impressions?.lower_bound ? Number(ad.impressions.lower_bound) : null,
     impressions_upper: ad.impressions?.upper_bound ? Number(ad.impressions.upper_bound) : null,
     raw_data: ad as unknown as Record<string, unknown>,
+    language: ad.languages?.[0] ?? null,
+    link_caption: linkCaptions[0] ?? null,
+    link_description: linkDescs[0] ?? null,
+    snapshot_title: linkTitles[0] ?? null,
+    source_provider: 'api',
   }
 }
