@@ -65,6 +65,7 @@ function buildPageUrl(pageId: string): string {
 }
 
 interface ApifyAdItem {
+  ad_archive_id?: string
   adid?: string
   adArchiveID?: string
   ad_id?: string
@@ -98,6 +99,7 @@ interface ApifyAdItem {
     cta_type?: string
   }
   impressionsWithIndex?: { impressions_text?: string }
+  impressions_with_index?: { impressions_text?: string }
   spend?: { lower_bound?: string; upper_bound?: string } | string
   currency?: string
   publisherPlatform?: string[]
@@ -106,8 +108,11 @@ interface ApifyAdItem {
   collationCount?: number
   collation_count?: number
   entityType?: string
+  entity_type?: string
   languages?: string[]
   language?: string
+  state_media_run_label?: string
+  gated_type?: string
   [key: string]: unknown
 }
 
@@ -186,7 +191,7 @@ function parseDate(val: unknown): string | null {
 }
 
 function normalizeApifyAd(item: ApifyAdItem): NormalizedMetaAd | null {
-  const externalId = item.adid || item.adArchiveID || item.ad_id || item.id
+  const externalId = item.ad_archive_id || item.adid || item.adArchiveID || item.ad_id || item.id
   if (!externalId) return null
 
   const pageName = item.pageName || item.page_name || 'Unknown'
@@ -275,7 +280,7 @@ export async function scrapeViaApify(
 
   const input: Record<string, unknown> = {
     urls,
-    count: params.limit ?? 50,
+    count: Math.max(10, params.limit ?? 50),
     'scrapePageAds.activeStatus': params.ad_active_status ?? 'all',
     'scrapePageAds.sortBy': params.sort ?? 'impressions_desc',
     'scrapePageAds.countryCode': (params.country ?? 'US').toUpperCase(),
