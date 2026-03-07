@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
-import { searchMetaAdLibrary, normalizeMetaAd, isMetaAdLibraryAvailable } from '@/src/integrations/meta/client'
+import { searchMetaAdLibrary, normalizeMetaAd, isMetaAdLibraryAvailable, MetaTokenError } from '@/src/integrations/meta/client'
 import { buildScoringPrompt, computeOverallScore, RUBRIC_VERSION } from '@/src/domain/briefingAssistant/scoring/rubric'
-import { tryLightweightExtract } from '@/src/integrations/meta/preview'
+import { extractMediaFromSnapshot } from '@/src/integrations/meta/preview'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * GET /api/briefing-assistant/meta-ads?q=...&active=true&limit=50
+ *       ?check=health — lightweight health check for token + thumbnail coverage
  * Returns normalized ads from DB. Search checks both body_text and page_name.
  */
 export async function GET(req: NextRequest) {
@@ -17,6 +18,11 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url)
+
+  if (searchParams.get('check') === 'health') {
+    return handleHealthCheck(db)
+  }
+
   const q = searchParams.get('q')?.trim() || null
   const activeOnly = searchParams.get('active') === 'true'
   const limit = Math.min(Number(searchParams.get('limit') || 50), 200)
@@ -89,20 +95,31 @@ export async function GET(req: NextRequest) {
 
 /**
  * POST /api/briefing-assistant/meta-ads
- * Sync ads from Meta Ad Library API and auto-score them.
- * Body: { search_terms, page_ids?, countries?, limit? }
+ *
+ * Actions:
+ *   ?action=warm-thumbnails  — re-extract media for ads missing thumbnails (bounded)
+ *   (default)                — sync ads from Meta Ad Library API
+ *
+ * Sync body: { search_terms, page_ids?, countries?, limit? }
  */
 export async function POST(req: NextRequest) {
+  const db = getSupabase()
+  if (!db) {
+    return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
+  }
+
+  const { searchParams } = new URL(req.url)
+  const action = searchParams.get('action')
+
+  if (action === 'warm-thumbnails') {
+    return handleWarmThumbnails(db)
+  }
+
   if (!isMetaAdLibraryAvailable()) {
     return NextResponse.json(
       { error: 'META_AD_LIBRARY_ACCESS_TOKEN not configured' },
       { status: 503 },
     )
-  }
-
-  const db = getSupabase()
-  if (!db) {
-    return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
   }
 
   const body = await req.json().catch(() => ({}))
@@ -182,6 +199,12 @@ export async function POST(req: NextRequest) {
       ingested_ids: ingestedIds,
     })
   } catch (e) {
+    if (e instanceof MetaTokenError) {
+      return NextResponse.json(
+        { error: e.message, token_expired: true },
+        { status: 401 },
+      )
+    }
     const message = e instanceof Error ? e.message : 'Sync failed'
     return NextResponse.json({ error: message }, { status: 502 })
   }
@@ -264,13 +287,119 @@ async function runAutoAnalysis(
   }
 }
 
-const WARMUP_CONCURRENCY = 3
-const WARMUP_MAX_PER_SYNC = 15
+// ---------------------------------------------------------------------------
+// Health check: token status + thumbnail coverage
+// ---------------------------------------------------------------------------
 
-async function runThumbnailWarmup(
-  db: NonNullable<ReturnType<typeof getSupabase>>,
-  itemIds: string[],
-) {
+async function handleHealthCheck(db: SupabaseDb) {
+  const tokenConfigured = isMetaAdLibraryAvailable()
+
+  let tokenValid: boolean | null = null
+  if (tokenConfigured) {
+    try {
+      await searchMetaAdLibrary({
+        search_terms: 'test',
+        ad_reached_countries: ['US'],
+        limit: 1,
+      })
+      tokenValid = true
+    } catch (e) {
+      tokenValid = e instanceof MetaTokenError ? false : null
+    }
+  }
+
+  const { count: totalAds } = await db
+    .from('briefing_source_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('source_type', 'meta_ad')
+
+  const { count: withThumbnail } = await db
+    .from('briefing_source_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('source_type', 'meta_ad')
+    .not('thumbnail_url', 'is', null)
+    .not('thumbnail_url', 'like', 'data:%')
+
+  const { count: withVideo } = await db
+    .from('briefing_source_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('source_type', 'meta_ad')
+    .eq('media_type', 'video')
+
+  return NextResponse.json({
+    token: {
+      configured: tokenConfigured,
+      valid: tokenValid,
+    },
+    ads: {
+      total: totalAds ?? 0,
+      with_thumbnail: withThumbnail ?? 0,
+      missing_thumbnail: (totalAds ?? 0) - (withThumbnail ?? 0),
+      video_count: withVideo ?? 0,
+    },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Thumbnail warmup: extract real media URLs via Puppeteer and persist to DB
+// ---------------------------------------------------------------------------
+
+const WARMUP_CONCURRENCY = 2
+const WARMUP_MAX_PER_SYNC = 10
+const WARMUP_MAX_BULK = 50
+
+type SupabaseDb = NonNullable<ReturnType<typeof getSupabase>>
+
+async function warmSingleItem(
+  db: SupabaseDb,
+  item: { id: string; link_url: string | null },
+): Promise<boolean> {
+  if (!item.link_url) return false
+  try {
+    const media = await extractMediaFromSnapshot(item.link_url)
+    if (!media?.thumbnailUrl) return false
+
+    const update: Record<string, string> = {
+      thumbnail_url: media.thumbnailUrl,
+      media_type: media.type,
+    }
+    if (media.videoUrl) update.creative_url = media.videoUrl
+
+    await db
+      .from('briefing_source_items')
+      .update(update)
+      .eq('id', item.id)
+
+    return true
+  } catch (e) {
+    console.error(`[thumbnail-warmup] Failed for ${item.id}:`, e instanceof Error ? e.message : e)
+    return false
+  }
+}
+
+async function runWarmupQueue(
+  db: SupabaseDb,
+  items: { id: string; link_url: string | null }[],
+): Promise<{ warmed: number; failed: number }> {
+  let warmed = 0
+  let failed = 0
+  const queue = [...items]
+
+  const workers = Array.from({ length: WARMUP_CONCURRENCY }, async () => {
+    while (queue.length > 0) {
+      const item = queue.shift()
+      if (!item) break
+      const ok = await warmSingleItem(db, item)
+      if (ok) warmed++
+      else failed++
+    }
+  })
+
+  await Promise.allSettled(workers)
+  return { warmed, failed }
+}
+
+async function runThumbnailWarmup(db: SupabaseDb, itemIds: string[]) {
   if (itemIds.length === 0) return
   const batch = itemIds.slice(0, WARMUP_MAX_PER_SYNC)
 
@@ -280,33 +409,42 @@ async function runThumbnailWarmup(
     .in('id', batch)
 
   const needsWarmup = (items ?? []).filter(
-    (i: { thumbnail_url: string | null }) => !i.thumbnail_url,
+    (i: { thumbnail_url: string | null; link_url: string | null }) =>
+      !i.thumbnail_url || i.thumbnail_url.startsWith('data:'),
   )
   if (needsWarmup.length === 0) return
 
-  const queue = [...needsWarmup]
-  const workers = Array.from({ length: WARMUP_CONCURRENCY }, async () => {
-    while (queue.length > 0) {
-      const item = queue.shift()
-      if (!item) break
-      try {
-        if (!item.link_url) continue
-        const result = await tryLightweightExtract(item.link_url)
-        if (!result) continue
+  const { warmed, failed } = await runWarmupQueue(db, needsWarmup)
+  console.log(`[thumbnail-warmup] sync batch: ${warmed} warmed, ${failed} failed out of ${needsWarmup.length}`)
+}
 
-        const blob = result.buffer
-        const dataUri = `data:${result.mimeType};base64,${blob.toString('base64')}`
+async function handleWarmThumbnails(db: SupabaseDb) {
+  const { data: items, error: qErr } = await db
+    .from('briefing_source_items')
+    .select('id, link_url, thumbnail_url')
+    .eq('source_type', 'meta_ad')
+    .or('thumbnail_url.is.null,thumbnail_url.like.data:%')
+    .order('created_at', { ascending: false })
+    .limit(WARMUP_MAX_BULK)
 
-        await db
-          .from('briefing_source_items')
-          .update({ thumbnail_url: dataUri })
-          .eq('id', item.id)
-          .is('thumbnail_url', null)
-      } catch (e) {
-        console.error(`[thumbnail-warmup] Failed for ${item.id}:`, e instanceof Error ? e.message : e)
-      }
-    }
+  if (qErr) {
+    return NextResponse.json({ error: qErr.message }, { status: 500 })
+  }
+
+  const toWarm = (items ?? []).filter(
+    (i: { link_url: string | null }) => !!i.link_url,
+  )
+
+  if (toWarm.length === 0) {
+    return NextResponse.json({ ok: true, message: 'All ads already have thumbnails', warmed: 0, failed: 0 })
+  }
+
+  const { warmed, failed } = await runWarmupQueue(db, toWarm)
+
+  return NextResponse.json({
+    ok: true,
+    candidates: toWarm.length,
+    warmed,
+    failed,
   })
-
-  await Promise.allSettled(workers)
 }

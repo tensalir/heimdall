@@ -102,6 +102,48 @@ function ScorePill({ value, label }: { value: number | null; label: string }) {
   )
 }
 
+function AdCardImage({ src, alt, isVideo }: { src: string | null; alt: string; isVideo: boolean }) {
+  const [state, setState] = useState<'loading' | 'loaded' | 'error'>(src ? 'loading' : 'error')
+  const isFallbackPreview = src?.startsWith('/api/') ?? false
+
+  return (
+    <div className="relative aspect-[4/5] bg-muted/30 overflow-hidden">
+      {src && state !== 'error' ? (
+        <>
+          {state === 'loading' && (
+            <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted/40 via-muted/60 to-muted/40" />
+          )}
+          <img
+            src={src}
+            alt={alt}
+            className={cn(
+              'w-full h-full object-cover transition-opacity duration-300',
+              state === 'loaded' ? 'opacity-100' : 'opacity-0',
+            )}
+            loading="lazy"
+            onLoad={() => setState('loaded')}
+            onError={() => setState('error')}
+          />
+        </>
+      ) : (
+        <div className="w-full h-full flex flex-col items-center justify-center gap-1.5">
+          <ImageIcon className="h-8 w-8 text-muted-foreground/20" />
+          {isFallbackPreview && (
+            <span className="text-[10px] text-muted-foreground/30">Generating preview...</span>
+          )}
+        </div>
+      )}
+      {isVideo && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="flex items-center justify-center w-10 h-10 rounded-full bg-black/60 text-white">
+            <Play className="h-4 w-4 ml-0.5" />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function AdGalleryCard({
   ad,
   isSaved,
@@ -127,32 +169,16 @@ function AdGalleryCard({
         <Bookmark className={cn('h-3.5 w-3.5', isSaved && 'fill-current')} />
       </button>
       <Link href={`/briefing-assistant/meta-ads/${ad.id}`}>
-        <div className="relative aspect-[4/5] bg-muted/30 overflow-hidden">
-          {ad.thumbnail_url ? (
-            <img
-              src={ad.thumbnail_url}
-              alt={ad.page_name}
-              className="w-full h-full object-cover"
-              loading="lazy"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center">
-              <ImageIcon className="h-8 w-8 text-muted-foreground/20" />
-            </div>
-          )}
-          {ad.media_type === 'video' && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="flex items-center justify-center w-10 h-10 rounded-full bg-black/60 text-white">
-                <Play className="h-4 w-4 ml-0.5" />
-              </div>
-            </div>
-          )}
-          {ad.is_active && (
-            <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-emerald-500/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">
-              Active
-            </span>
-          )}
-        </div>
+        <AdCardImage
+          src={ad.thumbnail_url}
+          alt={ad.page_name}
+          isVideo={ad.media_type === 'video'}
+        />
+        {ad.is_active && (
+          <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-emerald-500/90 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+            Active
+          </span>
+        )}
         <div className="p-3 flex-1 flex flex-col gap-1.5">
           <p className="text-xs font-semibold text-foreground truncate">{ad.page_name}</p>
           {ad.body_text && (
@@ -170,18 +196,29 @@ function AdGalleryCard({
   )
 }
 
+function TableRowThumb({ src }: { src: string | null }) {
+  const [failed, setFailed] = useState(false)
+  if (!src || failed) {
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <ImageIcon className="h-4 w-4 text-muted-foreground/20" />
+      </div>
+    )
+  }
+  return <img src={src} alt="" className="w-full h-full object-cover" loading="lazy" onError={() => setFailed(true)} />
+}
+
 function AdTableRow({ ad }: { ad: MetaAdItem }) {
   return (
     <Link
       href={`/briefing-assistant/meta-ads/${ad.id}`}
       className="flex items-center gap-4 px-4 py-3 border-b border-border hover:bg-muted/30 transition-colors"
     >
-      <div className="w-12 h-12 rounded bg-muted/30 overflow-hidden flex-shrink-0">
-        {ad.thumbnail_url ? (
-          <img src={ad.thumbnail_url} alt="" className="w-full h-full object-cover" loading="lazy" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <ImageIcon className="h-4 w-4 text-muted-foreground/20" />
+      <div className="w-12 h-12 rounded bg-muted/30 overflow-hidden flex-shrink-0 relative">
+        <TableRowThumb src={ad.thumbnail_url} />
+        {ad.media_type === 'video' && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Play className="h-3 w-3 text-white drop-shadow" />
           </div>
         )}
       </div>

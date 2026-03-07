@@ -8,6 +8,13 @@ const META_AD_LIBRARY_API = 'https://graph.facebook.com/v21.0/ads_archive'
 const META_RETRY_ATTEMPTS = 3
 const META_RETRY_BASE_MS = 2000
 
+export class MetaTokenError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'MetaTokenError'
+  }
+}
+
 export interface MetaAdLibraryParams {
   search_terms?: string
   ad_reached_countries?: string[]
@@ -114,7 +121,17 @@ export async function searchMetaAdLibrary(
       continue
     }
     if (!res.ok) {
-      lastError = new Error(`Meta Ad Library API ${res.status}: ${await res.text()}`)
+      const body = await res.text()
+      const isTokenError =
+        res.status === 190 ||
+        /expired|invalid.*token|OAuthException/i.test(body)
+      if (isTokenError) {
+        throw new MetaTokenError(
+          `Meta Ad Library token expired or invalid (HTTP ${res.status}). ` +
+          'Rotate META_AD_LIBRARY_ACCESS_TOKEN and redeploy — see docs/briefing-assistant-rollout.md.',
+        )
+      }
+      lastError = new Error(`Meta Ad Library API ${res.status}: ${body}`)
       if (res.status >= 500 && attempt < META_RETRY_ATTEMPTS) {
         await new Promise((r) => setTimeout(r, META_RETRY_BASE_MS * attempt))
         continue

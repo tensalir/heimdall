@@ -62,10 +62,36 @@ These existing systems are unchanged and fully functional:
 
 New optional env vars for full functionality:
 ```
-META_AD_LIBRARY_ACCESS_TOKEN=   # Meta Ad Library API access
+META_AD_LIBRARY_ACCESS_TOKEN=   # Meta Ad Library API access (see token policy below)
 GEMINI_API_KEY=                 # Direct Nano Banana generation (fallback)
 VESPER_API_URL=                 # Vesper instance for image generation
 VESPER_API_SECRET=              # Optional: Vesper server-to-server auth
 ```
 
 Existing env vars remain unchanged.
+
+## Meta Ad Library Token Policy
+
+The Ads Library API requires a valid access token. Meta offers several token types:
+
+| Type | Lifetime | How to obtain |
+|------|----------|---------------|
+| Long-lived User token | ~60 days | Exchange a short-lived token via `GET /oauth/access_token` with app ID + secret |
+| System User token | Never expires | Business Manager > System Users > Generate Token (omit `set_token_expires_in_60_days`) |
+| System User token (60d) | 60 days | Same flow, pass `set_token_expires_in_60_days=true` |
+
+**Recommended:** Use a non-expiring System User token for production to avoid scheduled rotation. If compliance requires expiring tokens, use the 60-day variant and rotate before expiry.
+
+### Token rotation runbook
+
+1. Generate a new token via Business Manager or the `/oauth/access_token` exchange endpoint.
+2. Update `META_AD_LIBRARY_ACCESS_TOKEN` in `.env.local` (local) and Vercel environment variables (production).
+3. Restart the dev server or trigger a redeployment.
+4. Call `POST /api/briefing-assistant/meta-ads?action=warm-thumbnails` to re-extract media for ads whose CDN thumbnail URLs may have expired with the old token.
+
+### Diagnosing token issues
+
+The sync and preview endpoints surface structured error messages when the token is missing, expired, or rejected by Meta. Look for:
+- `META_AD_LIBRARY_ACCESS_TOKEN not configured` — env var is missing
+- `Meta Ad Library token expired or invalid` — token needs rotation
+- `Meta Ad Library API 400/401/190` — token was rejected by Meta

@@ -1,11 +1,27 @@
 import chromium from '@sparticuz/chromium'
-import puppeteer, { type Browser } from 'puppeteer-core'
+import puppeteer, { type Browser, type Page } from 'puppeteer-core'
 import { existsSync } from 'node:fs'
 
 const PREVIEW_CACHE_TTL_MS = 1000 * 60 * 60 * 6
 const MAX_CACHE_ENTRIES = 200
 const MAX_CACHE_BYTES = 200 * 1024 * 1024
 const BROWSER_POOL_CONCURRENCY = 3
+
+// ---------------------------------------------------------------------------
+// Structured extraction result
+// ---------------------------------------------------------------------------
+
+export interface ExtractedMedia {
+  type: 'image' | 'video'
+  /** Direct CDN URL for the image, or poster frame for video */
+  thumbnailUrl: string
+  /** Direct CDN URL for the video src (null for images) */
+  videoUrl: string | null
+}
+
+// ---------------------------------------------------------------------------
+// In-memory LRU buffer cache (screenshot fallback only)
+// ---------------------------------------------------------------------------
 
 interface CacheEntry {
   buffer: Buffer
@@ -58,6 +74,10 @@ function cacheGet(key: string): { buffer: Buffer; mimeType: string } | null {
 }
 
 const inflightRequests = new Map<string, Promise<{ buffer: Buffer; mimeType: string }>>()
+
+// ---------------------------------------------------------------------------
+// Browser pool (singleton)
+// ---------------------------------------------------------------------------
 
 function getLocalBrowserExecutablePath(): string | null {
   const candidates = [
@@ -124,42 +144,204 @@ async function waitForPoolSlot(): Promise<void> {
   }
 }
 
-/**
- * Try to extract media URLs from the snapshot page HTML without launching a full browser.
- * Returns an image buffer if successful, null if extraction fails.
- */
-export async function tryLightweightExtract(
+// ---------------------------------------------------------------------------
+// Core: dismiss cookie overlays on Meta pages
+// ---------------------------------------------------------------------------
+
+async function dismissOverlays(page: Page): Promise<void> {
+  const buttons = await page.$$('div[role="button"], button, a[role="button"]')
+  for (const btn of buttons) {
+    const text = await btn.evaluate((el) => (el.textContent || '').trim())
+    if (/decline optional cookies|allow.*cookies|accept/i.test(text)) {
+      await btn.click()
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+      break
+    }
+  }
+
+  await page.evaluate(() => {
+    document.querySelectorAll(
+      'div._10.uiLayer, div._3ixn, div._59s7, [role="dialog"]',
+    ).forEach((el) => el.remove())
+
+    document.querySelectorAll('div').forEach((el) => {
+      const style = window.getComputedStyle(el)
+      const rect = el.getBoundingClientRect()
+      if (
+        (style.position === 'fixed' || style.position === 'absolute') &&
+        rect.width > window.innerWidth * 0.8 &&
+        rect.height > window.innerHeight * 0.8 &&
+        parseInt(style.zIndex || '0', 10) > 5
+      ) {
+        el.remove()
+      }
+    })
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Core: extract media URLs from the rendered DOM
+// ---------------------------------------------------------------------------
+
+export async function extractMediaFromSnapshot(
   snapshotUrl: string,
-): Promise<{ buffer: Buffer; mimeType: string } | null> {
+): Promise<ExtractedMedia | null> {
+  await waitForPoolSlot()
+  _activeTabs++
   try {
-    const res = await fetch(snapshotUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Heimdall/1.0)' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(15000),
-    })
-    if (!res.ok) return null
-    const html = await res.text()
+    const browser = await getSharedBrowser()
+    const page = await browser.newPage()
+    try {
+      await page.setViewport({ width: 600, height: 900, deviceScaleFactor: 1 })
+      await page.goto(snapshotUrl, { waitUntil: 'networkidle2', timeout: 45000 })
+      await new Promise((r) => setTimeout(r, 2500))
+      await dismissOverlays(page)
+      await new Promise((r) => setTimeout(r, 500))
 
-    const imgMatches = html.match(/https:\/\/scontent[^"'\s]+\.(?:jpg|jpeg|png|webp)/gi)
-    if (!imgMatches?.length) return null
+      const media = await page.evaluate(() => {
+        const isCdnUrl = (src: string) =>
+          /scontent|fbcdn|\.fbsbx\.com/i.test(src) && src.startsWith('http')
 
-    const bestUrl = imgMatches.reduce((best, url) =>
-      url.length > best.length ? url : best,
-    )
+        const videos = Array.from(document.querySelectorAll('video'))
+        for (const video of videos) {
+          const poster = video.getAttribute('poster') || ''
+          const src =
+            video.getAttribute('src') ||
+            video.querySelector('source')?.getAttribute('src') ||
+            ''
+          if (src && isCdnUrl(src)) {
+            return {
+              type: 'video' as const,
+              thumbnailUrl: isCdnUrl(poster) ? poster : '',
+              videoUrl: src,
+            }
+          }
+          if (poster && isCdnUrl(poster)) {
+            return {
+              type: 'video' as const,
+              thumbnailUrl: poster,
+              videoUrl: src || null,
+            }
+          }
+        }
 
-    const imgRes = await fetch(bestUrl, {
-      signal: AbortSignal.timeout(10000),
-    })
-    if (!imgRes.ok) return null
-    const contentType = imgRes.headers.get('content-type') ?? 'image/jpeg'
-    const buffer = Buffer.from(await imgRes.arrayBuffer())
-    if (buffer.byteLength < 1000) return null
+        const imgs = Array.from(document.querySelectorAll('img'))
+          .filter((img) => {
+            const rect = img.getBoundingClientRect()
+            const src = img.src || ''
+            return rect.width > 80 && rect.height > 80 && isCdnUrl(src)
+          })
+          .sort((a, b) => {
+            const aArea = a.naturalWidth * a.naturalHeight || a.getBoundingClientRect().width * a.getBoundingClientRect().height
+            const bArea = b.naturalWidth * b.naturalHeight || b.getBoundingClientRect().width * b.getBoundingClientRect().height
+            return bArea - aArea
+          })
 
-    return { buffer, mimeType: contentType.split(';')[0].trim() }
-  } catch {
-    return null
+        if (imgs.length > 0) {
+          return {
+            type: 'image' as const,
+            thumbnailUrl: imgs[0].src,
+            videoUrl: null,
+          }
+        }
+
+        return null
+      })
+
+      if (media && media.thumbnailUrl) {
+        return media as ExtractedMedia
+      }
+
+      return null
+    } finally {
+      await page.close()
+    }
+  } finally {
+    _activeTabs--
   }
 }
+
+// ---------------------------------------------------------------------------
+// Screenshot fallback for the /preview endpoint
+// ---------------------------------------------------------------------------
+
+async function screenshotSnapshot(
+  targetUrl: string,
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  await waitForPoolSlot()
+  _activeTabs++
+  const browser = await getSharedBrowser()
+  try {
+    const page = await browser.newPage()
+    try {
+      await page.setViewport({ width: 600, height: 900, deviceScaleFactor: 1 })
+      await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 45000 })
+      await new Promise((r) => setTimeout(r, 2000))
+      await dismissOverlays(page)
+      await new Promise((r) => setTimeout(r, 300))
+
+      const clip = await page.evaluate(() => {
+        const card = document.querySelector('div._8n-d')
+        if (card instanceof HTMLElement) {
+          const rect = card.getBoundingClientRect()
+          if (rect.width > 100 && rect.height > 100) {
+            return {
+              x: Math.max(0, rect.x),
+              y: Math.max(0, rect.y),
+              width: Math.min(window.innerWidth, rect.width),
+              height: Math.min(window.innerHeight, rect.height),
+            }
+          }
+        }
+
+        const mediaNodes = Array.from(
+          document.querySelectorAll('img, video, canvas'),
+        ).filter((el) => {
+          const rect = el.getBoundingClientRect()
+          const style = window.getComputedStyle(el)
+          return (
+            rect.width > 150 &&
+            rect.height > 150 &&
+            style.visibility !== 'hidden' &&
+            style.display !== 'none' &&
+            parseFloat(style.opacity || '1') > 0
+          )
+        })
+
+        if (mediaNodes.length > 0) {
+          const best = mediaNodes
+            .map((el) => ({ el, rect: el.getBoundingClientRect() }))
+            .sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height)[0]
+
+          return {
+            x: Math.max(0, best.rect.x - 8),
+            y: Math.max(0, best.rect.y - 8),
+            width: Math.min(window.innerWidth, best.rect.width + 16),
+            height: Math.min(window.innerHeight, best.rect.height + 16),
+          }
+        }
+
+        return null
+      })
+
+      const buffer = (await page.screenshot({
+        type: 'png',
+        ...(clip ? { clip } : { fullPage: false }),
+      })) as Buffer
+
+      return { buffer, mimeType: 'image/png' }
+    } finally {
+      await page.close()
+    }
+  } finally {
+    _activeTabs--
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public: get preview image buffer (used by /preview route)
+// Tries extraction first, falls back to screenshot
+// ---------------------------------------------------------------------------
 
 export async function getMetaAdPreviewPng(
   libraryId: string,
@@ -173,119 +355,32 @@ export async function getMetaAdPreviewPng(
   if (existing) return existing
 
   const promise = (async (): Promise<{ buffer: Buffer; mimeType: string }> => {
-    if (snapshotUrl) {
-      const extracted = await tryLightweightExtract(snapshotUrl)
-      if (extracted) {
-        cacheSet(cacheKey, extracted.buffer, extracted.mimeType)
-        return extracted
-      }
-    }
+    const targetUrl = snapshotUrl || buildFallbackRenderUrl(libraryId)
 
-    await waitForPoolSlot()
-    _activeTabs++
-    const browser = await getSharedBrowser()
-
-    try {
-      const page = await browser.newPage()
-      try {
-        await page.setViewport({ width: 600, height: 900, deviceScaleFactor: 1 })
-
-        const targetUrl = snapshotUrl || buildFallbackRenderUrl(libraryId)
-        await page.goto(targetUrl, {
-          waitUntil: 'networkidle2',
-          timeout: 45000,
-        })
-
-        await new Promise((resolve) => setTimeout(resolve, 2000))
-
-        const buttons = await page.$$('div[role="button"], button, a[role="button"]')
-        for (const btn of buttons) {
-          const text = await btn.evaluate((el) => (el.textContent || '').trim())
-          if (/decline optional cookies/i.test(text)) {
-            await btn.click()
-            await new Promise((resolve) => setTimeout(resolve, 1500))
-            break
+    if (targetUrl) {
+      const media = await extractMediaFromSnapshot(targetUrl)
+      if (media?.thumbnailUrl) {
+        try {
+          const imgRes = await fetch(media.thumbnailUrl, {
+            signal: AbortSignal.timeout(15000),
+          })
+          if (imgRes.ok) {
+            const contentType = imgRes.headers.get('content-type') ?? 'image/jpeg'
+            const buffer = Buffer.from(await imgRes.arrayBuffer())
+            if (buffer.byteLength > 500) {
+              cacheSet(cacheKey, buffer, contentType.split(';')[0].trim())
+              return { buffer, mimeType: contentType.split(';')[0].trim() }
+            }
           }
+        } catch {
+          // CDN fetch failed, fall through to screenshot
         }
-
-        await page.evaluate(() => {
-          document.querySelectorAll(
-            'div._10.uiLayer, div._3ixn, div._59s7, [role="dialog"]',
-          ).forEach((el) => el.remove())
-
-          document.querySelectorAll('div').forEach((el) => {
-            const style = window.getComputedStyle(el)
-            const rect = el.getBoundingClientRect()
-            if (
-              (style.position === 'fixed' || style.position === 'absolute') &&
-              rect.width > window.innerWidth * 0.8 &&
-              rect.height > window.innerHeight * 0.8 &&
-              parseInt(style.zIndex || '0', 10) > 5
-            ) {
-              el.remove()
-            }
-          })
-        })
-
-        await new Promise((resolve) => setTimeout(resolve, 300))
-
-        const clip = await page.evaluate(() => {
-          const card = document.querySelector('div._8n-d')
-          if (card instanceof HTMLElement) {
-            const rect = card.getBoundingClientRect()
-            if (rect.width > 100 && rect.height > 100) {
-              return {
-                x: Math.max(0, rect.x),
-                y: Math.max(0, rect.y),
-                width: Math.min(window.innerWidth, rect.width),
-                height: Math.min(window.innerHeight, rect.height),
-              }
-            }
-          }
-
-          const mediaNodes = Array.from(
-            document.querySelectorAll('img, video, canvas'),
-          ).filter((el) => {
-            const rect = el.getBoundingClientRect()
-            const style = window.getComputedStyle(el)
-            return (
-              rect.width > 150 &&
-              rect.height > 150 &&
-              style.visibility !== 'hidden' &&
-              style.display !== 'none' &&
-              parseFloat(style.opacity || '1') > 0
-            )
-          })
-
-          if (mediaNodes.length > 0) {
-            const best = mediaNodes
-              .map((el) => ({ el, rect: el.getBoundingClientRect() }))
-              .sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height)[0]
-
-            return {
-              x: Math.max(0, best.rect.x - 8),
-              y: Math.max(0, best.rect.y - 8),
-              width: Math.min(window.innerWidth, best.rect.width + 16),
-              height: Math.min(window.innerHeight, best.rect.height + 16),
-            }
-          }
-
-          return null
-        })
-
-        const buffer = (await page.screenshot({
-          type: 'png',
-          ...(clip ? { clip } : { fullPage: false }),
-        })) as Buffer
-
-        cacheSet(cacheKey, buffer, 'image/png')
-        return { buffer, mimeType: 'image/png' }
-      } finally {
-        await page.close()
       }
-    } finally {
-      _activeTabs--
     }
+
+    const result = await screenshotSnapshot(targetUrl)
+    cacheSet(cacheKey, result.buffer, result.mimeType)
+    return result
   })()
 
   inflightRequests.set(cacheKey, promise)
@@ -296,6 +391,10 @@ export async function getMetaAdPreviewPng(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Fallback URL construction
+// ---------------------------------------------------------------------------
+
 function buildFallbackRenderUrl(libraryId: string): string {
   const token = process.env.META_AD_LIBRARY_ACCESS_TOKEN
   if (!token) {
@@ -303,6 +402,10 @@ function buildFallbackRenderUrl(libraryId: string): string {
   }
   return `https://www.facebook.com/ads/archive/render_ad/?id=${encodeURIComponent(libraryId)}&access_token=${encodeURIComponent(token)}`
 }
+
+// ---------------------------------------------------------------------------
+// Placeholder SVG (used when everything fails)
+// ---------------------------------------------------------------------------
 
 export function buildMetaPreviewPlaceholderSvg(label: string): Buffer {
   const safeLabel = label.replace(/[<>&'"]/g, '')
