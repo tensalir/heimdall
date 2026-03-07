@@ -182,6 +182,9 @@ function parseDate(val: unknown): string | null {
   if (!val) return null
   if (typeof val === 'number') return new Date(val * 1000).toISOString()
   if (typeof val === 'string') {
+    if (/^\d{9,10}$/.test(val)) {
+      return new Date(Number(val) * 1000).toISOString()
+    }
     try {
       const d = new Date(val)
       if (!isNaN(d.getTime())) return d.toISOString()
