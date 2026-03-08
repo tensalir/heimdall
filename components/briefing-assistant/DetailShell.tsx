@@ -243,8 +243,8 @@ export function DetailSkeleton() {
           <div className="h-8 w-16 rounded-md bg-muted/30" />
         </div>
       </header>
-      <div className="flex-1 flex gap-6 p-6 overflow-hidden">
-        <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 flex justify-center gap-6 p-6 overflow-hidden">
+        <div className="w-[400px] flex-shrink-0 overflow-y-auto">
           <div className="rounded-lg border border-border/40 bg-card overflow-hidden">
             <div className="p-3 pb-0">
               <div className="flex items-center gap-2.5 mb-3">
@@ -384,8 +384,8 @@ export function DetailShell({
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex gap-6 p-6 overflow-hidden">
-          <div className="flex-1 overflow-y-auto scrollbar-subtle">
+        <div className="flex-1 flex justify-center gap-6 p-6 overflow-hidden">
+          <div className="w-[400px] flex-shrink-0 overflow-y-auto scrollbar-subtle">
             {left}
           </div>
           <div className="w-[320px] flex-shrink-0 overflow-y-auto scrollbar-subtle space-y-4">
