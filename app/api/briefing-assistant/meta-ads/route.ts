@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
+import { isValidMediaUrl, thumbnailStatus } from '@/lib/media-utils'
 import { searchMetaAdLibrary, normalizeMetaAd, isMetaAdLibraryAvailable, MetaTokenError } from '@/src/integrations/meta/client'
 import type { NormalizedMetaAd } from '@/src/integrations/meta/client'
 import { buildScoringPrompt, computeOverallScore, RUBRIC_VERSION } from '@/src/domain/briefingAssistant/scoring/rubric'
@@ -58,25 +59,6 @@ function getSourceMode(): SourceMode {
   return 'auto'
 }
 
-function isValidMediaUrl(url: string | null): boolean {
-  if (!url) return false
-  if (url.startsWith('data:')) return false
-  if (url.startsWith('/api/')) return false
-  if (url.includes('/ads/archive/render_ad/')) return false
-  if (url.includes('/ads/library/?id=')) return false
-  try {
-    const parsed = new URL(url)
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
-  } catch {
-    return false
-  }
-}
-
-function thumbnailStatus(url: string | null): 'ready' | 'pending' | 'invalid' {
-  if (!url) return 'pending'
-  if (isValidMediaUrl(url)) return 'ready'
-  return 'invalid'
-}
 
 /**
  * GET /api/briefing-assistant/meta-ads

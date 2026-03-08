@@ -10,7 +10,7 @@
     "start": "next start -p 3846",
     "queue": "tsx src/scripts/test-e2e.ts",
     "seed:forecast": "tsx scripts/seed-forecast-v3.ts",
-    "lint": "eslint src --ext .ts",
+    "lint": "eslint src lib app middleware.ts --ext .ts,.tsx",
     "test:domain": "tsx src/domain/briefingAssistant/datasources.test.ts && tsx src/domain/briefingAssistant/evidence/metaCsvTransform.test.ts",
     "test:split": "tsx src/domain/briefingAssistant/splitEngine.test.ts",
     "build:plugin": "npm run build --workspace=heimdall-figma-plugin",

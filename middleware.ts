@@ -7,9 +7,12 @@
  *   /feedback/*           → Supabase session (same as admin)
  *   /briefing-assistant/* → Supabase session preferred; BRIEFING_LOCAL_PASSWORD fallback for localhost dev
  *   /sheets/*             → Cookie-based auth with SHEETS_PASSWORD
- *   /api/*                → CORS headers only (Figma plugin needs open access)
+ *   /api/*                → Classified by route policy (user / machine / webhook / public)
  *   /auth/*               → No auth (callback handler)
  *   /                     → No auth (landing redirect)
+ *
+ * API routes default to requiring a Supabase session unless explicitly
+ * classified as public, machine, or webhook in the policy map.
  *
  * Legacy redirects keep old URLs working during migration.
  */
@@ -21,7 +24,7 @@ import { createServerClient } from '@supabase/ssr'
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Heimdall-Secret',
 }
 
 /* ------------------------------------------------------------------ */
@@ -59,19 +62,99 @@ function legacyRedirect(request: NextRequest): NextResponse | null {
 }
 
 /* ------------------------------------------------------------------ */
-/*  CORS for API routes                                               */
+/*  API route policy classification                                    */
 /* ------------------------------------------------------------------ */
 
-function handleApi(request: NextRequest): NextResponse {
-  if (request.method === 'OPTIONS') {
-    return new NextResponse(null, { status: 204, headers: CORS_HEADERS })
-  }
+const WEBHOOK_PREFIXES = ['/api/webhooks/']
+const MACHINE_PREFIXES = [
+  '/api/jobs/',
+  '/api/plugin/',
+  '/api/briefing-assistant/trends/discover',
+  '/api/briefing-assistant/social-comments/discover',
+]
+const PUBLIC_PREFIXES = ['/api/auth/', '/api/health']
+const IMAGES_PROXY_PREFIX = '/api/images/proxy'
 
-  const response = NextResponse.next()
+type ApiPolicy = 'public' | 'user' | 'machine' | 'webhook'
+
+function classifyApiRoute(pathname: string): ApiPolicy {
+  if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return 'public'
+  if (pathname.startsWith(IMAGES_PROXY_PREFIX)) return 'public'
+  if (WEBHOOK_PREFIXES.some((p) => pathname.startsWith(p))) return 'webhook'
+  if (MACHINE_PREFIXES.some((p) => pathname.startsWith(p))) return 'machine'
+  return 'user'
+}
+
+function addCors(response: NextResponse): NextResponse {
   for (const [key, value] of Object.entries(CORS_HEADERS)) {
     response.headers.set(key, value)
   }
   return response
+}
+
+async function handleApi(request: NextRequest): Promise<NextResponse> {
+  if (request.method === 'OPTIONS') {
+    return new NextResponse(null, { status: 204, headers: CORS_HEADERS })
+  }
+
+  const { pathname } = request.nextUrl
+  const policy = classifyApiRoute(pathname)
+
+  if (policy === 'public') {
+    return addCors(NextResponse.next())
+  }
+
+  if (policy === 'webhook') {
+    return addCors(NextResponse.next())
+  }
+
+  if (policy === 'machine') {
+    const secret = process.env.HEIMDALL_MACHINE_SECRET
+    if (secret) {
+      const provided = request.headers.get('x-heimdall-secret')
+      if (!provided || provided !== secret) {
+        return addCors(NextResponse.json(
+          { error: 'Machine authentication required' },
+          { status: 403, headers: CORS_HEADERS },
+        ))
+      }
+    }
+    return addCors(NextResponse.next())
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return addCors(NextResponse.next())
+  }
+
+  let response = NextResponse.next({ request: { headers: request.headers } })
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll()
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) => {
+          request.cookies.set(name, value)
+        })
+        response = NextResponse.next({ request: { headers: request.headers } })
+        cookiesToSet.forEach(({ name, value, options }) => {
+          response.cookies.set(name, value, options)
+        })
+      },
+    },
+  })
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return addCors(NextResponse.json(
+      { error: 'Authentication required' },
+      { status: 401, headers: CORS_HEADERS },
+    ))
+  }
+
+  return addCors(response)
 }
 
 /* ------------------------------------------------------------------ */
@@ -231,7 +314,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // 3. API routes: CORS only
+  // 3. API routes: classified by policy (user / machine / webhook / public)
   if (pathname.startsWith('/api/')) {
     return handleApi(request)
   }

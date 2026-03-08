@@ -44,12 +44,33 @@ const ALLOWED_HOSTS = [
   'figma-alpha.s3.us-west-2.amazonaws.com',
 ]
 
+const PRIVATE_IP_PATTERNS = [
+  /^127\./,
+  /^10\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^192\.168\./,
+  /^0\./,
+  /^169\.254\./,
+  /^::1$/,
+  /^fc00:/,
+  /^fe80:/,
+  /^fd/,
+]
+
+const MAX_RESPONSE_SIZE = 25 * 1024 * 1024
+
 function isAllowedUrl(url: string): boolean {
   try {
     const parsed = new URL(url)
-    return ALLOWED_HOSTS.some(
-      (host) => parsed.hostname === host || parsed.hostname.endsWith(host)
-    )
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
+    if (PRIVATE_IP_PATTERNS.some((p) => p.test(parsed.hostname))) return false
+    if (parsed.hostname === 'localhost') return false
+    return ALLOWED_HOSTS.some((host) => {
+      if (host.startsWith('.')) {
+        return parsed.hostname === host.slice(1) || parsed.hostname.endsWith(host)
+      }
+      return parsed.hostname === host
+    })
   } catch {
     return false
   }
@@ -206,7 +227,10 @@ export async function GET(request: Request) {
       )
     }
 
-    const response = await fetch(fetchUrl, { redirect: 'follow' })
+    const response = await fetch(fetchUrl, {
+      redirect: 'follow',
+      signal: AbortSignal.timeout(15_000),
+    })
 
     if (!response.ok) {
       return errorJson(
@@ -216,8 +240,17 @@ export async function GET(request: Request) {
       )
     }
 
+    const contentLength = Number(response.headers.get('content-length') || 0)
+    if (contentLength > MAX_RESPONSE_SIZE) {
+      return errorJson('too_large', 'Response exceeds size limit', 413)
+    }
+
     const contentType = response.headers.get('content-type') ?? 'image/png'
     const buffer = await response.arrayBuffer()
+
+    if (buffer.byteLength > MAX_RESPONSE_SIZE) {
+      return errorJson('too_large', 'Response exceeds size limit', 413)
+    }
 
     const result = await normalizeToFigmaCompatible(buffer, contentType)
     if ('error' in result) {

@@ -72,6 +72,32 @@ const envSchema = z.object({
   VESPER_API_SECRET: z.string().min(1).optional(),
   /** Gemini API key for direct Nano Banana generation (Vesper fallback). */
   GEMINI_API_KEY: z.string().min(1).optional(),
+  /** Supabase public URL (client-side auth). */
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
+  /** Supabase anon key (client-side auth). */
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).optional(),
+  /** Exa web search key for trend/social discovery. */
+  EXA_API_KEY: z.string().min(1).optional(),
+  /** Perplexity API key for digest synthesis. */
+  PERPLEXITY_API_KEY: z.string().min(1).optional(),
+  /** Figma team IDs for project browser (comma-separated). */
+  FIGMA_TEAM_IDS: z.string().optional(),
+  /** Vercel KV REST URL (auto-set when linking KV store). */
+  KV_REST_API_URL: z.string().url().optional(),
+  /** Vercel KV REST token. */
+  KV_REST_API_TOKEN: z.string().min(1).optional(),
+  /** Sheets/reviewer cookie auth password. */
+  SHEETS_PASSWORD: z.string().min(1).optional(),
+  /** Briefing Assistant local dev password. */
+  BRIEFING_LOCAL_PASSWORD: z.string().min(1).optional(),
+  /** Shared secret for machine-to-machine API auth (plugin, jobs, cron). */
+  HEIMDALL_MACHINE_SECRET: z.string().min(1).optional(),
+  /** Monday briefing board ID for sprint integration. */
+  MONDAY_BRIEFING_BOARD_ID: z.string().optional(),
+  /** Monday briefing doc column ID. */
+  MONDAY_BRIEFING_DOC_COLUMN_ID: z.string().optional(),
+  /** Monday briefing group ID. */
+  MONDAY_BRIEFING_GROUP_ID: z.string().optional(),
 })
 
 export type Env = z.infer<typeof envSchema>

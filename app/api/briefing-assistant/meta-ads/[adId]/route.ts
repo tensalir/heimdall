@@ -1,14 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
+import { isValidMediaUrl } from '@/lib/media-utils'
 
 export const dynamic = 'force-dynamic'
-
-function isValidMediaUrl(url: string | null): boolean {
-  if (!url) return false
-  if (url.startsWith('data:') || url.startsWith('/api/')) return false
-  if (url.includes('/ads/archive/render_ad/') || url.includes('/ads/library/?id=')) return false
-  try { return new URL(url).protocol.startsWith('http') } catch { return false }
-}
 
 /**
  * GET /api/briefing-assistant/meta-ads/[adId]

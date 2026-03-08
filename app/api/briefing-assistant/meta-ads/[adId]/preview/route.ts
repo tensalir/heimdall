@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
+import { isValidMediaUrl } from '@/lib/media-utils'
 import {
   buildMetaPreviewPlaceholderSvg,
   getMetaAdPreviewPng,
@@ -8,20 +9,6 @@ import {
 import { mirrorMediaAsset } from '@/src/integrations/meta/mediaMirror'
 
 export const dynamic = 'force-dynamic'
-
-function isValidMediaUrl(url: string | null): boolean {
-  if (!url) return false
-  if (url.startsWith('data:')) return false
-  if (url.startsWith('/api/')) return false
-  if (url.includes('/ads/archive/render_ad/')) return false
-  if (url.includes('/ads/library/?id=')) return false
-  try {
-    const parsed = new URL(url)
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
-  } catch {
-    return false
-  }
-}
 
 export async function GET(
   _req: NextRequest,

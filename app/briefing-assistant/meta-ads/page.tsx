@@ -214,14 +214,20 @@ function AdCardImage({
   isVideo: boolean
   status: 'ready' | 'pending' | 'invalid'
 }) {
-  const shouldAttemptLoad = !!src && status !== 'pending'
+  const hasSrc = !!src
   const [imgState, setImgState] = useState<'loading' | 'loaded' | 'error'>(
-    shouldAttemptLoad ? 'loading' : (status === 'pending' ? 'loading' : 'error'),
+    hasSrc ? 'loading' : 'error',
   )
+  const [lastSrc, setLastSrc] = useState(src)
+
+  if (src !== lastSrc) {
+    setLastSrc(src)
+    setImgState(src ? 'loading' : 'error')
+  }
 
   return (
     <div className="relative aspect-[4/5] bg-muted/30 overflow-hidden">
-      {shouldAttemptLoad && imgState !== 'error' ? (
+      {hasSrc && imgState !== 'error' ? (
         <>
           {imgState === 'loading' && (
             <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted/40 via-muted/60 to-muted/40" />
@@ -348,6 +354,13 @@ function AdGalleryCard({
 
 function TableRowThumb({ src }: { src: string | null }) {
   const [failed, setFailed] = useState(false)
+  const [lastSrc, setLastSrc] = useState(src)
+
+  if (src !== lastSrc) {
+    setLastSrc(src)
+    setFailed(false)
+  }
+
   if (!src || failed) {
     return (
       <div className="w-full h-full flex items-center justify-center">
@@ -528,7 +541,7 @@ export default function MetaAdsLibraryPage() {
 
   useEffect(() => {
     fetchAds()
-  }, [surface]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchAds])
 
   const handleSync = useCallback(async () => {
     const query = search.trim()

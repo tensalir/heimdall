@@ -30,7 +30,7 @@ export async function POST(request: Request) {
   response.cookies.set(BRIEFING_COOKIE_NAME, token, {
     httpOnly: true,
     sameSite: 'strict',
-    secure: false,
+    secure: process.env.NODE_ENV === 'production',
     maxAge: COOKIE_MAX_AGE,
     path: '/',
   })

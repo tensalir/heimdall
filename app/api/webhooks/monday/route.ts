@@ -1,15 +1,26 @@
 import { NextResponse } from 'next/server'
-import { handleMondayWebhook } from '@/src/api/webhooks/monday'
+import { handleMondayWebhook, verifyMondayWebhookSignature } from '@/src/api/webhooks/monday'
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    const rawBody = await request.text()
+    const signature = request.headers.get('x-monday-signature')
+
+    const valid = await verifyMondayWebhookSignature(rawBody, signature)
+    if (!valid) {
+      return NextResponse.json(
+        { error: 'Invalid webhook signature' },
+        { status: 403 },
+      )
+    }
+
+    const body = JSON.parse(rawBody)
     const result = await handleMondayWebhook(body)
-    
+
     if (result.challenge != null) {
       return NextResponse.json({ challenge: result.challenge }, { status: 200 })
     }
-    
+
     return NextResponse.json(
       {
         received: result.received,

@@ -243,14 +243,16 @@ export function DetailSkeleton() {
           <div className="h-8 w-16 rounded-md bg-muted/30" />
         </div>
       </header>
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_320px] overflow-hidden">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px] overflow-hidden">
         <div className="overflow-y-auto p-5 space-y-5">
-          <div className="rounded-lg bg-muted/20 aspect-[16/9] max-w-2xl mx-auto" />
           <div className="space-y-2">
             <div className="h-3 w-full rounded bg-muted/30" />
             <div className="h-3 w-5/6 rounded bg-muted/30" />
             <div className="h-3 w-4/6 rounded bg-muted/30" />
           </div>
+        </div>
+        <div className="border-l border-border overflow-y-auto p-5 space-y-5">
+          <div className="rounded-lg bg-muted/20 aspect-[4/5]" />
         </div>
         <div className="border-l border-border p-5 space-y-6 bg-card/40">
           {[1, 2, 3, 4].map((i) => (
@@ -274,6 +276,7 @@ export function DetailShell({
   subtitle,
   actions,
   left,
+  center,
   right,
   itemId,
   sourceType,
@@ -283,12 +286,15 @@ export function DetailShell({
   subtitle?: React.ReactNode
   actions?: React.ReactNode
   left: React.ReactNode
+  center?: React.ReactNode
   right: React.ReactNode
   itemId: string
   sourceType: 'meta-ad' | 'trend' | 'social-comment'
 }) {
   const router = useRouter()
   const { bookmarkOpen, setBookmarkOpen, isSaved, setIsSaved, bookmarkRef } = useSaveItem(itemId)
+
+  const hasCenter = !!center
 
   return (
     <div className="flex flex-col h-full">
@@ -344,10 +350,20 @@ export function DetailShell({
         </div>
       </header>
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_320px] overflow-hidden">
-        <div className="overflow-y-auto scrollbar-subtle p-5 space-y-5">
+      <div className={cn(
+        'flex-1 grid grid-cols-1 overflow-hidden',
+        hasCenter
+          ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px]'
+          : 'lg:grid-cols-[1fr_320px]',
+      )}>
+        <div className="overflow-y-auto scrollbar-subtle p-5 space-y-5 max-w-prose">
           {left}
         </div>
+        {hasCenter && (
+          <div className="overflow-y-auto scrollbar-subtle p-5 space-y-5 border-l border-border">
+            {center}
+          </div>
+        )}
         <div className="border-l border-border overflow-y-auto scrollbar-subtle p-5 space-y-6 bg-card/40">
           {right}
         </div>

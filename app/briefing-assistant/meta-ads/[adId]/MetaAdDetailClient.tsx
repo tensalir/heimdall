@@ -82,9 +82,9 @@ function computeRunningDays(start: string | null, end: string | null): string {
   return `${days} day${days !== 1 ? 's' : ''}`
 }
 
-// ── Creative Image ───────────────────────────────────────────────
+// ── Creative Media ───────────────────────────────────────────────
 
-function CreativeImage({
+function CreativeMedia({
   ad,
   onDownload,
   downloading,
@@ -93,43 +93,73 @@ function CreativeImage({
   onDownload: () => void
   downloading: boolean
 }) {
-  const [imgState, setImgState] = useState<'loading' | 'loaded' | 'error'>('loading')
   const mediaSrc = ad.creative_url || ad.thumbnail_url || ''
   const previewFallback = `/api/briefing-assistant/meta-ads/${ad.id}/preview`
   const [activeSrc, setActiveSrc] = useState(mediaSrc || previewFallback)
+  const [mediaState, setMediaState] = useState<'loading' | 'loaded' | 'error'>('loading')
+  const [lastAdId, setLastAdId] = useState(ad.id)
+
+  if (ad.id !== lastAdId) {
+    setLastAdId(ad.id)
+    const newSrc = ad.creative_url || ad.thumbnail_url || previewFallback
+    setActiveSrc(newSrc)
+    setMediaState('loading')
+  }
+
+  const isVideo = ad.media_type === 'video' && activeSrc && !activeSrc.endsWith('/preview')
 
   return (
     <div className="relative rounded-lg border border-border bg-muted/10 overflow-hidden">
       <div className="relative aspect-[4/5] max-h-[calc(100vh-200px)]">
-        {imgState === 'loading' && (
+        {mediaState === 'loading' && (
           <div className="absolute inset-0 flex items-center justify-center z-10">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/30" />
           </div>
         )}
-        {imgState === 'error' ? (
+        {mediaState === 'error' ? (
           <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-6">
             <ImageIcon className="h-10 w-10 text-muted-foreground/15" />
             <p className="text-xs text-muted-foreground/50 text-center">Preview not available</p>
           </div>
+        ) : isVideo ? (
+          <video
+            src={activeSrc}
+            controls
+            playsInline
+            className={cn(
+              'w-full h-full object-contain transition-opacity duration-300',
+              mediaState === 'loaded' ? 'opacity-100' : 'opacity-0',
+            )}
+            onLoadedData={() => setMediaState('loaded')}
+            onError={() => {
+              if (activeSrc !== previewFallback) {
+                setActiveSrc(previewFallback)
+                setMediaState('loading')
+              } else {
+                setMediaState('error')
+              }
+            }}
+          />
         ) : (
           <img
             src={activeSrc}
             alt={ad.page_name}
             className={cn(
               'w-full h-full object-contain transition-opacity duration-300',
-              imgState === 'loaded' ? 'opacity-100' : 'opacity-0',
+              mediaState === 'loaded' ? 'opacity-100' : 'opacity-0',
             )}
-            onLoad={() => setImgState('loaded')}
+            onLoad={() => setMediaState('loaded')}
             onError={() => {
-              if (activeSrc !== previewFallback && previewFallback) {
+              if (activeSrc !== previewFallback) {
                 setActiveSrc(previewFallback)
+                setMediaState('loading')
               } else {
-                setImgState('error')
+                setMediaState('error')
               }
             }}
           />
         )}
-        {ad.media_type === 'video' && imgState === 'loaded' && (
+        {ad.media_type === 'video' && !isVideo && mediaState === 'loaded' && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="flex items-center justify-center w-14 h-14 rounded-full bg-black/50 text-white">
               <Play className="h-6 w-6 ml-0.5" />
@@ -336,8 +366,6 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
             </a>
           )}
 
-          <CreativeImage ad={ad} onDownload={handleMirrorDownload} downloading={mirroring} />
-
           {ad.link_url && (
             <a
               href={ad.link_url}
@@ -350,6 +378,9 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
             </a>
           )}
         </>
+      }
+      center={
+        <CreativeMedia ad={ad} onDownload={handleMirrorDownload} downloading={mirroring} />
       }
       right={
         <>
