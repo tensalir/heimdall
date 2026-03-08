@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
@@ -35,6 +36,8 @@ export interface FeedbackExperimentRow {
  * Returns rounds list if no round_id; otherwise experiments + entries for that round, grouped by agency.
  */
 export async function GET(request: Request) {
+  const auth = await requireUser(request)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
@@ -104,6 +107,8 @@ export async function GET(request: Request) {
  * Creates or updates a feedback entry. Body: { experiment_id, role, content?, author? }
  */
 export async function POST(request: Request) {
+  const auth = await requireUser(request)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })

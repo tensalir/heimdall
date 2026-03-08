@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 import { computeFcOutput, computeCsOutput } from '@/src/domain/forecast/parityEngine'
 import type { ForecastUseCaseRow, ForecastFcOverride } from '@/src/domain/forecast/schema'
@@ -27,16 +28,18 @@ const STUDIO_AGENCY_NAMES = [
  * Returns FC and CS computed outputs for the run and month. Uses stored overrides when present.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ runId: string }> }
 ) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
   }
 
   const { runId } = await params
-  const { searchParams } = new URL(_req.url ?? '', 'http://localhost')
+  const { searchParams } = new URL(req.url ?? '', 'http://localhost')
   const monthKey = searchParams.get('monthKey') ?? ''
 
   if (!runId || !monthKey) {

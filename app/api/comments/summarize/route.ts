@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
@@ -16,6 +17,8 @@ export const dynamic = 'force-dynamic'
  * Returns: { summary: string, cached: boolean }
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return NextResponse.json(

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
@@ -8,9 +9,11 @@ export const dynamic = 'force-dynamic'
  * Returns one forecast run with its use-case rows.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ runId: string }> }
 ) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })

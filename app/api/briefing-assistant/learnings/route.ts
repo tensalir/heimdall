@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
+import { requireUser } from '@/lib/route-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,7 +22,10 @@ interface ProductAgg {
  * recurring patterns grouped by product/use case and section.
  * Phase 1: direct DB aggregation. Phase 2: vector retrieval + LLM summarization.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })

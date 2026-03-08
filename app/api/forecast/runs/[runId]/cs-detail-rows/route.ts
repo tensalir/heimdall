@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
@@ -30,16 +31,18 @@ function mapRow(r: Record<string, unknown>) {
  * GET /api/forecast/runs/[runId]/cs-detail-rows?monthKey=May26
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ runId: string }> }
 ) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
   }
 
   const { runId } = await params
-  const { searchParams } = new URL(_req.url ?? '', 'http://localhost')
+  const { searchParams } = new URL(req.url ?? '', 'http://localhost')
   const monthKey = searchParams.get('monthKey') ?? ''
   if (!runId || !monthKey) {
     return NextResponse.json({ error: 'runId and monthKey required' }, { status: 400 })
@@ -66,6 +69,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ runId: string }> }
 ) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
@@ -134,6 +139,8 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ runId: string }> }
 ) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
@@ -196,16 +203,18 @@ export async function PATCH(
  * DELETE /api/forecast/runs/[runId]/cs-detail-rows?id=uuid
  */
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ runId: string }> }
 ) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
   }
 
   const { runId } = await params
-  const { searchParams } = new URL(_req.url ?? '', 'http://localhost')
+  const { searchParams } = new URL(req.url ?? '', 'http://localhost')
   const id = searchParams.get('id')
   if (!runId || !id) {
     return NextResponse.json({ error: 'runId and id required' }, { status: 400 })

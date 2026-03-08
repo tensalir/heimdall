@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   Search,
@@ -542,6 +542,17 @@ export default function MetaAdsLibraryPage() {
   useEffect(() => {
     fetchAds()
   }, [fetchAds])
+
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const hasPending = allAds.some((ad) => ad.thumbnail_status === 'pending')
+    if (hasPending && !loading) {
+      refreshTimerRef.current = setTimeout(() => fetchAds(), 15_000)
+    }
+    return () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
+    }
+  }, [allAds, loading, fetchAds])
 
   const handleSync = useCallback(async () => {
     const query = search.trim()

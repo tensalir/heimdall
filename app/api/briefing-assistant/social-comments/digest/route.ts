@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
+import { requireUser } from '@/lib/route-auth'
 import { synthesizeDigest, getTopic, TOPICS } from '@/src/services/socialListeningDiscoveryService'
 
 export const dynamic = 'force-dynamic'
@@ -10,6 +11,9 @@ export const dynamic = 'force-dynamic'
  * If the digest is stale (>24h) or missing, regenerates on demand.
  */
 export async function GET(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const { searchParams } = new URL(req.url)
   const topicId = searchParams.get('topic')?.trim()
 

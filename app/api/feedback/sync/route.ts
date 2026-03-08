@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { requireUser } from '@/lib/route-auth'
 import type { ExternalLinkRef } from '@/src/contracts/integrations'
 import { buildLockKey } from '@/src/services/integrationExecutionGuard'
 import { readMondayBoardItemsWithMeta } from '@/src/services/mondayBoardReader'
@@ -48,6 +49,8 @@ function groupToAgency(groupTitle: string): string {
  * Uses tool-scoped lock key for future KV-based locking: buildLockKey('feedback', 'sync', boardId).
  */
 export async function POST(request: Request) {
+  const auth = await requireUser(request)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })

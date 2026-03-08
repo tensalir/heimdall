@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
@@ -11,9 +12,11 @@ export const dynamic = 'force-dynamic'
  * Upserts forecast_fc_overrides for the run/month.
  */
 export async function PATCH(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ runId: string }> }
 ) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
@@ -26,7 +29,7 @@ export async function PATCH(
 
   let body: Record<string, unknown>
   try {
-    body = await _req.json()
+    body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }

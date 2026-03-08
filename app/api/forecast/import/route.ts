@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 import { parseUseCaseDataSheet } from '@/src/domain/forecast/parseUseCaseData'
 
@@ -11,6 +12,8 @@ export const dynamic = 'force-dynamic'
  * Parses "Use Case Data" sheet, normalizes rows, creates forecast_runs + forecast_use_case_rows.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })

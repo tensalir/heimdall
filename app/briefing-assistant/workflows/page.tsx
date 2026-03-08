@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   Workflow,
   Loader2,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useApi } from '@/lib/use-api'
 
 type WorkflowStatus = 'idle' | 'running' | 'completed' | 'failed'
 
@@ -68,28 +69,13 @@ function StatusIcon({ status }: { status: WorkflowStatus }) {
 }
 
 export default function WorkflowsPage() {
-  const [runs, setRuns] = useState<WorkflowRun[]>([])
-  const [loading, setLoading] = useState(true)
+  const { data, loading, refetch } = useApi<{ runs: WorkflowRun[] }>(
+    '/api/briefing-assistant/workflows',
+  )
+  const runs = data?.runs ?? []
   const [starting, setStarting] = useState<string | null>(null)
 
-  const fetchRuns = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/briefing-assistant/workflows')
-      const data = await res.json()
-      setRuns(data.runs ?? [])
-    } catch {
-      setRuns([])
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchRuns()
-  }, [fetchRuns])
-
-  const startWorkflow = useCallback(async (workflowId: string) => {
+  async function startWorkflow(workflowId: string) {
     setStarting(workflowId)
     try {
       const res = await fetch('/api/briefing-assistant/workflows', {
@@ -97,11 +83,11 @@ export default function WorkflowsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workflow_id: workflowId }),
       })
-      if (res.ok) await fetchRuns()
+      if (res.ok) await refetch()
     } finally {
       setStarting(null)
     }
-  }, [fetchRuns])
+  }
 
   return (
     <div className="flex flex-col h-full">

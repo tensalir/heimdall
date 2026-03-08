@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
+import { requireUser } from '@/lib/route-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,9 +10,12 @@ export const dynamic = 'force-dynamic'
  * AI summary is fetched separately via /summary sub-route.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const { id } = await params
 
   const db = getSupabase()

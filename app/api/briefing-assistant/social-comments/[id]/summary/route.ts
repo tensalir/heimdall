@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { getSupabase } from '@/lib/supabase'
+import { requireUser } from '@/lib/route-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,9 +11,12 @@ export const dynamic = 'force-dynamic'
  * Called asynchronously by the detail client after the main payload loads.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const { id } = await params
 
   const db = getSupabase()

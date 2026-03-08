@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { mondayGraphql } from '@/src/integrations/monday/client'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
@@ -43,6 +44,8 @@ function buildDocMarkdown(experimentName: string, summary: string, entries: Arra
  * Fetches experiment + entries, ensures summary, creates/updates Monday Doc and optionally writes summary to a column.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })

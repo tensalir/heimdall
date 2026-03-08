@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import * as XLSX from 'xlsx'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
@@ -100,6 +101,8 @@ function parseSheet(sheet: XLSX.WorkSheet, sheetName: string): ParsedExperiment[
  * Parses the workbook: each sheet becomes a round (or all go into one round if roundId provided). Creates experiments and feedback entries.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })

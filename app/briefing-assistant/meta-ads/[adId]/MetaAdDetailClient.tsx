@@ -88,25 +88,42 @@ function CreativeMedia({
   ad,
   onDownload,
   downloading,
+  onSelfHeal,
 }: {
   ad: AdDetail
   onDownload: () => void
   downloading: boolean
+  onSelfHeal?: () => void
 }) {
   const mediaSrc = ad.creative_url || ad.thumbnail_url || ''
   const previewFallback = `/api/briefing-assistant/meta-ads/${ad.id}/preview`
   const [activeSrc, setActiveSrc] = useState(mediaSrc || previewFallback)
   const [mediaState, setMediaState] = useState<'loading' | 'loaded' | 'error'>('loading')
   const [lastAdId, setLastAdId] = useState(ad.id)
+  const [usedFallback, setUsedFallback] = useState(false)
 
   if (ad.id !== lastAdId) {
     setLastAdId(ad.id)
     const newSrc = ad.creative_url || ad.thumbnail_url || previewFallback
     setActiveSrc(newSrc)
     setMediaState('loading')
+    setUsedFallback(false)
   }
 
   const isVideo = ad.media_type === 'video' && activeSrc && !activeSrc.endsWith('/preview')
+
+  const handleFallbackLoad = useCallback(() => {
+    setMediaState('loaded')
+    if (usedFallback && onSelfHeal) {
+      setTimeout(onSelfHeal, 3000)
+    }
+  }, [usedFallback, onSelfHeal])
+
+  const switchToFallback = useCallback(() => {
+    setActiveSrc(previewFallback)
+    setMediaState('loading')
+    setUsedFallback(true)
+  }, [previewFallback])
 
   return (
     <div className="relative rounded-lg border border-border bg-muted/10 overflow-hidden">
@@ -130,11 +147,10 @@ function CreativeMedia({
               'w-full h-full object-contain transition-opacity duration-300',
               mediaState === 'loaded' ? 'opacity-100' : 'opacity-0',
             )}
-            onLoadedData={() => setMediaState('loaded')}
+            onLoadedData={handleFallbackLoad}
             onError={() => {
               if (activeSrc !== previewFallback) {
-                setActiveSrc(previewFallback)
-                setMediaState('loading')
+                switchToFallback()
               } else {
                 setMediaState('error')
               }
@@ -148,11 +164,10 @@ function CreativeMedia({
               'w-full h-full object-contain transition-opacity duration-300',
               mediaState === 'loaded' ? 'opacity-100' : 'opacity-0',
             )}
-            onLoad={() => setMediaState('loaded')}
+            onLoad={handleFallbackLoad}
             onError={() => {
               if (activeSrc !== previewFallback) {
-                setActiveSrc(previewFallback)
-                setMediaState('loading')
+                switchToFallback()
               } else {
                 setMediaState('error')
               }
@@ -380,7 +395,7 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
         </>
       }
       center={
-        <CreativeMedia ad={ad} onDownload={handleMirrorDownload} downloading={mirroring} />
+        <CreativeMedia ad={ad} onDownload={handleMirrorDownload} downloading={mirroring} onSelfHeal={fetchAd} />
       }
       right={
         <>
