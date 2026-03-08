@@ -63,6 +63,7 @@ These existing systems are unchanged and fully functional:
 New optional env vars for full functionality:
 ```
 META_AD_LIBRARY_ACCESS_TOKEN=   # Meta Ad Library API access (see token policy below)
+SEARCHAPI_API_KEY=              # SearchAPI for scalable Meta Ad Library scraping
 GEMINI_API_KEY=                 # Direct Nano Banana generation (fallback)
 VESPER_API_URL=                 # Vesper instance for image generation
 VESPER_API_SECRET=              # Optional: Vesper server-to-server auth
@@ -106,7 +107,9 @@ Set `META_ADS_SOURCE_MODE` to control the ingestion source:
 
 | Value | Behavior |
 |-------|----------|
-| `auto` (default) | Browser scrape first; falls back to API if browser returns 0 results |
+| `auto` (default) | Apify first (if configured), then browser scrape; falls back to Graph API if 0 results |
+| `searchapi` | SearchAPI only (requires `SEARCHAPI_API_KEY`); returns structured JSON with media URLs |
+| `apify` | Apify only (requires `APIFY_API_TOKEN`) |
 | `browser` | Browser scrape only |
 | `api` | Graph API only (requires `META_AD_LIBRARY_ACCESS_TOKEN`) |
 
@@ -150,7 +153,8 @@ The `briefing-media` bucket is created by migration `017_briefing_media_storage.
 `GET /api/briefing-assistant/meta-ads?check=health` returns:
 - `token.configured` / `token.valid` — Meta API token status
 - `provider.mode` / `provider.default_region` / `provider.proxy_configured` — ingestion source configuration
-- `provider.browser_sourced_ads` / `provider.api_sourced_ads` — ads by source
+- `provider.apify_configured` / `provider.searchapi_configured` — provider availability
+- `provider.browser_sourced_ads` / `provider.apify_sourced_ads` / `provider.searchapi_sourced_ads` / `provider.graph_api_sourced_ads` — ads by source
 - `ads.total` / `ads.poster_mirrored` / `ads.poster_missing` — thumbnail coverage
 - `ads.poster_direct_thumb` — ads with direct CDN thumbnails (not yet mirrored)
 - `ads.video_detected` / `ads.video_promoted` — video ad state

@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   TrendingUp,
   Loader2,
@@ -353,11 +353,31 @@ function DigestCard({
 // ── Page ──────────────────────────────────────────────────────────
 
 export default function TrendsPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" /></div>}>
+      <TrendsPageInner />
+    </Suspense>
+  )
+}
+
+function TrendsPageInner() {
   const router = useRouter()
-  const [search, setSearch] = useState('')
-  const [activeVertical, setActiveVertical] = useState<string>('all')
+  const urlParams = useSearchParams()
+  const [search, setSearch] = useState(urlParams.get('q') ?? '')
+  const [activeVertical, setActiveVertical] = useState<string>(urlParams.get('vertical') ?? 'all')
   const [discovering, setDiscovering] = useState(false)
   const [discoverResult, setDiscoverResult] = useState<string | null>(null)
+
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (search.trim()) params.set('q', search.trim())
+    if (activeVertical !== 'all') params.set('vertical', activeVertical)
+    const qs = params.toString()
+    const target = qs ? `?${qs}` : ''
+    if (window.location.search.slice(1) !== qs) {
+      router.replace(`/briefing-assistant/trends${target}`, { scroll: false })
+    }
+  }, [search, activeVertical, router])
 
   const trendsUrl = useMemo(() => {
     const params = new URLSearchParams()
@@ -366,7 +386,7 @@ export default function TrendsPage() {
     return `/api/briefing-assistant/trends?${params}`
   }, [search, activeVertical])
 
-  const { data, loading, refetch } = useApi<{ trends: TrendItem[]; verticals: VerticalMeta[] }>(trendsUrl)
+  const { data, loading, refetch } = useApi<{ trends: TrendItem[]; verticals: VerticalMeta[] }>(trendsUrl, { keepPreviousData: true })
   const trends = data?.trends ?? []
   const verticals = data?.verticals ?? []
 
@@ -492,26 +512,30 @@ export default function TrendsPage() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {activeVertical !== 'all' && (
-          <DigestCard verticalId={activeVertical} verticalLabel={activeLabel} />
-        )}
-
-        {loading ? (
+        {loading && trends.length === 0 ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : trends.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
-            <TrendingUp className="h-10 w-10 text-muted-foreground/20" />
-            <p className="text-sm text-muted-foreground">
-              {activeVertical !== 'all'
-                ? `No trends for ${activeLabel} yet.`
-                : 'No trends discovered yet.'}
-            </p>
-            <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
-              Click &ldquo;Discover Now&rdquo; to search the web for relevant articles, use cases, and cultural moments across{' '}
-              {activeVertical !== 'all' ? 'this vertical' : 'all verticals'}.
-            </p>
+            {discovering ? (
+              <>
+                <Loader2 className="h-8 w-8 animate-spin text-primary/40" />
+                <p className="text-sm text-muted-foreground">Discovering trends...</p>
+              </>
+            ) : (
+              <>
+                <TrendingUp className="h-10 w-10 text-muted-foreground/20" />
+                <p className="text-sm text-muted-foreground">
+                  {activeVertical !== 'all'
+                    ? `No trends for ${activeLabel} yet.`
+                    : 'No trends discovered yet.'}
+                </p>
+                <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
+                  Click &ldquo;Discover Now&rdquo; to search the web for relevant articles and cultural moments.
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

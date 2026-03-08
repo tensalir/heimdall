@@ -110,6 +110,14 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
     return addCors(NextResponse.next())
   }
 
+  if (policy === 'dual') {
+    const machineSecret = process.env.HEIMDALL_MACHINE_SECRET
+    const provided = request.headers.get('x-heimdall-secret')
+    if (machineSecret && provided === machineSecret) {
+      return addCors(NextResponse.next())
+    }
+  }
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   if (!supabaseUrl || !supabaseAnonKey) {

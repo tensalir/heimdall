@@ -279,16 +279,22 @@ export async function scoreAndStore(
 
   const existingCheck = await db
     .from('briefing_source_items')
-    .select('external_id')
+    .select('external_id, tags')
     .eq('source_type', 'trend')
     .in(
       'external_id',
       scored.map((a) => a.exaId),
     )
 
-  const existingIds = new Set((existingCheck.data ?? []).map((r: { external_id: string }) => r.external_id))
+  const existingMap = new Map<string, string[]>(
+    (existingCheck.data ?? []).map((r: { external_id: string; tags: string[] }) => [r.external_id, r.tags ?? []]),
+  )
 
-  const newArticles = scored.filter((a) => !existingIds.has(a.exaId))
+  const newArticles = scored.filter((a) => !existingMap.has(a.exaId))
+  const existingToMerge = scored.filter((a) => {
+    const tags = existingMap.get(a.exaId)
+    return tags && !tags.includes(verticalId)
+  })
 
   if (newArticles.length > 0) {
     const rows = newArticles.map((a) => {
@@ -323,6 +329,16 @@ export async function scoreAndStore(
     if (error) {
       console.error('[TrendDiscovery] DB insert failed:', error)
     }
+  }
+
+  for (const article of existingToMerge) {
+    const currentTags = existingMap.get(article.exaId) ?? []
+    const merged = [...new Set([...currentTags, verticalId])]
+    await db
+      .from('briefing_source_items')
+      .update({ tags: merged })
+      .eq('source_type', 'trend')
+      .eq('external_id', article.exaId)
   }
 
   return scored

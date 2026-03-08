@@ -291,6 +291,14 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
     )
   }
 
+  const scoreItems = [
+    { label: 'Hook', value: ad.score_hook },
+    { label: 'Attention', value: ad.score_attention },
+    { label: 'Clarity', value: ad.score_clarity },
+    { label: 'CTA', value: ad.score_cta },
+    { label: 'Overall', value: ad.score_overall },
+  ].filter((s) => s.value != null)
+
   return (
     <DetailShell
       backHref="/briefing-assistant/meta-ads"
@@ -329,45 +337,26 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-bold text-foreground truncate">{ad.page_name}</p>
-              <p className="text-[10px] text-muted-foreground">{ad.source_provider ?? 'Sponsored'}</p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-[10px] text-muted-foreground">{ad.source_provider ?? 'Sponsored'}</span>
+                {ad.is_active ? (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600">Active</span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">Inactive</span>
+                )}
+                {ad.started_at && (
+                  <span className="text-[10px] text-muted-foreground/60 flex items-center gap-0.5">
+                    <Clock className="h-2.5 w-2.5" />
+                    {formatDate(ad.started_at)} · Present
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-
-          {/* Status + dates */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {ad.is_active ? (
-              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">Active</span>
-            ) : (
-              <span className="inline-flex items-center gap-1 rounded-md bg-muted/50 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Inactive</span>
-            )}
-            {ad.started_at && (
-              <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                <Clock className="h-2.5 w-2.5" />
-                {formatDate(ad.started_at)}
-                {ad.ended_at && ` – ${formatDate(ad.ended_at)}`}
-              </span>
-            )}
           </div>
 
           <AdCopyBlock text={ad.body_text} />
 
-          {/* Tags + platform row */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2 text-[10px] text-muted-foreground/60">
-              <span className="uppercase tracking-wider">{ad.platform}</span>
-              <span>/</span>
-              <span>{ad.media_type}</span>
-            </div>
-            {ad.content_style_tags?.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {ad.content_style_tags.map((tag) => (
-                  <span key={tag} className="rounded bg-primary/8 text-primary/70 px-1.5 py-0.5 text-[9px] font-medium">
-                    {tag.replace(/_/g, ' ')}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+          <CreativeMedia ad={ad} onDownload={handleMirrorDownload} downloading={mirroring} onSelfHeal={fetchAd} />
 
           {ad.link_url && (
             <a
@@ -377,31 +366,15 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
               className="inline-flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
             >
               <ExternalLink className="h-3 w-3" />
-              Open archived ad on Meta
-            </a>
-          )}
-
-          {ad.link_url && (
-            <a
-              href={ad.link_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground hover:bg-muted/50 transition-colors truncate"
-            >
-              <ExternalLink className="h-3 w-3 flex-shrink-0" />
-              <span className="truncate">{ad.link_url}</span>
+              View on Meta Ad Library
             </a>
           )}
         </>
       }
-      center={
-        <CreativeMedia ad={ad} onDownload={handleMirrorDownload} downloading={mirroring} onSelfHeal={fetchAd} />
-      }
       right={
         <>
-          {/* Details */}
           <RailSection icon={<Info className="h-3.5 w-3.5 text-primary" />} title="Details">
-            <dl className="space-y-2.5 text-xs">
+            <dl className="space-y-2 text-xs">
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">Ad ID</dt>
                 <dd className="text-foreground font-mono text-[10px] truncate max-w-[140px]">{ad.ad_id}</dd>
@@ -416,53 +389,107 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
               </div>
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">Running time</dt>
-                <dd className="text-foreground">{computeRunningDays(ad.started_at, ad.ended_at)}</dd>
+                <dd className="text-foreground font-medium">{computeRunningDays(ad.started_at, ad.ended_at)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">Platforms</dt>
                 <dd className="text-foreground">{ad.platform}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-muted-foreground">Display format</dt>
+                <dt className="text-muted-foreground">Format</dt>
                 <dd className="text-foreground capitalize">{ad.media_type}</dd>
               </div>
               {ad.spend_lower != null && (
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Spend range</dt>
+                  <dt className="text-muted-foreground">Spend</dt>
                   <dd className="text-foreground">
-                    US${ad.spend_lower.toLocaleString()}{ad.spend_upper ? ` – US$${ad.spend_upper.toLocaleString()}` : ''}
-                  </dd>
-                </div>
-              )}
-              {ad.tags.length > 0 && (
-                <div>
-                  <dt className="text-muted-foreground mb-1">Tags</dt>
-                  <dd className="flex flex-wrap gap-1">
-                    {ad.tags.map((tag) => (
-                      <span key={tag} className="rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                        {tag}
-                      </span>
-                    ))}
+                    US${ad.spend_lower.toLocaleString()}{ad.spend_upper ? ` – US$${ad.spend_upper.toLocaleString()}` : '+'}
                   </dd>
                 </div>
               )}
             </dl>
           </RailSection>
 
-          {/* AI Analysis */}
+          {(ad.content_style_tags?.length > 0 || ad.hook_type || ad.creator_style) && (
+            <RailSection icon={<Lightbulb className="h-3.5 w-3.5 text-primary" />} title="Classification">
+              <div className="space-y-2 text-xs">
+                {ad.content_style_tags?.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {ad.content_style_tags.map((tag) => (
+                      <span key={tag} className="rounded bg-primary/8 text-primary/70 px-1.5 py-0.5 text-[9px] font-medium">
+                        {tag.replace(/_/g, ' ')}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {ad.hook_type && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Hook type</span>
+                    <span className="text-foreground">{ad.hook_type.replace(/_/g, ' ')}</span>
+                  </div>
+                )}
+                {ad.creator_style && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Creator style</span>
+                    <span className="text-foreground">{ad.creator_style.replace(/_/g, ' ')}</span>
+                  </div>
+                )}
+                {ad.target_market && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Market</span>
+                    <span className="text-foreground uppercase">{ad.target_market}</span>
+                  </div>
+                )}
+              </div>
+            </RailSection>
+          )}
+
+          {scoreItems.length > 0 && (
+            <RailSection icon={<Sparkles className="h-3.5 w-3.5 text-primary" />} title="Creative Scores">
+              <div className="space-y-1.5">
+                {scoreItems.map((s) => (
+                  <div key={s.label} className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground w-16">{s.label}</span>
+                    <div className="flex-1 h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                      <div
+                        className={cn(
+                          'h-full rounded-full transition-all',
+                          s.value! >= 70 ? 'bg-emerald-500' : s.value! >= 50 ? 'bg-amber-500' : 'bg-red-400',
+                        )}
+                        style={{ width: `${s.value}%` }}
+                      />
+                    </div>
+                    <span className={cn(
+                      'text-[10px] font-semibold w-7 text-right',
+                      s.value! >= 70 ? 'text-emerald-600' : s.value! >= 50 ? 'text-amber-600' : 'text-red-500',
+                    )}>
+                      {s.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </RailSection>
+          )}
+
           <RailSection icon={<Sparkles className="h-3.5 w-3.5 text-primary" />} title="AI Analysis">
             {ad.analysis_summary ? (
-              <p className="text-sm text-foreground/80 leading-relaxed">
-                {ad.analysis_summary}
-              </p>
+              <p className="text-xs text-foreground/80 leading-relaxed">{ad.analysis_summary}</p>
             ) : (
               <p className="text-xs text-muted-foreground/50">No analysis available yet.</p>
             )}
           </RailSection>
 
-          {/* Creative Angles — Meta ads don't have these natively, placeholder for future */}
-
-          {/* Language Hooks — Meta ads don't have these natively, placeholder for future */}
+          {ad.tags.length > 0 && (
+            <RailSection title="Tags">
+              <div className="flex flex-wrap gap-1">
+                {ad.tags.map((tag) => (
+                  <span key={tag} className="rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </RailSection>
+          )}
         </>
       }
     />

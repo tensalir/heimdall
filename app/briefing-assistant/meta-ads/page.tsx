@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   Search,
@@ -451,19 +452,34 @@ const SURFACE_CONFIG: Record<BrowseSurface, { label: string; icon: typeof Sparkl
 const clientAdCache = new Map<string, MetaAdItem[]>()
 
 export default function MetaAdsLibraryPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" /></div>}>
+      <MetaAdsLibraryInner />
+    </Suspense>
+  )
+}
+
+function MetaAdsLibraryInner() {
+  const urlParams = useSearchParams()
   const [allAds, setAllAds] = useState<MetaAdItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [viewMode, setViewMode] = useState<ViewMode>('gallery')
-  const [search, setSearch] = useState('')
+  const [viewMode, setViewMode] = useState<ViewMode>((urlParams.get('view') as ViewMode) ?? 'gallery')
+  const [search, setSearch] = useState(urlParams.get('q') ?? '')
   const [error, setError] = useState<string | null>(null)
   const [tokenWarning, setTokenWarning] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [atlasAd, setAtlasAd] = useState<MetaAdItem | null>(null)
   const [syncResult, setSyncResult] = useState<string | null>(null)
-  const [surface, setSurface] = useState<BrowseSurface>('discovery')
-  const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS)
+  const [surface, setSurface] = useState<BrowseSurface>((urlParams.get('surface') as BrowseSurface) ?? 'discovery')
+  const [filters, setFilters] = useState<Filters>({
+    ...INITIAL_FILTERS,
+    content_style: urlParams.get('content_style') ?? '',
+    sort: urlParams.get('sort') ?? 'longest_running',
+  })
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const { followedBrands, toggleBrand, isFollowing } = useFollowedBrands()
+
+  const [backgroundSyncing, setBackgroundSyncing] = useState(false)
 
   const fetchAds = useCallback(async (overrideSurface?: BrowseSurface, overrideSearch?: string) => {
     setError(null)
@@ -500,6 +516,8 @@ export default function MetaAdsLibraryPage() {
     if (stale) {
       setAllAds(stale)
       setLoading(false)
+    } else if (allAds.length > 0) {
+      setLoading(false)
     } else {
       setLoading(true)
     }
@@ -514,30 +532,35 @@ export default function MetaAdsLibraryPage() {
         setTokenWarning(null)
       }
 
+      if (data.sync_state === 'syncing') {
+        setBackgroundSyncing(true)
+      } else {
+        setBackgroundSyncing(false)
+      }
+
       if (!res.ok) {
         if (data.token_expired) {
           setTokenWarning(data.error)
-          if (!stale) setAllAds([])
         } else {
           setError(data.error ?? 'Failed to fetch ads')
-          if (!stale) setAllAds([])
         }
-        return stale ?? []
+        return stale ?? allAds
       }
       const fresh = data.ads ?? []
-      clientAdCache.set(cacheKey, fresh)
+      if (fresh.length > 0) {
+        clientAdCache.set(cacheKey, fresh)
+      }
       setAllAds(fresh)
       return fresh
     } catch {
-      if (!stale) {
+      if (!stale && allAds.length === 0) {
         setError('Request failed')
-        setAllAds([])
       }
-      return stale ?? []
+      return stale ?? allAds
     } finally {
       setLoading(false)
     }
-  }, [surface, search, filters, followedBrands])
+  }, [surface, search, filters, followedBrands, allAds])
 
   useEffect(() => {
     fetchAds()
@@ -546,18 +569,20 @@ export default function MetaAdsLibraryPage() {
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     const hasPending = allAds.some((ad) => ad.thumbnail_status === 'pending')
-    if (hasPending && !loading) {
-      refreshTimerRef.current = setTimeout(() => fetchAds(), 15_000)
+    const needsPoll = hasPending || backgroundSyncing
+    if (needsPoll && !loading) {
+      refreshTimerRef.current = setTimeout(() => fetchAds(), backgroundSyncing ? 8_000 : 15_000)
     }
     return () => {
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current)
     }
-  }, [allAds, loading, fetchAds])
+  }, [allAds, loading, fetchAds, backgroundSyncing])
 
   const handleSync = useCallback(async () => {
     const query = search.trim()
     if (!query) {
-      setError('Enter a brand name or keyword in the search box, then click Sync.')
+      fetch('/api/briefing-assistant/meta-ads?action=sync-watchlist', { method: 'POST' }).catch(() => {})
+      setBackgroundSyncing(true)
       return
     }
     setSyncing(true)
@@ -575,8 +600,7 @@ export default function MetaAdsLibraryPage() {
         return
       }
       setSyncResult(`Synced ${data.ingested ?? 0} ads from Meta (${data.fetched ?? 0} fetched).`)
-      setSearch('')
-      await fetchAds(surface, '')
+      await fetchAds(surface, search)
     } catch {
       setError('Sync request failed')
     } finally {
@@ -802,30 +826,42 @@ export default function MetaAdsLibraryPage() {
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
-        ) : error ? (
+        ) : error && filteredAds.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-2">
             <p className="text-sm text-destructive">{error}</p>
             <Button variant="outline" size="sm" onClick={() => fetchAds()}>Retry</Button>
           </div>
         ) : filteredAds.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
-            <ImageIcon className="h-10 w-10 text-muted-foreground/20" />
-            <p className="text-sm text-muted-foreground">
-              {surface === 'following'
-                ? 'No followed brands yet.'
-                : surface === 'saved'
-                  ? 'No saved ads yet.'
-                  : surface === 'top_picks'
-                    ? 'Top picks appear automatically as ads are analyzed. Check back shortly.'
-                    : 'No ads found. The library is loading in the background.'}
-            </p>
-            <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
-              {surface === 'following'
-                ? 'Follow brands from the Discovery tab to see their ads here.'
-                : surface === 'discovery'
-                  ? 'Try syncing a brand name above, or wait for the default watchlist to populate.'
-                  : 'Check back soon or adjust your filters.'}
-            </p>
+            {backgroundSyncing ? (
+              <>
+                <Loader2 className="h-8 w-8 animate-spin text-primary/40" />
+                <p className="text-sm text-muted-foreground">
+                  Syncing ads from Meta Ad Library...
+                </p>
+                <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
+                  This typically takes 10-30 seconds. Ads will appear automatically.
+                </p>
+              </>
+            ) : (
+              <>
+                <ImageIcon className="h-10 w-10 text-muted-foreground/20" />
+                <p className="text-sm text-muted-foreground">
+                  {surface === 'following'
+                    ? 'No followed brands yet.'
+                    : surface === 'saved'
+                      ? 'No saved ads yet.'
+                      : surface === 'top_picks'
+                        ? 'Top picks appear automatically as ads are analyzed.'
+                        : 'No ads match the current filters.'}
+                </p>
+                <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
+                  {surface === 'following'
+                    ? 'Follow brands from the Discovery tab to see their ads here.'
+                    : 'Try adjusting your filters or click Sync to fetch new ads.'}
+                </p>
+              </>
+            )}
           </div>
         ) : viewMode === 'gallery' ? (
           <div className="p-6">

@@ -2,15 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 import { isValidMediaUrl, thumbnailStatus } from '@/lib/media-utils'
-import { MetaTokenError } from '@/src/integrations/meta/client'
+import { MetaTokenError, searchMetaAdLibrary } from '@/src/integrations/meta/client'
 import {
   getSourceMode,
   upsertNormalizedAds,
   syncViaApify,
   syncViaBrowser,
   syncViaApi,
+  syncViaSearchApi,
   isApifyAvailable,
   isMetaAdLibraryAvailable,
+  isSearchApiAvailable,
 } from '@/src/domain/briefingAssistant/metaAds/ingest'
 import type { NormalizedMetaAd, SupabaseDb } from '@/src/domain/briefingAssistant/metaAds/ingest'
 import {
@@ -32,8 +34,6 @@ import {
 } from '@/src/domain/briefingAssistant/scoring/semanticTagger'
 import { embedAdCreative, upsertAdEmbedding, isAdMemoryAvailable } from '@/lib/adCreativeMemory'
 import { indexAdInGraph } from '@/lib/adGraphClient'
-import { scrapeMetaAdsLibrary } from '@/src/integrations/meta/browserScraper'
-import { normalizeMetaAd } from '@/src/integrations/meta/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -99,7 +99,7 @@ export async function GET(req: NextRequest) {
     return handleHealthCheck(db)
   }
 
-  const cacheKey = searchParams.toString()
+  const cacheKey = `${searchParams.toString()}:u=${auth.user?.id ?? 'anon'}`
   const cached = getCached(cacheKey)
   if (cached) return NextResponse.json(cached, {
     headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' },
@@ -124,7 +124,7 @@ export async function GET(req: NextRequest) {
   const sort = searchParams.get('sort') || 'longest_running'
   const limit = Math.min(Number(searchParams.get('limit') || 50), 200)
   const followedPageIds = searchParams.get('followed_page_ids')?.split(',').filter(Boolean) || []
-  const userId = searchParams.get('user_id') || null
+  const userId = searchParams.get('user_id') || auth.user?.id || null
 
   const selectFields = `
     id, source_type, external_id, page_id, title, preview, thumbnail_url, creative_url,
@@ -280,12 +280,17 @@ export async function GET(req: NextRequest) {
     }
   } catch { /* watchlist table may not exist yet */ }
 
+  let syncState: 'idle' | 'syncing' = 'idle'
   if (ads.length === 0 && surface === 'discovery') {
     triggerWatchlistSync(db).catch(() => {})
+    syncState = 'syncing'
   }
 
-  const payload = { ads, watchlist_status: watchlistStatus, surface }
-  setCache(cacheKey, payload)
+  const payload = { ads, watchlist_status: watchlistStatus, surface, sync_state: syncState }
+
+  if (ads.length > 0) {
+    setCache(cacheKey, payload)
+  }
 
   lazyMirrorPass(db, ads).catch(() => {})
 
@@ -315,23 +320,26 @@ async function triggerWatchlistSync(db: SupabaseDb) {
         const searchTerms = entry.search_term || undefined
         const pageIds = entry.page_id ? [entry.page_id] : undefined
 
-        if (mode === 'apify' && isApifyAvailable()) {
-          const result = await scrapeViaApify({ search_terms: searchTerms, search_page_ids: pageIds, country: region, limit: 25 })
+        if (mode === 'searchapi' && isSearchApiAvailable()) {
+          const result = await syncViaSearchApi({ search_terms: searchTerms, page_ids: pageIds, country: region, limit: 25 })
+          ads = result.ads
+        } else if (mode === 'apify' && isApifyAvailable()) {
+          const result = await syncViaApify({ search_terms: searchTerms, page_ids: pageIds, country: region, limit: 25 })
           ads = result.ads
         } else if (mode === 'api' && isMetaAdLibraryAvailable()) {
-          const result = await searchMetaAdLibrary({ search_terms: searchTerms, search_page_ids: pageIds, ad_reached_countries: [region], limit: 25 })
-          ads = result.data.map((ad) => normalizeMetaAd(ad))
+          const result = await syncViaApi({ search_terms: searchTerms, page_ids: pageIds, countries: [region], limit: 25 })
+          ads = result.ads
         } else {
           if (isApifyAvailable()) {
-            const result = await scrapeViaApify({ search_terms: searchTerms, search_page_ids: pageIds, country: region, limit: 25 })
+            const result = await syncViaApify({ search_terms: searchTerms, page_ids: pageIds, country: region, limit: 25 })
             ads = result.ads
           } else {
-            const result = await scrapeMetaAdsLibrary({ search_terms: searchTerms, search_page_ids: pageIds, country: region, limit: 25 })
+            const result = await syncViaBrowser({ search_terms: searchTerms, page_ids: pageIds, country: region, limit: 25 })
             ads = result.ads
           }
           if (ads.length === 0 && isMetaAdLibraryAvailable()) {
-            const apiResult = await searchMetaAdLibrary({ search_terms: searchTerms, search_page_ids: pageIds, ad_reached_countries: [region], limit: 25 })
-            ads = apiResult.data.map((ad) => normalizeMetaAd(ad))
+            const apiResult = await syncViaApi({ search_terms: searchTerms, page_ids: pageIds, countries: [region], limit: 25 })
+            ads = apiResult.ads
           }
         }
 
@@ -346,6 +354,8 @@ async function triggerWatchlistSync(db: SupabaseDb) {
           .eq('id', entry.id)
 
         if (ingestedIds.length > 0) {
+          runAutoAnalysis(db, ingestedIds).catch(console.error)
+          runSemanticQualityPassForIds(db, ingestedIds).catch(console.error)
           runThumbnailWarmup(db, ingestedIds).catch(console.error)
         }
       } catch (e) {
@@ -453,7 +463,9 @@ export async function POST(req: NextRequest) {
   try {
     let result: { ads: NormalizedMetaAd[]; provider: string; errors: string[] }
 
-    if (mode === 'apify' && isApifyAvailable()) {
+    if (mode === 'searchapi' && isSearchApiAvailable()) {
+      result = await syncViaSearchApi({ search_terms, page_ids, country: country ?? countries[0], limit })
+    } else if (mode === 'apify' && isApifyAvailable()) {
       result = await syncViaApify({ search_terms, page_ids, country: country ?? countries[0], limit })
     } else if (mode === 'api' && isMetaAdLibraryAvailable()) {
       result = await syncViaApi({ search_terms, page_ids, countries, limit })
@@ -642,6 +654,18 @@ async function handleHealthCheck(db: SupabaseDb) {
     .eq('source_type', 'meta_ad')
     .filter('raw_data->>_source', 'eq', 'browser_scrape')
 
+  const { count: apifySourced } = await db
+    .from('briefing_source_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('source_type', 'meta_ad')
+    .filter('raw_data->>_source', 'eq', 'apify')
+
+  const { count: searchapiSourced } = await db
+    .from('briefing_source_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('source_type', 'meta_ad')
+    .filter('raw_data->>_source', 'eq', 'searchapi')
+
   const { count: withDirectThumb } = await db
     .from('briefing_source_items')
     .select('id', { count: 'exact', head: true })
@@ -655,6 +679,7 @@ async function handleHealthCheck(db: SupabaseDb) {
   const defaultRegion = process.env.META_ADS_DEFAULT_REGION || 'US'
   const proxyConfigured = !!process.env.META_ADS_PROXY_URL
   const apifyAvailable = isApifyAvailable()
+  const searchapiAvailable = isSearchApiAvailable()
 
   const { count: qualityApproved } = await db
     .from('briefing_source_items')
@@ -688,10 +713,13 @@ async function handleHealthCheck(db: SupabaseDb) {
     provider: {
       mode: sourceMode,
       apify_configured: apifyAvailable,
+      searchapi_configured: searchapiAvailable,
       default_region: defaultRegion,
       proxy_configured: proxyConfigured,
       browser_sourced_ads: browserSourced ?? 0,
-      api_sourced_ads: total - (browserSourced ?? 0),
+      apify_sourced_ads: apifySourced ?? 0,
+      searchapi_sourced_ads: searchapiSourced ?? 0,
+      graph_api_sourced_ads: total - (browserSourced ?? 0) - (apifySourced ?? 0) - (searchapiSourced ?? 0),
     },
     ads: {
       total,
@@ -756,7 +784,7 @@ async function handleManualPick(
 // Semantic V2 quality pass: heuristic gate + LLM tagging + scoring
 // ---------------------------------------------------------------------------
 
-const SEMANTIC_BATCH_SIZE = 8
+const SEMANTIC_BATCH_SIZE = 25
 
 async function runSemanticQualityPassForIds(db: SupabaseDb, itemIds: string[]) {
   if (itemIds.length === 0) return

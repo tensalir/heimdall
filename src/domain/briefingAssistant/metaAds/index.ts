@@ -5,8 +5,10 @@ export {
   syncViaApify,
   syncViaBrowser,
   syncViaApi,
+  syncViaSearchApi,
   isApifyAvailable,
   isMetaAdLibraryAvailable,
+  isSearchApiAvailable,
 } from './ingest.js'
 export type { SourceMode, SupabaseDb, NormalizedMetaAd } from './ingest.js'
 

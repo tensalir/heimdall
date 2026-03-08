@@ -23,12 +23,12 @@ describe('classifyApiRoute', () => {
     expect(classifyApiRoute('/api/plugin/sync')).toBe('machine')
   })
 
-  it('classifies trend discovery cron as machine', () => {
-    expect(classifyApiRoute('/api/briefing-assistant/trends/discover')).toBe('machine')
+  it('classifies trend discovery as dual (user POST + cron GET)', () => {
+    expect(classifyApiRoute('/api/briefing-assistant/trends/discover')).toBe('dual')
   })
 
-  it('classifies social discovery cron as machine', () => {
-    expect(classifyApiRoute('/api/briefing-assistant/social-comments/discover')).toBe('machine')
+  it('classifies social discovery as dual (user POST + cron GET)', () => {
+    expect(classifyApiRoute('/api/briefing-assistant/social-comments/discover')).toBe('dual')
   })
 
   it('classifies user-facing routes as user', () => {

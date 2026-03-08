@@ -348,17 +348,21 @@ export async function scoreAndStore(
 
   const existingCheck = await db
     .from('briefing_source_items')
-    .select('external_id')
+    .select('external_id, tags')
     .eq('source_type', 'social_comment')
     .in(
       'external_id',
       quality.map((p) => p.exaId),
     )
 
-  const existingIds = new Set(
-    (existingCheck.data ?? []).map((r: { external_id: string }) => r.external_id),
+  const existingMap = new Map<string, string[]>(
+    (existingCheck.data ?? []).map((r: { external_id: string; tags: string[] }) => [r.external_id, r.tags ?? []]),
   )
-  const newPosts = quality.filter((p) => !existingIds.has(p.exaId))
+  const newPosts = quality.filter((p) => !existingMap.has(p.exaId))
+  const existingToMerge = quality.filter((p) => {
+    const tags = existingMap.get(p.exaId)
+    return tags && !tags.includes(topicId)
+  })
 
   if (newPosts.length > 0) {
     const rows = newPosts.map((p) => ({
@@ -389,6 +393,16 @@ export async function scoreAndStore(
     if (error) {
       console.error('[SocialListening] DB insert failed:', error)
     }
+  }
+
+  for (const post of existingToMerge) {
+    const currentTags = existingMap.get(post.exaId) ?? []
+    const merged = [...new Set([...currentTags, topicId])]
+    await db
+      .from('briefing_source_items')
+      .update({ tags: merged })
+      .eq('source_type', 'social_comment')
+      .eq('external_id', post.exaId)
   }
 
   return quality

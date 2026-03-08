@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Loader2,
   ExternalLink,
@@ -412,12 +412,33 @@ function DigestCard({ topicId, topicLabel }: { topicId: string; topicLabel: stri
 // ── Page ──────────────────────────────────────────────────────────
 
 export default function SocialListeningPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-full"><div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" /></div>}>
+      <SocialListeningInner />
+    </Suspense>
+  )
+}
+
+function SocialListeningInner() {
   const router = useRouter()
-  const [search, setSearch] = useState('')
-  const [activeTopic, setActiveTopic] = useState<string>('all')
-  const [sort, setSort] = useState<'recent' | 'relevance'>('recent')
+  const urlParams = useSearchParams()
+  const [search, setSearch] = useState(urlParams.get('q') ?? '')
+  const [activeTopic, setActiveTopic] = useState<string>(urlParams.get('topic') ?? 'all')
+  const [sort, setSort] = useState<'recent' | 'relevance'>((urlParams.get('sort') as 'recent' | 'relevance') ?? 'recent')
   const [discovering, setDiscovering] = useState(false)
   const [discoverResult, setDiscoverResult] = useState<string | null>(null)
+
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (search.trim()) params.set('q', search.trim())
+    if (activeTopic !== 'all') params.set('topic', activeTopic)
+    if (sort !== 'recent') params.set('sort', sort)
+    const qs = params.toString()
+    const target = qs ? `?${qs}` : ''
+    if (window.location.search.slice(1) !== qs) {
+      router.replace(`/briefing-assistant/social-comments${target}`, { scroll: false })
+    }
+  }, [search, activeTopic, sort, router])
 
   const postsUrl = useMemo(() => {
     const params = new URLSearchParams()
@@ -428,7 +449,7 @@ export default function SocialListeningPage() {
     return `/api/briefing-assistant/social-comments?${params}`
   }, [search, activeTopic, sort])
 
-  const { data, loading, refetch } = useApi<{ comments: SocialPost[]; topics: TopicMeta[] }>(postsUrl)
+  const { data, loading, refetch } = useApi<{ comments: SocialPost[]; topics: TopicMeta[] }>(postsUrl, { keepPreviousData: true })
   const posts = data?.comments ?? []
   const topics = data?.topics ?? []
 
@@ -581,26 +602,30 @@ export default function SocialListeningPage() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {activeTopic !== 'all' && (
-          <DigestCard topicId={activeTopic} topicLabel={activeLabel} />
-        )}
-
-        {loading ? (
+        {loading && posts.length === 0 ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : posts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
-            <MessageCircle className="h-10 w-10 text-muted-foreground/20" />
-            <p className="text-sm text-muted-foreground">
-              {activeTopic !== 'all'
-                ? `No conversations for ${activeLabel} yet.`
-                : 'No conversations discovered yet.'}
-            </p>
-            <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
-              Click &ldquo;Discover Now&rdquo; to scan Reddit for recent conversations about hearing protection, noise sensitivity, and Loop across{' '}
-              {activeTopic !== 'all' ? 'this topic' : 'all topics'}.
-            </p>
+            {discovering ? (
+              <>
+                <Loader2 className="h-8 w-8 animate-spin text-primary/40" />
+                <p className="text-sm text-muted-foreground">Scanning Reddit...</p>
+              </>
+            ) : (
+              <>
+                <MessageCircle className="h-10 w-10 text-muted-foreground/20" />
+                <p className="text-sm text-muted-foreground">
+                  {activeTopic !== 'all'
+                    ? `No conversations for ${activeLabel} yet.`
+                    : 'No conversations discovered yet.'}
+                </p>
+                <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
+                  Click &ldquo;Discover Now&rdquo; to scan Reddit for recent conversations.
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

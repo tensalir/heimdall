@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server.js'
 import { createSupabaseRouteClient } from './supabase-auth.js'
 
-export type RoutePolicy = 'public' | 'user' | 'machine' | 'webhook'
+export type RoutePolicy = 'public' | 'user' | 'machine' | 'webhook' | 'dual'
 
 /**
  * Require an authenticated Supabase user on a route handler.
@@ -45,6 +45,9 @@ const WEBHOOK_PREFIXES = [
 const MACHINE_PREFIXES = [
   '/api/jobs/',
   '/api/plugin/',
+]
+
+const DUAL_AUTH_PREFIXES = [
   '/api/briefing-assistant/trends/discover',
   '/api/briefing-assistant/social-comments/discover',
 ]
@@ -65,5 +68,6 @@ export function classifyApiRoute(pathname: string): RoutePolicy {
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return 'public'
   if (WEBHOOK_PREFIXES.some((p) => pathname.startsWith(p))) return 'webhook'
   if (MACHINE_PREFIXES.some((p) => pathname.startsWith(p))) return 'machine'
+  if (DUAL_AUTH_PREFIXES.some((p) => pathname.startsWith(p))) return 'dual'
   return 'user'
 }

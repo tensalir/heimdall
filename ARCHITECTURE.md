@@ -111,6 +111,8 @@ New features should use these services instead of calling Monday/Figma clients d
 | Vercel KV    | Job queue, operational state   | `KV_REST_API_URL`        |
 | Anthropic    | AI node mapping, summaries     | `ANTHROPIC_API_KEY`      |
 | Meta Ad Library | Ad ingestion for briefing   | `META_AD_LIBRARY_ACCESS_TOKEN` |
+| Apify        | Meta ads scraping (Apify actor) | `APIFY_API_TOKEN`       |
+| SearchAPI    | Meta ads scraping (structured JSON) | `SEARCHAPI_API_KEY`  |
 | Gemini       | Nano Banana image generation   | `GEMINI_API_KEY`         |
 | Vesper       | Image generation gateway       | `VESPER_API_URL`         |
 

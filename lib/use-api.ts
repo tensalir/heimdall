@@ -5,20 +5,22 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 interface UseApiOptions<T> {
   initialData?: T
   revalidateOnFocus?: boolean
+  keepPreviousData?: boolean
 }
 
 interface UseApiResult<T> {
   data: T | undefined
   error: string | null
   loading: boolean
+  refreshing: boolean
   refetch: () => Promise<T | undefined>
   mutate: (updater: T | ((prev: T | undefined) => T)) => void
 }
 
 /**
  * Shared data-fetching hook for Briefing Assistant pages.
- * Provides loading/error/refetch/mutate patterns so individual
- * pages don't need to reimplement fetch lifecycle.
+ * Keeps previous data visible during refetch when keepPreviousData is true,
+ * uses AbortController to cancel stale requests on URL change.
  */
 export function useApi<T>(
   url: string | null,
@@ -27,17 +29,29 @@ export function useApi<T>(
   const [data, setData] = useState<T | undefined>(options.initialData)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(!!url)
+  const [refreshing, setRefreshing] = useState(false)
   const urlRef = useRef(url)
+  const abortRef = useRef<AbortController | null>(null)
   urlRef.current = url
 
   const fetchData = useCallback(async (): Promise<T | undefined> => {
     const currentUrl = urlRef.current
     if (!currentUrl) return undefined
 
-    setLoading(true)
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    const hasExistingData = data !== undefined || options.keepPreviousData
+    if (hasExistingData) {
+      setRefreshing(true)
+    } else {
+      setLoading(true)
+    }
     setError(null)
     try {
-      const res = await fetch(currentUrl)
+      const res = await fetch(currentUrl, { signal: controller.signal })
+      if (controller.signal.aborted) return undefined
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         const msg = (body as { error?: string }).error ?? `Request failed (${res.status})`
@@ -45,18 +59,25 @@ export function useApi<T>(
         return undefined
       }
       const json = await res.json() as T
-      setData(json)
+      if (!controller.signal.aborted) {
+        setData(json)
+      }
       return json
-    } catch {
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return undefined
       setError('Network request failed')
       return undefined
     } finally {
-      setLoading(false)
+      if (!controller.signal.aborted) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (url) fetchData()
+    return () => { abortRef.current?.abort() }
   }, [url, fetchData])
 
   useEffect(() => {
@@ -72,5 +93,5 @@ export function useApi<T>(
     setData((prev) => (typeof updater === 'function' ? (updater as (p: T | undefined) => T)(prev) : updater))
   }, [])
 
-  return { data, error, loading, refetch: fetchData, mutate }
+  return { data, error, loading, refreshing, refetch: fetchData, mutate }
 }

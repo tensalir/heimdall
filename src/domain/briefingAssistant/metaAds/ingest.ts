@@ -3,13 +3,15 @@ import type { NormalizedMetaAd } from '../../../integrations/meta/client.js'
 import { computeDaysRunning } from '../scoring/semanticTagger.js'
 import { scrapeMetaAdsLibrary } from '../../../integrations/meta/browserScraper.js'
 import { scrapeViaApify, isApifyAvailable } from '../../../integrations/apify/metaAdsScraper.js'
+import { scrapeViaSearchApi as _scrapeViaSearchApi, isSearchApiAvailable } from '../../../integrations/searchapi/metaAdsScraper.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-export type SourceMode = 'apify' | 'browser' | 'api' | 'auto'
+export type SourceMode = 'searchapi' | 'apify' | 'browser' | 'api' | 'auto'
 export type SupabaseDb = SupabaseClient
 
 export function getSourceMode(): SourceMode {
   const env = process.env.META_ADS_SOURCE_MODE?.toLowerCase()
+  if (env === 'searchapi') return 'searchapi'
   if (env === 'apify') return 'apify'
   if (env === 'api') return 'api'
   if (env === 'browser') return 'browser'
@@ -118,5 +120,20 @@ export async function syncViaApi(params: {
   return { ads, provider: 'api', errors: [] }
 }
 
-export { isApifyAvailable, isMetaAdLibraryAvailable }
+export async function syncViaSearchApi(params: {
+  search_terms?: string
+  page_ids?: string[]
+  country?: string
+  limit?: number
+}): Promise<{ ads: NormalizedMetaAd[]; provider: string; errors: string[] }> {
+  const result = await _scrapeViaSearchApi({
+    search_terms: params.search_terms,
+    search_page_ids: params.page_ids,
+    country: params.country ?? 'US',
+    limit: params.limit,
+  })
+  return { ads: result.ads, provider: 'searchapi', errors: result.errors }
+}
+
+export { isApifyAvailable, isMetaAdLibraryAvailable, isSearchApiAvailable }
 export type { NormalizedMetaAd }

@@ -243,16 +243,21 @@ export function DetailSkeleton() {
           <div className="h-8 w-16 rounded-md bg-muted/30" />
         </div>
       </header>
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px] overflow-hidden">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_320px] overflow-hidden">
         <div className="overflow-y-auto p-5 space-y-5">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-muted/40" />
+            <div className="flex-1 space-y-1.5">
+              <div className="h-3 w-1/3 rounded bg-muted/40" />
+              <div className="h-2 w-1/4 rounded bg-muted/30" />
+            </div>
+          </div>
           <div className="space-y-2">
             <div className="h-3 w-full rounded bg-muted/30" />
             <div className="h-3 w-5/6 rounded bg-muted/30" />
             <div className="h-3 w-4/6 rounded bg-muted/30" />
           </div>
-        </div>
-        <div className="border-l border-border overflow-y-auto p-5 space-y-5">
-          <div className="rounded-lg bg-muted/20 aspect-[4/5]" />
+          <div className="rounded-lg bg-muted/20 aspect-[4/5] max-w-lg" />
         </div>
         <div className="border-l border-border p-5 space-y-6 bg-card/40">
           {[1, 2, 3, 4].map((i) => (
@@ -356,7 +361,10 @@ export function DetailShell({
           ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px]'
           : 'lg:grid-cols-[1fr_320px]',
       )}>
-        <div className="overflow-y-auto scrollbar-subtle p-5 space-y-5 max-w-prose">
+        <div className={cn(
+          'overflow-y-auto scrollbar-subtle p-5 space-y-5',
+          hasCenter && 'max-w-prose',
+        )}>
           {left}
         </div>
         {hasCenter && (
