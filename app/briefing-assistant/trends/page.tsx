@@ -23,7 +23,6 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { LoopPlaceholder } from '@/components/briefing-assistant/LoopPlaceholder'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -489,21 +488,6 @@ export default function TrendsPage() {
               </button>
             )
           })}
-          <div className="ml-auto pl-3 border-l border-border/50">
-            <button
-              type="button"
-              onClick={() => setActiveVertical('loop_insights')}
-              className={cn(
-                'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap',
-                activeVertical === 'loop_insights'
-                  ? 'border-[hsl(131,100%,85%)] text-[hsl(131,100%,85%)]'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border',
-              )}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-[hsl(131,100%,85%)]" />
-              Loop Insights
-            </button>
-          </div>
         </div>
 
         {/* Search */}
@@ -519,45 +503,36 @@ export default function TrendsPage() {
         </div>
       </header>
 
-      {activeVertical === 'loop_insights' ? (
-        <div className="flex-1 overflow-y-auto p-6">
-          <LoopPlaceholder
-            title="Loop Customer Insights"
-            description="Customer interviews, survey highlights, and product-specific insights from Loop Earplugs will surface here. Connect your insights pipeline to populate this view with first-party data."
-          />
-        </div>
-      ) : (
-        <div className="flex-1 overflow-y-auto p-6">
-          {activeVertical !== 'all' && (
-            <DigestCard verticalId={activeVertical} verticalLabel={activeLabel} />
-          )}
+      <div className="flex-1 overflow-y-auto p-6">
+        {activeVertical !== 'all' && (
+          <DigestCard verticalId={activeVertical} verticalLabel={activeLabel} />
+        )}
 
-          {loading ? (
-            <div className="flex items-center justify-center py-20">
-              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : trends.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 gap-3">
-              <TrendingUp className="h-10 w-10 text-muted-foreground/20" />
-              <p className="text-sm text-muted-foreground">
-                {activeVertical !== 'all'
-                  ? `No trends for ${activeLabel} yet.`
-                  : 'No trends discovered yet.'}
-              </p>
-              <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
-                Click &ldquo;Discover Now&rdquo; to search the web for relevant articles, use cases, and cultural moments across{' '}
-                {activeVertical !== 'all' ? 'this vertical' : 'all verticals'}.
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {trends.map((trend) => (
-                <ArticleCard key={trend.id} item={trend} onNavigate={() => router.push(`/briefing-assistant/trends/${trend.id}`)} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : trends.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
+            <TrendingUp className="h-10 w-10 text-muted-foreground/20" />
+            <p className="text-sm text-muted-foreground">
+              {activeVertical !== 'all'
+                ? `No trends for ${activeLabel} yet.`
+                : 'No trends discovered yet.'}
+            </p>
+            <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
+              Click &ldquo;Discover Now&rdquo; to search the web for relevant articles, use cases, and cultural moments across{' '}
+              {activeVertical !== 'all' ? 'this vertical' : 'all verticals'}.
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {trends.map((trend) => (
+              <ArticleCard key={trend.id} item={trend} onNavigate={() => router.push(`/briefing-assistant/trends/${trend.id}`)} />
+            ))}
+          </div>
+        )}
+      </div>
 
     </div>
   )

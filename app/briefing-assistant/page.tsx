@@ -10,6 +10,8 @@ import {
   Workflow,
   ArrowRight,
   Loader2,
+  BarChart3,
+  Lightbulb,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -59,6 +61,23 @@ const datasources: ModuleCard[] = [
     href: '/briefing-assistant/social-comments',
     icon: MessageCircle,
     accent: 'bg-violet-500/10 text-violet-600 dark:text-violet-400',
+  },
+]
+
+const loopData: ModuleCard[] = [
+  {
+    title: 'Loop Ads',
+    description: 'First-party ad performance data from Loop Earplugs campaigns.',
+    href: '/briefing-assistant/loop-data/ads',
+    icon: BarChart3,
+    accent: 'bg-[hsl(142,71%,36%)]/10 text-[hsl(142,71%,36%)]',
+  },
+  {
+    title: 'Strategic Insights',
+    description: 'Customer insights, social comments, reviews, and synthesized signals from Loop first-party data.',
+    href: '/briefing-assistant/loop-data/strategic-insights',
+    icon: Lightbulb,
+    accent: 'bg-[hsl(142,71%,36%)]/10 text-[hsl(142,71%,36%)]',
   },
 ]
 
@@ -149,6 +168,41 @@ export default function BriefingAssistantOverviewPage() {
                     <Icon className="h-4.5 w-4.5" />
                   </div>
                   <ArrowRight className="h-4 w-4 text-muted-foreground/30 group-hover:text-primary transition-colors" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-foreground">{mod.title}</h2>
+                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                    {mod.description}
+                  </p>
+                </div>
+              </Link>
+            )
+          })}
+        </div>
+      </section>
+
+      <section>
+        <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-[hsl(142,71%,36%)]/60">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-[hsl(142,71%,36%)] mr-1.5 align-middle" />
+          Loop Data
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {loopData.map((mod) => {
+            const Icon = mod.icon
+            return (
+              <Link
+                key={mod.href}
+                href={mod.href}
+                className={cn(
+                  'group flex flex-col gap-3 rounded-xl border border-border bg-card p-5',
+                  'hover:border-[hsl(142,71%,36%)]/30 hover:shadow-lg hover:shadow-[hsl(142,71%,36%)]/5 transition-all duration-200',
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <div className={cn('flex items-center justify-center w-9 h-9 rounded-lg', mod.accent)}>
+                    <Icon className="h-4.5 w-4.5" />
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground/30 group-hover:text-[hsl(142,71%,36%)] transition-colors" />
                 </div>
                 <div>
                   <h2 className="text-sm font-semibold text-foreground">{mod.title}</h2>

@@ -11,19 +11,21 @@ import {
   FileText,
   Plus,
   ArrowLeft,
+  BarChart3,
+  Lightbulb,
 } from 'lucide-react'
 
 interface NavItem {
   label: string
   href: string
   icon: React.ElementType
-  /** Render a + button next to this item that links to createHref */
   createHref?: string
 }
 
 interface NavSection {
   heading: string
   items: NavItem[]
+  accent?: 'loop'
 }
 
 const topItems: NavItem[] = [
@@ -43,6 +45,14 @@ const sections: NavSection[] = [
       { label: 'Meta Ads Library', href: '/briefing-assistant/meta-ads', icon: ImageIcon },
       { label: 'Trends', href: '/briefing-assistant/trends', icon: TrendingUp },
       { label: 'Social Listening', href: '/briefing-assistant/social-comments', icon: MessageCircle },
+    ],
+  },
+  {
+    heading: 'Loop Data',
+    accent: 'loop',
+    items: [
+      { label: 'Loop Ads', href: '/briefing-assistant/loop-data/ads', icon: BarChart3 },
+      { label: 'Strategic Insights', href: '/briefing-assistant/loop-data/strategic-insights', icon: Lightbulb },
     ],
   },
 ]
@@ -105,36 +115,47 @@ export function BriefingSidebar() {
           })}
         </ul>
 
-        {sections.map((section) => (
-          <div key={section.heading}>
-            <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">
-              {section.heading}
-            </p>
-            <ul className="space-y-0.5">
-              {section.items.map((item) => {
-                const Icon = item.icon
-                const isActive =
-                  pathname === item.href || pathname.startsWith(item.href + '/')
-                return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      className={cn(
-                        'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                        isActive
-                          ? 'bg-primary/10 text-primary'
-                          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-                      )}
-                    >
-                      <Icon className="h-4 w-4" />
-                      {item.label}
-                    </Link>
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
-        ))}
+        {sections.map((section) => {
+          const isLoop = section.accent === 'loop'
+          return (
+            <div key={section.heading}>
+              <p className={cn(
+                'mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest',
+                isLoop
+                  ? 'text-[hsl(142,71%,36%)]/60'
+                  : 'text-muted-foreground/50',
+              )}>
+                {isLoop && <span className="inline-block w-1.5 h-1.5 rounded-full bg-[hsl(142,71%,36%)] mr-1.5 align-middle" />}
+                {section.heading}
+              </p>
+              <ul className="space-y-0.5">
+                {section.items.map((item) => {
+                  const Icon = item.icon
+                  const isActive =
+                    pathname === item.href || pathname.startsWith(item.href + '/')
+                  return (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        className={cn(
+                          'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                          isActive
+                            ? isLoop
+                              ? 'bg-[hsl(142,71%,36%)]/10 text-[hsl(142,71%,36%)]'
+                              : 'bg-primary/10 text-primary'
+                            : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                        )}
+                      >
+                        <Icon className="h-4 w-4" />
+                        {item.label}
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )
+        })}
       </nav>
 
       <div className="border-t border-border px-5 py-3">
