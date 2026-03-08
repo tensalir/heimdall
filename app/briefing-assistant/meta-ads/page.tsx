@@ -655,19 +655,19 @@ export default function MetaAdsLibraryPage() {
           })}
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); setSyncResult(null) }}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSync() }}
-              placeholder="Search ads or sync new brands..."
-              className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
-            />
-          </div>
+        <div className="relative max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setSyncResult(null) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleSync() }}
+            placeholder="Search ads or sync new brands..."
+            className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
+          />
+        </div>
 
+        <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 flex-wrap">
             <FilterDropdown
               label="Content Style"
