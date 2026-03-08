@@ -8,7 +8,8 @@ import {
   TrendingUp,
   MessageCircle,
   Workflow,
-  PaintbrushIcon,
+  FileText,
+  Plus,
   ArrowLeft,
 } from 'lucide-react'
 
@@ -16,6 +17,8 @@ interface NavItem {
   label: string
   href: string
   icon: React.ElementType
+  /** Render a + button next to this item that links to createHref */
+  createHref?: string
 }
 
 interface NavSection {
@@ -24,7 +27,12 @@ interface NavSection {
 }
 
 const topItems: NavItem[] = [
-  { label: 'Create Ads', href: '/briefing-assistant/create-ads', icon: PaintbrushIcon },
+  {
+    label: 'Briefings',
+    href: '/briefing-assistant/briefings',
+    icon: FileText,
+    createHref: '/briefing-assistant/create-ads',
+  },
   { label: 'Workflows', href: '/briefing-assistant/workflows', icon: Workflow },
 ]
 
@@ -65,13 +73,16 @@ export function BriefingSidebar() {
         <ul className="space-y-0.5">
           {topItems.map((item) => {
             const Icon = item.icon
-            const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
+            const isActive =
+              pathname === item.href ||
+              pathname.startsWith(item.href + '/') ||
+              (item.createHref && pathname.startsWith(item.createHref))
             return (
-              <li key={item.href}>
+              <li key={item.href} className="flex items-center">
                 <Link
                   href={item.href}
                   className={cn(
-                    'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                    'flex-1 flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                     isActive
                       ? 'bg-primary/10 text-primary'
                       : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
@@ -80,6 +91,15 @@ export function BriefingSidebar() {
                   <Icon className="h-4 w-4" />
                   {item.label}
                 </Link>
+                {item.createHref && (
+                  <Link
+                    href={item.createHref}
+                    className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground/50 hover:text-primary hover:bg-primary/10 transition-colors"
+                    title="Create briefing"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </Link>
+                )}
               </li>
             )
           })}

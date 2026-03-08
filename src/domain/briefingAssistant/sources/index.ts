@@ -10,12 +10,14 @@ import type { CanonicalDatasourceId } from '../datasources.js'
 import { metaAdapter } from './metaAdapter.js'
 import { customerInsightsAdapter } from './customerInsightsAdapter.js'
 import { socialCommentsAdapter } from './socialCommentsAdapter.js'
+import { priorBriefingsAdapter } from './priorBriefingsAdapter.js'
 import { staticAdapter } from './staticAdapter.js'
 
 export type { EvidenceSourceAdapter, EvidenceFilter } from './types.js'
 export { metaAdapter } from './metaAdapter.js'
 export { customerInsightsAdapter } from './customerInsightsAdapter.js'
 export { socialCommentsAdapter } from './socialCommentsAdapter.js'
+export { priorBriefingsAdapter } from './priorBriefingsAdapter.js'
 export { staticAdapter } from './staticAdapter.js'
 
 /** Canonical datasource IDs (re-export for API validation). Same set as in datasources.ts. */
@@ -25,6 +27,7 @@ const adapterMap: Record<CanonicalDatasourceId, EvidenceSourceAdapter> = {
   ad_performance: metaAdapter,
   untapped_use_cases: customerInsightsAdapter,
   social_comments: socialCommentsAdapter,
+  prior_briefings: priorBriefingsAdapter,
   static_fallback: staticAdapter,
 }
 

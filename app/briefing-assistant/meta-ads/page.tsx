@@ -24,9 +24,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { AtlasBrowserModal } from '@/components/briefing-assistant/AtlasBrowserModal'
+import { LoopPlaceholder } from '@/components/briefing-assistant/LoopPlaceholder'
 
 type ViewMode = 'gallery' | 'table'
-type BrowseSurface = 'discovery' | 'top_picks' | 'following' | 'saved'
+type BrowseSurface = 'discovery' | 'top_picks' | 'following' | 'saved' | 'loop_ads'
 
 export interface MetaAdItem {
   id: string
@@ -429,7 +430,7 @@ function FilterDropdown({
 // Page
 // ---------------------------------------------------------------------------
 
-const SURFACE_CONFIG: Record<BrowseSurface, { label: string; icon: typeof Sparkles }> = {
+const SURFACE_CONFIG: Record<Exclude<BrowseSurface, 'loop_ads'>, { label: string; icon: typeof Sparkles }> = {
   discovery: { label: 'Discovery', icon: Sparkles },
   top_picks: { label: 'Top Picks', icon: TrendingUp },
   following: { label: 'Following', icon: UserCheck },
@@ -653,6 +654,21 @@ export default function MetaAdsLibraryPage() {
               </button>
             )
           })}
+          <div className="ml-auto pl-3 border-l border-border/50">
+            <button
+              type="button"
+              onClick={() => setSurface('loop_ads')}
+              className={cn(
+                'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px',
+                surface === 'loop_ads'
+                  ? 'border-[hsl(131,100%,85%)] text-[hsl(131,100%,85%)]'
+                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border',
+              )}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-[hsl(131,100%,85%)]" />
+              Loop Ads
+            </button>
+          </div>
         </div>
 
         <div className="relative max-w-md">
@@ -668,6 +684,14 @@ export default function MetaAdsLibraryPage() {
         </div>
       </header>
 
+      {surface === 'loop_ads' ? (
+        <div className="flex-1 overflow-y-auto scrollbar-subtle">
+          <LoopPlaceholder
+            title="Loop Ads Performance"
+            description="Your own Loop Earplugs ad performance data will appear here. Connect your ad accounts to see creative performance, top-performing assets, and spend insights alongside competitor intelligence."
+          />
+        </div>
+      ) : (
       <div className="flex-1 overflow-y-auto scrollbar-subtle">
         <div className="flex items-center gap-3 px-6 py-3 border-b border-border bg-card/30">
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -860,6 +884,7 @@ export default function MetaAdsLibraryPage() {
           </div>
         )}
       </div>
+      )}
 
       {atlasAd && (
         <AtlasBrowserModal

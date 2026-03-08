@@ -7,6 +7,7 @@ export const DATASOURCE_IDS = [
   'ad_performance',
   'social_comments',
   'untapped_use_cases',
+  'prior_briefings',
   'static_fallback',
 ] as const
 
@@ -15,11 +16,12 @@ export type CanonicalDatasourceId = (typeof DATASOURCE_IDS)[number]
 /** Display config for UI (label + icon key for Lucide). */
 export const DATASOURCE_CONFIG: Record<
   CanonicalDatasourceId,
-  { label: string; icon: 'MessageSquare' | 'Lightbulb' | 'BarChart3' | 'FileText' }
+  { label: string; icon: 'MessageSquare' | 'Lightbulb' | 'BarChart3' | 'FileText' | 'BookOpen' }
 > = {
   ad_performance: { label: 'Ads', icon: 'BarChart3' },
   social_comments: { label: 'Social', icon: 'MessageSquare' },
   untapped_use_cases: { label: 'Use cases', icon: 'Lightbulb' },
+  prior_briefings: { label: 'Prior Briefings', icon: 'BookOpen' },
   static_fallback: { label: 'Static', icon: 'FileText' },
 }
 
@@ -28,6 +30,7 @@ export const UI_DATASOURCE_IDS: CanonicalDatasourceId[] = [
   'ad_performance',
   'social_comments',
   'untapped_use_cases',
+  'prior_briefings',
 ]
 
 const idSet = new Set<string>(DATASOURCE_IDS)

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Loader2, MessageSquare, Lightbulb, BarChart3, Sparkles, ChevronDown, FileText } from 'lucide-react'
+import { Loader2, MessageSquare, Lightbulb, BarChart3, Sparkles, ChevronDown, FileText, BookOpen } from 'lucide-react'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -14,7 +14,7 @@ const PRODUCTS = [
   { id: 'dream', label: 'Dream' },
 ] as const
 
-const ICON_MAP = { MessageSquare, Lightbulb, BarChart3, FileText } as const
+const ICON_MAP = { MessageSquare, Lightbulb, BarChart3, FileText, BookOpen } as const
 
 /** Datasource options for the generator (canonical IDs + labels from shared config). */
 const DATASOURCES = UI_DATASOURCE_IDS.map((id) => {

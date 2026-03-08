@@ -10,8 +10,9 @@ export default function BriefingAssistantLayout({
   children: React.ReactNode
 }) {
   const pathname = usePathname()
-  const hideSidebar = pathname?.startsWith('/briefing-assistant/create-ads')
-    || pathname === '/briefing-assistant/login'
+  const hideSidebar =
+    pathname?.startsWith('/briefing-assistant/create-ads') ||
+    pathname === '/briefing-assistant/login'
 
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">

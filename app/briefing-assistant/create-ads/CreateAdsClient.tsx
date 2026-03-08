@@ -392,13 +392,13 @@ export function CreateAdsClient({
       <header className="flex-shrink-0 border-b border-border bg-card/60 px-4 py-3">
         <div className="flex items-center gap-3">
           <Link
-            href="/briefing-assistant"
+            href="/briefing-assistant/briefings"
             className="flex items-center justify-center w-8 h-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <div className="flex-1 min-w-0">
-            <h1 className="text-sm font-bold tracking-tight text-foreground">Create Ads</h1>
+            <h1 className="text-sm font-bold tracking-tight text-foreground">Create Briefing</h1>
             <p className="text-[11px] text-muted-foreground mt-0.5">
               Select a source, build a briefing, and generate sacrificial assets
             </p>
