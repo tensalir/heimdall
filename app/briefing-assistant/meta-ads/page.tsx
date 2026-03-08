@@ -666,8 +666,10 @@ export default function MetaAdsLibraryPage() {
             className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-all"
           />
         </div>
+      </header>
 
-        <div className="flex items-center gap-3">
+      <div className="flex-1 overflow-y-auto scrollbar-subtle">
+        <div className="flex items-center gap-3 px-6 py-3 border-b border-border bg-card/30">
           <div className="flex items-center gap-1.5 flex-wrap">
             <FilterDropdown
               label="Content Style"
@@ -773,9 +775,6 @@ export default function MetaAdsLibraryPage() {
             </button>
           </div>
         </div>
-      </header>
-
-      <div className="flex-1 overflow-y-auto scrollbar-subtle">
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
