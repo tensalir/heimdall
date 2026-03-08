@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -13,16 +13,18 @@ import {
   BarChart3,
   UserPlus,
   UserCheck,
-  Eye,
   Download,
   ChevronDown,
   ChevronUp,
   Clock,
   Info,
+  Bookmark,
+  BookmarkCheck,
+  Plus,
+  Check,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { AtlasBrowserModal } from '@/components/briefing-assistant/AtlasBrowserModal'
 import type { MetaAdItem } from '../page'
 
 // ── Score Bar ─────────────────────────────────────────────────────
@@ -56,6 +58,11 @@ interface AdDetail extends MetaAdItem {
   score_clarity?: number | null
   score_cta?: number | null
   analysis_summary?: string | null
+}
+
+interface Board {
+  id: string
+  name: string
 }
 
 // ── Follow hook ───────────────────────────────────────────────────
@@ -108,18 +115,16 @@ function computeRunningDays(start: string | null, end: string | null): string {
   return `${days} day${days !== 1 ? 's' : ''}`
 }
 
-// ── Creative Image (center column) ───────────────────────────────
+// ── Creative Image ───────────────────────────────────────────────
 
 function CreativeImage({
   ad,
-  onAtlasView,
-  onMirror,
-  mirroring,
+  onDownload,
+  downloading,
 }: {
   ad: AdDetail
-  onAtlasView: () => void
-  onMirror: () => void
-  mirroring: boolean
+  onDownload: () => void
+  downloading: boolean
 }) {
   const [imgState, setImgState] = useState<'loading' | 'loaded' | 'error'>('loading')
   const mediaSrc = ad.creative_url || ad.thumbnail_url || ''
@@ -128,7 +133,7 @@ function CreativeImage({
 
   return (
     <div className="relative rounded-lg border border-border bg-muted/10 overflow-hidden">
-      <div className="relative aspect-[4/5] max-h-[calc(100vh-120px)]">
+      <div className="relative aspect-[4/5] max-h-[calc(100vh-200px)]">
         {imgState === 'loading' && (
           <div className="absolute inset-0 flex items-center justify-center z-10">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/30" />
@@ -138,14 +143,6 @@ function CreativeImage({
           <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-6">
             <ImageIcon className="h-10 w-10 text-muted-foreground/15" />
             <p className="text-xs text-muted-foreground/50 text-center">Preview not available</p>
-            <button
-              type="button"
-              onClick={onAtlasView}
-              className="text-xs text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
-            >
-              <Eye className="h-3 w-3" />
-              Open Atlas View instead
-            </button>
           </div>
         ) : (
           <img
@@ -173,15 +170,14 @@ function CreativeImage({
           </div>
         )}
       </div>
-      {/* Download overlay */}
       <button
         type="button"
-        onClick={onMirror}
-        disabled={mirroring}
+        onClick={onDownload}
+        disabled={downloading}
         className="absolute top-3 right-3 flex items-center gap-1.5 rounded-lg bg-black/50 backdrop-blur-sm text-white px-3 py-1.5 text-xs font-medium hover:bg-black/70 transition-colors disabled:opacity-50"
       >
-        {mirroring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-        {mirroring ? 'Saving...' : 'Download'}
+        {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+        {downloading ? 'Saving...' : 'Download'}
       </button>
     </div>
   )
@@ -220,6 +216,171 @@ function AdCopyBlock({ text }: { text: string | null }) {
   )
 }
 
+// ── Save to Board Popover ─────────────────────────────────────────
+
+function SaveToBoardPopover({
+  adId,
+  open,
+  onClose,
+  onSaved,
+  anchorRef,
+}: {
+  adId: string
+  open: boolean
+  onClose: () => void
+  onSaved: () => void
+  anchorRef: React.RefObject<HTMLButtonElement | null>
+}) {
+  const [boards, setBoards] = useState<Board[]>([])
+  const [selectedBoard, setSelectedBoard] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [loadingBoards, setLoadingBoards] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    setLoadingBoards(true)
+    fetch('/api/briefing-assistant/boards')
+      .then((r) => r.json())
+      .then((d) => {
+        setBoards(d.boards ?? [])
+        setSelectedBoard(null)
+      })
+      .catch(() => {})
+      .finally(() => setLoadingBoards(false))
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    function handleClick(e: MouseEvent) {
+      if (
+        panelRef.current &&
+        !panelRef.current.contains(e.target as Node) &&
+        anchorRef.current &&
+        !anchorRef.current.contains(e.target as Node)
+      ) {
+        onClose()
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [open, onClose, anchorRef])
+
+  if (!open) return null
+
+  async function handleCreateBoard() {
+    const name = newName.trim()
+    if (!name) return
+    setCreating(true)
+    try {
+      const res = await fetch('/api/briefing-assistant/boards', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      const data = await res.json()
+      if (data.board) {
+        setBoards((prev) => [...prev, data.board])
+        setSelectedBoard(data.board.id)
+        setNewName('')
+      }
+    } catch { /* ignore */ } finally {
+      setCreating(false)
+    }
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      await fetch('/api/briefing-assistant/saved-items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_item_id: adId, board_id: selectedBoard }),
+      })
+      onSaved()
+      onClose()
+    } catch { /* ignore */ } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      ref={panelRef}
+      className="absolute right-0 top-full mt-2 z-50 w-72 rounded-lg border border-border bg-card shadow-xl"
+    >
+      <div className="p-3 border-b border-border">
+        <p className="text-xs font-semibold text-foreground">Save to Board</p>
+      </div>
+
+      <div className="p-2 max-h-48 overflow-y-auto scrollbar-subtle">
+        {loadingBoards ? (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          </div>
+        ) : boards.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-3">No boards yet. Create one below.</p>
+        ) : (
+          boards.map((board) => (
+            <button
+              key={board.id}
+              type="button"
+              onClick={() => setSelectedBoard(selectedBoard === board.id ? null : board.id)}
+              className={cn(
+                'w-full flex items-center gap-2 rounded-md px-2.5 py-2 text-xs transition-colors text-left',
+                selectedBoard === board.id
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-foreground hover:bg-muted/50',
+              )}
+            >
+              {selectedBoard === board.id ? (
+                <Check className="h-3.5 w-3.5 flex-shrink-0" />
+              ) : (
+                <div className="h-3.5 w-3.5 flex-shrink-0 rounded border border-border" />
+              )}
+              {board.name}
+            </button>
+          ))
+        )}
+      </div>
+
+      <div className="p-2 border-t border-border">
+        <div className="flex items-center gap-1.5">
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleCreateBoard()}
+            placeholder="New board name..."
+            className="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-primary/30"
+          />
+          <button
+            type="button"
+            onClick={handleCreateBoard}
+            disabled={creating || !newName.trim()}
+            className="flex items-center justify-center h-7 w-7 rounded-md bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-40"
+          >
+            {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+      </div>
+
+      <div className="p-2 border-t border-border">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="w-full rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+        >
+          {saving ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Client ───────────────────────────────────────────────────
 
 export function MetaAdDetailClient({ adId }: { adId: string }) {
@@ -227,8 +388,10 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
   const [ad, setAd] = useState<AdDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [atlasOpen, setAtlasOpen] = useState(false)
   const [mirroring, setMirroring] = useState(false)
+  const [bookmarkOpen, setBookmarkOpen] = useState(false)
+  const [isSaved, setIsSaved] = useState(false)
+  const bookmarkRef = useRef<HTMLButtonElement>(null)
   const { following, toggle: toggleFollow } = useFollowBrand(ad?.page_id ?? null, ad?.page_name ?? '')
 
   const handleMirrorDownload = useCallback(async () => {
@@ -270,6 +433,14 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
   useEffect(() => {
     fetchAd()
   }, [fetchAd])
+
+  useEffect(() => {
+    if (!adId) return
+    fetch(`/api/briefing-assistant/saved-items?source_item_id=${adId}`)
+      .then((r) => r.json())
+      .then((d) => setIsSaved((d.items?.length ?? 0) > 0))
+      .catch(() => {})
+  }, [adId])
 
   if (loading) {
     return (
@@ -314,20 +485,25 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
               {following ? 'Following' : 'Follow'}
             </Button>
           )}
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setAtlasOpen(true)}>
-            <Eye className="h-3.5 w-3.5" />
-            Atlas View
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            onClick={handleMirrorDownload}
-            disabled={mirroring}
-          >
-            {mirroring ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-            {mirroring ? 'Saving...' : 'Save to CDN'}
-          </Button>
+          <div className="relative">
+            <Button
+              ref={bookmarkRef}
+              variant="outline"
+              size="sm"
+              className={cn('gap-1.5', isSaved && 'bg-primary/10 border-primary/30 text-primary')}
+              onClick={() => setBookmarkOpen(!bookmarkOpen)}
+            >
+              {isSaved ? <BookmarkCheck className="h-3.5 w-3.5" /> : <Bookmark className="h-3.5 w-3.5" />}
+              {isSaved ? 'Saved' : 'Save'}
+            </Button>
+            <SaveToBoardPopover
+              adId={ad.id}
+              open={bookmarkOpen}
+              onClose={() => setBookmarkOpen(false)}
+              onSaved={() => setIsSaved(true)}
+              anchorRef={bookmarkRef}
+            />
+          </div>
           <Button
             size="sm"
             className="gap-1.5"
@@ -339,25 +515,16 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
         </div>
       </header>
 
-      {atlasOpen && (
-        <AtlasBrowserModal
-          adId={ad.id}
-          adName={ad.page_name}
-          linkUrl={ad.link_url}
-          onClose={() => setAtlasOpen(false)}
-        />
-      )}
-
-      {/* ── 3-column body ───────────────────────────────────────── */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[280px_1fr_320px] overflow-hidden">
-        {/* Left column: brand + ad copy */}
-        <div className="border-r border-border overflow-y-auto scrollbar-subtle p-5 space-y-5">
-          {/* Brand */}
+      {/* ── 2-column body ───────────────────────────────────────── */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_320px] overflow-hidden">
+        {/* Main column: metadata above creative */}
+        <div className="overflow-y-auto scrollbar-subtle p-5 space-y-5">
+          {/* Brand row */}
           <div className="flex items-center gap-3">
             <div className="flex items-center justify-center w-9 h-9 rounded-full bg-muted/60 text-muted-foreground text-xs font-bold flex-shrink-0">
               {ad.page_name.charAt(0).toUpperCase()}
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-bold text-foreground truncate">{ad.page_name}</p>
               <p className="text-[10px] text-muted-foreground">{ad.source_provider ?? 'Sponsored'}</p>
             </div>
@@ -386,23 +553,23 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
           {/* Ad copy */}
           <AdCopyBlock text={ad.body_text} />
 
-          {/* Platform row */}
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground/60">
-            <span className="uppercase tracking-wider">{ad.platform}</span>
-            <span>/</span>
-            <span>{ad.media_type}</span>
-          </div>
-
-          {/* Content style tags */}
-          {ad.content_style_tags?.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {ad.content_style_tags.map((tag) => (
-                <span key={tag} className="rounded bg-primary/8 text-primary/70 px-1.5 py-0.5 text-[9px] font-medium">
-                  {tag.replace(/_/g, ' ')}
-                </span>
-              ))}
+          {/* Tags + platform row */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2 text-[10px] text-muted-foreground/60">
+              <span className="uppercase tracking-wider">{ad.platform}</span>
+              <span>/</span>
+              <span>{ad.media_type}</span>
             </div>
-          )}
+            {ad.content_style_tags?.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {ad.content_style_tags.map((tag) => (
+                  <span key={tag} className="rounded bg-primary/8 text-primary/70 px-1.5 py-0.5 text-[9px] font-medium">
+                    {tag.replace(/_/g, ' ')}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Meta link */}
           {ad.link_url && (
@@ -416,15 +583,12 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
               Open archived ad on Meta
             </a>
           )}
-        </div>
 
-        {/* Center column: creative image */}
-        <div className="overflow-y-auto scrollbar-subtle p-5 flex flex-col gap-4">
+          {/* Creative */}
           <CreativeImage
             ad={ad}
-            onAtlasView={() => setAtlasOpen(true)}
-            onMirror={handleMirrorDownload}
-            mirroring={mirroring}
+            onDownload={handleMirrorDownload}
+            downloading={mirroring}
           />
 
           {/* Landing page URL bar */}

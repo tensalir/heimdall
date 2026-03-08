@@ -4,6 +4,18 @@ import { TOPICS } from '@/src/services/socialListeningDiscoveryService'
 
 export const dynamic = 'force-dynamic'
 
+function extractDateFromText(text: string | null): string | null {
+  if (!text) return null
+  const match = text.match(/Time Posted \(UTC\):\s*(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}[^\n]*)/)
+  if (match) {
+    try {
+      const d = new Date(match[1].trim())
+      if (!isNaN(d.getTime())) return d.toISOString()
+    } catch { /* ignore */ }
+  }
+  return null
+}
+
 /**
  * GET /api/briefing-assistant/social-comments?q=...&topic=...&sinceWeeks=4&sort=relevance
  * Returns social-comment-type source items with filtering, sorting, and topic metadata.
@@ -28,7 +40,7 @@ export async function GET(req: NextRequest) {
 
   let query = db
     .from('briefing_source_items')
-    .select('id, title, preview, body_text, platform, link_url, tags, created_at, started_at, raw_data')
+    .select('id, title, preview, body_text, thumbnail_url, platform, link_url, tags, created_at, started_at, raw_data')
     .eq('source_type', 'social_comment')
     .not('external_id', 'like', 'social-digest-%')
     .gte('created_at', sinceDate.toISOString())
@@ -56,6 +68,7 @@ export async function GET(req: NextRequest) {
     return {
       id: row.id,
       title: row.title ?? '',
+      thumbnail: row.thumbnail_url ?? null,
       platform: row.platform ?? 'unknown',
       author: (raw.author as string | null) ?? null,
       subreddit: (raw.subreddit as string | null) ?? null,
@@ -69,7 +82,7 @@ export async function GET(req: NextRequest) {
       engagement_count: (raw.engagement_count as number | null) ?? null,
       source_url: row.link_url,
       captured_at: row.created_at,
-      published_at: row.started_at ?? null,
+      published_at: (row.started_at as string | null) ?? extractDateFromText(row.body_text as string | null),
       tags: row.tags ?? [],
     }
   })

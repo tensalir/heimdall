@@ -458,7 +458,8 @@ export default function MetaAdsLibraryPage() {
     const params = new URLSearchParams()
     const currentSurface = overrideSurface ?? surface
     params.set('surface', currentSurface)
-    params.set('sort', filters.sort || 'longest_running')
+    const defaultSort = currentSurface === 'top_picks' ? 'quality' : 'longest_running'
+    params.set('sort', filters.sort || defaultSort)
     params.set('limit', '200')
 
     if (currentSurface === 'discovery') {
@@ -793,7 +794,7 @@ export default function MetaAdsLibraryPage() {
                 : surface === 'saved'
                   ? 'No saved ads yet.'
                   : surface === 'top_picks'
-                    ? 'No top picks yet. Quality analysis is running in the background.'
+                    ? 'Top picks appear automatically as ads are analyzed. Check back shortly.'
                     : 'No ads found. The library is loading in the background.'}
             </p>
             <p className="text-xs text-muted-foreground/60 max-w-sm text-center">

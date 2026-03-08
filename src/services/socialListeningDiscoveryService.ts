@@ -106,6 +106,7 @@ export interface RedditPost {
   publishedDate: string | null
   author: string | null
   subreddit: string | null
+  image: string | null
   highlights: string[]
   text: string
 }
@@ -136,9 +137,27 @@ function isRedditUrl(url: string): boolean {
   }
 }
 
+function extractDateFromText(text: string): string | null {
+  const match = text.match(/Time Posted \(UTC\):\s*(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}[^\n]*)/)
+  if (match) {
+    try {
+      const d = new Date(match[1].trim())
+      if (!isNaN(d.getTime())) return d.toISOString()
+    } catch { /* ignore */ }
+  }
+  const isoMatch = text.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2})/)
+  if (isoMatch) {
+    try {
+      const d = new Date(isoMatch[1])
+      if (!isNaN(d.getTime())) return d.toISOString()
+    } catch { /* ignore */ }
+  }
+  return null
+}
+
 export async function discoverTopic(
   topicId: string,
-  sinceWeeks = 4,
+  sinceWeeks = 52,
 ): Promise<RedditPost[]> {
   const exa = getExaClient()
   if (!exa) throw new Error('EXA_API_KEY not configured')
@@ -153,7 +172,7 @@ export async function discoverTopic(
     try {
       const result = await exa.searchAndContents(query, {
         type: 'auto',
-        numResults: 8,
+        numResults: 10,
         startPublishedDate: weeksAgoISO(sinceWeeks),
         text: { maxCharacters: 3000 },
         highlights: { numSentences: 5 },
@@ -166,15 +185,19 @@ export async function discoverTopic(
         if (seenUrls.has(normalizedUrl)) continue
         seenUrls.add(normalizedUrl)
 
+        const rawText = r.text ?? ''
+        const pubDate = r.publishedDate ?? extractDateFromText(rawText)
+
         allPosts.push({
           exaId: normalizedUrl,
           title: r.title ?? 'Untitled',
           url: normalizedUrl,
-          publishedDate: r.publishedDate ?? null,
+          publishedDate: pubDate,
           author: r.author ?? null,
           subreddit: extractSubreddit(normalizedUrl),
+          image: r.image ?? null,
           highlights: r.highlights ?? [],
-          text: r.text ?? '',
+          text: rawText,
         })
       }
     } catch (err) {
@@ -344,6 +367,7 @@ export async function scoreAndStore(
       title: p.title,
       preview: p.highlights.join(' ') || p.text.slice(0, 300),
       body_text: p.text,
+      thumbnail_url: p.image,
       link_url: p.url,
       platform: 'reddit',
       tags: [topicId],
@@ -484,7 +508,7 @@ export interface DiscoveryResult {
 
 export async function discoverAndProcess(
   topicId: string,
-  sinceWeeks = 4,
+  sinceWeeks = 52,
 ): Promise<DiscoveryResult> {
   const posts = await discoverTopic(topicId, sinceWeeks)
   const scored = await scoreAndStore(posts, topicId)
@@ -498,7 +522,7 @@ export async function discoverAndProcess(
   }
 }
 
-export async function discoverAll(sinceWeeks = 4): Promise<DiscoveryResult[]> {
+export async function discoverAll(sinceWeeks = 52): Promise<DiscoveryResult[]> {
   const results: DiscoveryResult[] = []
   for (const topic of TOPICS) {
     try {

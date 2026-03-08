@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Loader2,
   ExternalLink,
@@ -28,6 +29,7 @@ import { cn } from '@/lib/utils'
 interface SocialPost {
   id: string
   title: string
+  thumbnail: string | null
   platform: string
   author: string | null
   subreddit: string | null
@@ -78,7 +80,49 @@ function timeAgo(dateStr: string | null): string {
   if (hours < 24) return `${hours}h ago`
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days}d ago`
-  return `${Math.floor(days / 7)}w ago`
+  if (days < 30) return `${Math.floor(days / 7)}w ago`
+  return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return ''
+  return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+// ── Cover image with subreddit fallback ───────────────────────────
+
+function CardCover({ src, alt, subreddit }: { src: string | null; alt: string; subreddit: string | null }) {
+  const [state, setState] = useState<'loading' | 'loaded' | 'error'>(src ? 'loading' : 'error')
+
+  if (!src || state === 'error') {
+    return (
+      <div className="w-full h-full bg-gradient-to-br from-violet-500/10 via-primary/5 to-orange-500/10 flex flex-col items-center justify-center gap-1.5">
+        <MessageCircle className="h-6 w-6 text-primary/15" />
+        {subreddit && (
+          <span className="text-[10px] font-semibold text-primary/25">r/{subreddit}</span>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {state === 'loading' && (
+        <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted/40 via-muted/60 to-muted/40" />
+      )}
+      <img
+        src={src}
+        alt={alt}
+        className={cn(
+          'w-full h-full object-cover transition-opacity duration-300',
+          state === 'loaded' ? 'opacity-100' : 'opacity-0',
+        )}
+        loading="lazy"
+        onLoad={() => setState('loaded')}
+        onError={() => setState('error')}
+      />
+    </>
+  )
 }
 
 // ── Score badges ──────────────────────────────────────────────────
@@ -92,9 +136,9 @@ function RelevanceBadge({ score }: { score: number | null }) {
         ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
         : 'bg-muted/50 text-muted-foreground'
   return (
-    <span className={cn('inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold flex-shrink-0', color)}>
+    <span className={cn('inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold flex-shrink-0', color)} title="AI-scored relevance to Loop use cases (0-100)">
       {score}
-      <span className="font-normal opacity-70">rel</span>
+      <span className="font-normal opacity-70">Relevance</span>
     </span>
   )
 }
@@ -108,9 +152,9 @@ function AuthenticityBadge({ score }: { score: number | null }) {
         ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400'
         : 'bg-muted/50 text-muted-foreground'
   return (
-    <span className={cn('inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold flex-shrink-0', color)}>
+    <span className={cn('inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold flex-shrink-0', color)} title="AI-scored authenticity of genuine discussion (0-100)">
       {score}
-      <span className="font-normal opacity-70">auth</span>
+      <span className="font-normal opacity-70">Authenticity</span>
     </span>
   )
 }
@@ -177,75 +221,95 @@ function CreativeAngles({ angles }: { angles: string[] }) {
 
 // ── Post Card ─────────────────────────────────────────────────────
 
-function PostCard({ item }: { item: SocialPost }) {
+function PostCard({ item, onNavigate }: { item: SocialPost; onNavigate: () => void }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-4 space-y-2.5 hover:border-primary/25 transition-colors">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            {item.subreddit && (
-              <span className="text-[10px] font-semibold text-primary/80">r/{item.subreddit}</span>
-            )}
-            {item.published_at && (
-              <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/50">
-                <Clock className="h-2.5 w-2.5" />
-                {timeAgo(item.published_at)}
-              </span>
-            )}
-            {!item.published_at && item.captured_at && (
-              <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/50">
-                <Clock className="h-2.5 w-2.5" />
-                {timeAgo(item.captured_at)}
-              </span>
-            )}
+    <div
+      className="group flex flex-col rounded-lg border border-border bg-card overflow-hidden hover:border-primary/30 hover:shadow-md transition-all duration-200 cursor-pointer"
+      onClick={onNavigate}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter') onNavigate() }}
+    >
+      {/* Cover image */}
+      <div className="relative aspect-[16/9] bg-muted/30 overflow-hidden">
+        <CardCover src={item.thumbnail} alt={item.title} subreddit={item.subreddit} />
+        {item.subreddit && (
+          <div className="absolute top-2 left-2 rounded-md bg-black/50 backdrop-blur-sm px-2 py-0.5 text-[10px] font-semibold text-white">
+            r/{item.subreddit}
           </div>
-          <h3 className="text-sm font-semibold text-foreground leading-snug line-clamp-2">
-            {item.title}
-          </h3>
-        </div>
-        <div className="flex flex-col items-end gap-1 flex-shrink-0">
-          <RelevanceBadge score={item.relevance_score} />
-          <AuthenticityBadge score={item.authenticity_score} />
-        </div>
-      </div>
-
-      <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-4">
-        {item.text.slice(0, 400)}
-      </p>
-
-      {item.highlights.length > 0 && (
-        <div className="space-y-1">
-          {item.highlights.slice(0, 2).map((h, i) => (
-            <p key={i} className="text-[11px] text-foreground/70 leading-relaxed pl-3 border-l-2 border-amber-500/25 line-clamp-2">
-              {h}
-            </p>
-          ))}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between gap-2 pt-0.5">
-        <div className="flex flex-wrap gap-1">
-          {item.tags.map((tag) => (
-            <span key={tag} className="rounded bg-primary/8 text-primary/70 px-1.5 py-0.5 text-[9px] font-medium">
-              {tag}
-            </span>
-          ))}
-        </div>
+        )}
         {item.source_url && (
           <a
             href={item.source_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 text-[10px] text-muted-foreground/50 hover:text-primary transition-colors"
+            onClick={(e) => e.stopPropagation()}
+            className="absolute top-2 right-2 flex items-center justify-center w-7 h-7 rounded-md bg-black/40 text-white opacity-0 group-hover:opacity-100 transition-all"
+            aria-label="Open on Reddit"
           >
-            <ExternalLink className="h-3 w-3" />
-            View thread
+            <ExternalLink className="h-3.5 w-3.5" />
           </a>
         )}
       </div>
 
-      <LanguageHooks hooks={item.language_hooks} />
-      <CreativeAngles angles={item.creative_angles} />
+      {/* Content */}
+      <div className="p-3.5 flex-1 flex flex-col gap-1.5">
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="text-sm font-semibold text-foreground leading-snug line-clamp-2 flex-1">
+            {item.title}
+          </h3>
+        </div>
+
+        {/* Date + scores row */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {item.published_at ? (
+            <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/60">
+              <Clock className="h-2.5 w-2.5" />
+              {formatDate(item.published_at)}
+            </span>
+          ) : item.captured_at ? (
+            <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground/40 italic">
+              <Clock className="h-2.5 w-2.5" />
+              Discovered {timeAgo(item.captured_at)}
+            </span>
+          ) : null}
+          <RelevanceBadge score={item.relevance_score} />
+          <AuthenticityBadge score={item.authenticity_score} />
+        </div>
+
+        <p className="text-[11px] text-muted-foreground leading-relaxed line-clamp-3">
+          {item.text.slice(0, 300)}
+        </p>
+
+        {item.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-0.5">
+            {item.tags.map((tag) => (
+              <span key={tag} className="rounded bg-primary/8 text-primary/70 px-1.5 py-0.5 text-[9px] font-medium">
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <LanguageHooks hooks={item.language_hooks} />
+        <CreativeAngles angles={item.creative_angles} />
+
+        {/* View on Reddit button */}
+        {item.source_url && (
+          <div className="mt-auto pt-2">
+            <a
+              href={item.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted/50 hover:border-primary/30 transition-colors"
+            >
+              <ExternalLink className="h-3 w-3" />
+              View on Reddit
+            </a>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -347,6 +411,7 @@ function DigestCard({ topicId, topicLabel }: { topicId: string; topicLabel: stri
 // ── Page ──────────────────────────────────────────────────────────
 
 export default function SocialListeningPage() {
+  const router = useRouter()
   const [posts, setPosts] = useState<SocialPost[]>([])
   const [topics, setTopics] = useState<TopicMeta[]>([])
   const [loading, setLoading] = useState(true)
@@ -363,6 +428,7 @@ export default function SocialListeningPage() {
       if (search.trim()) params.set('q', search.trim())
       if (activeTopic !== 'all') params.set('topic', activeTopic)
       params.set('sort', sort)
+      params.set('sinceWeeks', '52')
       const res = await fetch(`/api/briefing-assistant/social-comments?${params}`)
       const data = await res.json()
       setPosts(data.comments ?? [])
@@ -549,9 +615,13 @@ export default function SocialListeningPage() {
             </p>
           </div>
         ) : (
-          <div className="space-y-3 max-w-3xl">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {posts.map((post) => (
-              <PostCard key={post.id} item={post} />
+              <PostCard
+                key={post.id}
+                item={post}
+                onNavigate={() => router.push(`/briefing-assistant/social-comments/${post.id}`)}
+              />
             ))}
           </div>
         )}

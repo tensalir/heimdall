@@ -162,7 +162,11 @@ export async function GET(req: NextRequest) {
   }
 
   if (surface === 'top_picks') {
-    query = query.or('is_top_pick.eq.true,quality_score.gte.80')
+    query = query.or(
+      'is_top_pick.eq.true,' +
+      'and(quality_score.gte.70,days_running.gte.30),' +
+      'and(quality_score.gte.60,days_running.gte.90)'
+    )
   }
 
   if (surface === 'saved' && userId) {
@@ -1288,6 +1292,17 @@ async function processSemanticItem(
       days_running: heuristic.days_running,
     })
     .eq('id', item.id)
+
+  if (status === 'approved' && !(item.quality_status === 'manual_pick')) {
+    const autoPromote =
+      (score >= 70 && heuristic.days_running >= 30) ||
+      (score >= 60 && heuristic.days_running >= 90)
+    if (autoPromote) {
+      await db.from('briefing_source_items')
+        .update({ is_top_pick: true })
+        .eq('id', item.id)
+    }
+  }
 
   if (status === 'approved' && isAdMemoryAvailable()) {
     const embeddingText = [
