@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
 import { getSupabase } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
@@ -18,7 +17,8 @@ function extractDateFromText(text: string | null): string | null {
 
 /**
  * GET /api/briefing-assistant/social-comments/:id
- * Returns full post detail with on-demand Claude summary.
+ * Returns full post detail immediately (no blocking AI call).
+ * AI summary is fetched separately via /summary sub-route.
  */
 export async function GET(
   _req: NextRequest,
@@ -43,44 +43,6 @@ export async function GET(
   }
 
   const raw = (row.raw_data ?? {}) as Record<string, unknown>
-  let aiSummary = (raw.ai_summary as string) ?? null
-
-  if (!aiSummary && (row.body_text || row.preview)) {
-    const apiKey = process.env.ANTHROPIC_API_KEY
-    if (apiKey) {
-      try {
-        const content = row.body_text || row.preview || ''
-        const subreddit = (raw.subreddit as string) ?? ''
-        const client = new Anthropic({ apiKey })
-        const response = await client.messages.create({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 512,
-          messages: [
-            {
-              role: 'user',
-              content: `Summarize this Reddit post from r/${subreddit} in one short paragraph (3-4 sentences) for a creative strategist at Loop (earplugs, earmuffs, and hearing protection brand). Focus on the consumer insight, the relatable problem or desire, and any potential ad angle. Be specific, not generic. Write in plain text only — no markdown, no bold, no bullet points, no asterisks, no formatting of any kind.\n\nTitle: ${row.title}\n\nContent:\n${content}`,
-            },
-          ],
-        })
-
-        const textBlock = response.content.find((b) => b.type === 'text')
-        const rawSummary = textBlock?.type === 'text' ? textBlock.text.trim() : null
-        aiSummary = rawSummary
-          ? rawSummary.replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1').replace(/^[-–•]\s*/gm, '').replace(/#{1,4}\s*/g, '').trim()
-          : null
-
-        if (aiSummary) {
-          const updatedRaw = { ...raw, ai_summary: aiSummary }
-          await db
-            .from('briefing_source_items')
-            .update({ raw_data: updatedRaw })
-            .eq('id', id)
-        }
-      } catch (err) {
-        console.error('[SocialPostDetail] Claude summary failed:', err)
-      }
-    }
-  }
 
   return NextResponse.json({
     id: row.id,
@@ -100,6 +62,6 @@ export async function GET(
     highlights: (raw.highlights as string[]) ?? [],
     subreddit: (raw.subreddit as string) ?? null,
     author: (raw.author as string) ?? null,
-    ai_summary: aiSummary,
+    ai_summary: (raw.ai_summary as string) ?? null,
   })
 }
