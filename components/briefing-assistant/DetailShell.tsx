@@ -243,30 +243,46 @@ export function DetailSkeleton() {
           <div className="h-8 w-16 rounded-md bg-muted/30" />
         </div>
       </header>
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_320px] overflow-hidden">
-        <div className="overflow-y-auto p-5 space-y-5">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-muted/40" />
-            <div className="flex-1 space-y-1.5">
-              <div className="h-3 w-1/3 rounded bg-muted/40" />
-              <div className="h-2 w-1/4 rounded bg-muted/30" />
+      <div className="flex-1 flex gap-6 p-6 overflow-hidden">
+        <div className="flex-1 overflow-y-auto">
+          <div className="rounded-lg border border-border/40 bg-card overflow-hidden">
+            <div className="p-3 pb-0">
+              <div className="flex items-center gap-2.5 mb-3">
+                <div className="w-10 h-10 rounded-full bg-muted/40" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-3 w-1/3 rounded bg-muted/40" />
+                  <div className="h-2 w-1/5 rounded bg-muted/30" />
+                </div>
+              </div>
+              <div className="h-2 w-1/4 rounded bg-muted/20 mb-3" />
+              <div className="space-y-2 pb-3">
+                <div className="h-3 w-full rounded bg-muted/30" />
+                <div className="h-3 w-5/6 rounded bg-muted/30" />
+                <div className="h-3 w-3/5 rounded bg-muted/30" />
+              </div>
+            </div>
+            <div className="bg-muted/10 aspect-[4/5]" />
+            <div className="px-3 py-2 border-t border-border/40 flex justify-between items-center">
+              <div className="h-3 w-1/3 rounded bg-muted/20" />
+              <div className="h-6 w-20 rounded-md bg-muted/20" />
             </div>
           </div>
-          <div className="space-y-2">
-            <div className="h-3 w-full rounded bg-muted/30" />
-            <div className="h-3 w-5/6 rounded bg-muted/30" />
-            <div className="h-3 w-4/6 rounded bg-muted/30" />
-          </div>
-          <div className="rounded-lg bg-muted/20 aspect-[4/5] max-w-lg" />
         </div>
-        <div className="border-l border-border p-5 space-y-6 bg-card/40">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="space-y-2">
-              <div className="h-3 w-24 rounded bg-muted/30" />
-              <div className="h-3 w-full rounded bg-muted/20" />
-              <div className="h-3 w-3/4 rounded bg-muted/20" />
+        <div className="w-[320px] flex-shrink-0 overflow-y-auto space-y-4">
+          <div className="rounded-lg border border-border/40 bg-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-border/40 flex justify-between">
+              <div className="h-3 w-16 rounded bg-muted/30" />
+              <div className="h-3 w-32 rounded bg-muted/20" />
             </div>
-          ))}
+            <div className="p-4 space-y-4">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="space-y-1">
+                  <div className="h-2 w-16 rounded bg-muted/20" />
+                  <div className="h-3 w-24 rounded bg-muted/30" />
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -355,27 +371,28 @@ export function DetailShell({
         </div>
       </header>
 
-      <div className={cn(
-        'flex-1 grid grid-cols-1 overflow-hidden',
-        hasCenter
-          ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px]'
-          : 'lg:grid-cols-[1fr_320px]',
-      )}>
-        <div className={cn(
-          'overflow-y-auto scrollbar-subtle p-5 space-y-5',
-          hasCenter && 'max-w-prose',
-        )}>
-          {left}
-        </div>
-        {hasCenter && (
+      {hasCenter ? (
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px] overflow-hidden">
+          <div className="overflow-y-auto scrollbar-subtle p-5 space-y-5 max-w-prose">
+            {left}
+          </div>
           <div className="overflow-y-auto scrollbar-subtle p-5 space-y-5 border-l border-border">
             {center}
           </div>
-        )}
-        <div className="border-l border-border overflow-y-auto scrollbar-subtle p-5 space-y-6 bg-card/40">
-          {right}
+          <div className="border-l border-border overflow-y-auto scrollbar-subtle p-5 space-y-6 bg-card/40">
+            {right}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex-1 flex gap-6 p-6 overflow-hidden">
+          <div className="flex-1 overflow-y-auto scrollbar-subtle">
+            {left}
+          </div>
+          <div className="w-[320px] flex-shrink-0 overflow-y-auto scrollbar-subtle space-y-4">
+            {right}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

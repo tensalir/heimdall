@@ -10,16 +10,12 @@ import {
   Download,
   ChevronDown,
   ChevronUp,
-  Clock,
-  Info,
-  Sparkles,
-  Lightbulb,
   UserPlus,
   UserCheck,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { DetailShell, DetailSkeleton, RailSection } from '@/components/briefing-assistant/DetailShell'
+import { DetailShell, DetailSkeleton } from '@/components/briefing-assistant/DetailShell'
 import type { MetaAdItem } from '../page'
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -82,6 +78,15 @@ function computeRunningDays(start: string | null, end: string | null): string {
   return `${days} day${days !== 1 ? 's' : ''}`
 }
 
+function extractDomain(url: string | null): string {
+  if (!url) return ''
+  try {
+    return new URL(url).hostname.replace('www.', '')
+  } catch {
+    return ''
+  }
+}
+
 // ── Creative Media ───────────────────────────────────────────────
 
 function CreativeMedia({
@@ -126,15 +131,15 @@ function CreativeMedia({
   }, [previewFallback])
 
   return (
-    <div className="relative rounded-lg border border-border bg-muted/10 overflow-hidden">
-      <div className="relative aspect-[4/5] max-h-[calc(100vh-200px)]">
+    <div className="relative">
+      <div className="relative">
         {mediaState === 'loading' && (
           <div className="absolute inset-0 flex items-center justify-center z-10">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground/30" />
           </div>
         )}
         {mediaState === 'error' ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-3 p-6">
+          <div className="w-full aspect-[4/5] flex flex-col items-center justify-center gap-3 p-6 bg-muted/5">
             <ImageIcon className="h-10 w-10 text-muted-foreground/15" />
             <p className="text-xs text-muted-foreground/50 text-center">Preview not available</p>
           </div>
@@ -144,7 +149,7 @@ function CreativeMedia({
             controls
             playsInline
             className={cn(
-              'w-full h-full object-contain transition-opacity duration-300',
+              'w-full transition-opacity duration-300',
               mediaState === 'loaded' ? 'opacity-100' : 'opacity-0',
             )}
             onLoadedData={handleFallbackLoad}
@@ -161,7 +166,7 @@ function CreativeMedia({
             src={activeSrc}
             alt={ad.page_name}
             className={cn(
-              'w-full h-full object-contain transition-opacity duration-300',
+              'w-full transition-opacity duration-300',
               mediaState === 'loaded' ? 'opacity-100' : 'opacity-0',
             )}
             onLoad={handleFallbackLoad}
@@ -224,6 +229,17 @@ function AdCopyBlock({ text }: { text: string | null }) {
           )}
         </button>
       )}
+    </div>
+  )
+}
+
+// ── Detail metadata row ───────────────────────────────────────────
+
+function MetaRow({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
+  return (
+    <div className="space-y-0.5">
+      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className={cn('text-sm text-foreground', bold && 'font-medium')}>{value}</p>
     </div>
   )
 }
@@ -299,153 +315,135 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
     { label: 'Overall', value: ad.score_overall },
   ].filter((s) => s.value != null)
 
+  const domain = extractDomain(ad.link_url)
+  const categoryLabel = ad.content_style_tags?.length > 0
+    ? ad.content_style_tags.map((t) => t.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())).join(', ')
+    : null
+
   return (
     <DetailShell
       backHref="/briefing-assistant/meta-ads"
       title={ad.page_name}
-      subtitle={
-        <>
-          <span>{ad.source_provider ?? 'Sponsored'}</span>
-          {ad.is_active ? (
-            <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600">Active</span>
-          ) : (
-            <span className="inline-flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">Inactive</span>
-          )}
-        </>
-      }
-      actions={
-        ad.page_id ? (
-          <Button
-            variant="outline"
-            size="sm"
-            className={cn('gap-1.5', following && 'bg-primary/10 border-primary/30 text-primary')}
-            onClick={toggleFollow}
-          >
-            {following ? <UserCheck className="h-3.5 w-3.5" /> : <UserPlus className="h-3.5 w-3.5" />}
-            {following ? 'Following' : 'Follow'}
-          </Button>
-        ) : undefined
-      }
+      subtitle={<span>{ad.source_provider ?? 'Sponsored'}</span>}
       itemId={ad.id}
       sourceType="meta-ad"
       left={
-        <>
-          {/* Brand row */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-9 h-9 rounded-full bg-muted/60 text-muted-foreground text-xs font-bold flex-shrink-0">
-              {ad.page_name.charAt(0).toUpperCase()}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-foreground truncate">{ad.page_name}</p>
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-[10px] text-muted-foreground">{ad.source_provider ?? 'Sponsored'}</span>
-                {ad.is_active ? (
-                  <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600">Active</span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">Inactive</span>
-                )}
-                {ad.started_at && (
-                  <span className="text-[10px] text-muted-foreground/60 flex items-center gap-0.5">
-                    <Clock className="h-2.5 w-2.5" />
-                    {formatDate(ad.started_at)} · Present
-                  </span>
-                )}
+        <div className="rounded-lg border border-border/40 bg-card overflow-hidden">
+          <div className="p-3 pb-0">
+            <div className="flex justify-between items-center mb-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-muted/60 text-muted-foreground text-xs font-bold flex-shrink-0">
+                  {ad.page_name.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground truncate">{ad.page_name}</p>
+                  <p className="text-[11px] text-muted-foreground">Sponsored</p>
+                </div>
               </div>
+              {ad.page_id && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn('gap-1.5 flex-shrink-0', following && 'bg-primary/10 border-primary/30 text-primary')}
+                  onClick={toggleFollow}
+                >
+                  {following ? <UserCheck className="h-3.5 w-3.5" /> : <UserPlus className="h-3.5 w-3.5" />}
+                  {following ? 'Following' : 'Follow'}
+                </Button>
+              )}
             </div>
+
+            <div className="flex items-center gap-1 mb-2">
+              {ad.is_active ? (
+                <span className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+              ) : (
+                <span className="w-2 h-2 rounded-full bg-muted-foreground/30 flex-shrink-0" />
+              )}
+              <span className="text-[11px] text-muted-foreground">
+                {formatDate(ad.started_at)} - {ad.ended_at ? formatDate(ad.ended_at) : 'Present'}
+              </span>
+            </div>
+
+            <AdCopyBlock text={ad.body_text} />
           </div>
 
-          <AdCopyBlock text={ad.body_text} />
-
-          <CreativeMedia ad={ad} onDownload={handleMirrorDownload} downloading={mirroring} onSelfHeal={fetchAd} />
+          <div className="pt-2">
+            <CreativeMedia ad={ad} onDownload={handleMirrorDownload} downloading={mirroring} onSelfHeal={fetchAd} />
+          </div>
 
           {ad.link_url && (
             <a
               href={ad.link_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+              className="px-3 py-2 flex justify-between gap-2 items-center border-t border-border/40 hover:bg-muted/30 transition-colors"
             >
-              <ExternalLink className="h-3 w-3" />
-              View on Meta Ad Library
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground truncate">{domain}</p>
+                {ad.body_text && (
+                  <p className="text-xs font-medium text-foreground truncate">
+                    {ad.body_text.split('\n')[0]?.substring(0, 60)}
+                  </p>
+                )}
+              </div>
+              <span className="flex-shrink-0 rounded-md border border-border px-3 py-1 text-xs font-medium text-foreground hover:bg-muted/50 transition-colors">
+                Learn More
+              </span>
             </a>
           )}
-        </>
+        </div>
       }
       right={
         <>
-          <RailSection icon={<Info className="h-3.5 w-3.5 text-primary" />} title="Details">
-            <dl className="space-y-2 text-xs">
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Ad ID</dt>
-                <dd className="text-foreground font-mono text-[10px] truncate max-w-[140px]">{ad.ad_id}</dd>
+          <div className="rounded-lg border border-border/40 bg-card overflow-hidden">
+            <div className="px-4 py-3 flex items-center justify-between gap-3 border-b border-border/40">
+              <div className="flex items-center gap-1.5">
+                {ad.is_active ? (
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                ) : (
+                  <span className="w-2 h-2 rounded-full bg-muted-foreground/30" />
+                )}
+                <span className="text-sm font-medium text-foreground">
+                  {ad.is_active ? 'Active' : 'Inactive'}
+                </span>
               </div>
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Start date</dt>
-                <dd className="text-foreground">{formatDate(ad.started_at)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">End date</dt>
-                <dd className="text-foreground">{formatDate(ad.ended_at)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Running time</dt>
-                <dd className="text-foreground font-medium">{computeRunningDays(ad.started_at, ad.ended_at)}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Platforms</dt>
-                <dd className="text-foreground">{ad.platform}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Format</dt>
-                <dd className="text-foreground capitalize">{ad.media_type}</dd>
-              </div>
-              {ad.spend_lower != null && (
-                <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Spend</dt>
-                  <dd className="text-foreground">
-                    US${ad.spend_lower.toLocaleString()}{ad.spend_upper ? ` – US$${ad.spend_upper.toLocaleString()}` : '+'}
-                  </dd>
-                </div>
-              )}
-            </dl>
-          </RailSection>
+              <a
+                href={ad.link_url ?? '#'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Ad ID: {ad.ad_id?.substring(0, 16)}
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
 
-          {(ad.content_style_tags?.length > 0 || ad.hook_type || ad.creator_style) && (
-            <RailSection icon={<Lightbulb className="h-3.5 w-3.5 text-primary" />} title="Classification">
-              <div className="space-y-2 text-xs">
-                {ad.content_style_tags?.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {ad.content_style_tags.map((tag) => (
-                      <span key={tag} className="rounded bg-primary/8 text-primary/70 px-1.5 py-0.5 text-[9px] font-medium">
-                        {tag.replace(/_/g, ' ')}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {ad.hook_type && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Hook type</span>
-                    <span className="text-foreground">{ad.hook_type.replace(/_/g, ' ')}</span>
-                  </div>
-                )}
-                {ad.creator_style && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Creator style</span>
-                    <span className="text-foreground">{ad.creator_style.replace(/_/g, ' ')}</span>
-                  </div>
-                )}
-                {ad.target_market && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Market</span>
-                    <span className="text-foreground uppercase">{ad.target_market}</span>
-                  </div>
-                )}
+            <div className="p-4 space-y-4">
+              <MetaRow label="Start date" value={formatDate(ad.started_at)} />
+              <MetaRow label="End date" value={formatDate(ad.ended_at)} />
+              <MetaRow label="Running time" value={computeRunningDays(ad.started_at, ad.ended_at)} bold />
+              <div className="space-y-1">
+                <p className="text-[11px] text-muted-foreground">Platforms</p>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm" title="Facebook">f</span>
+                  <span className="text-sm" title="Instagram">ig</span>
+                  <span className="text-sm" title="Messenger">m</span>
+                </div>
               </div>
-            </RailSection>
-          )}
+              <MetaRow label="Display format" value={ad.media_type === 'video' ? 'Video' : ad.media_type === 'image' ? 'Image' : (ad.media_type ?? '—')} />
+              {categoryLabel && <MetaRow label="Categories" value={categoryLabel} />}
+              {ad.spend_lower != null && (
+                <MetaRow
+                  label="Spend range"
+                  value={`US$${ad.spend_lower.toLocaleString()}${ad.spend_upper ? ` – US$${ad.spend_upper.toLocaleString()}` : '+'}`}
+                />
+              )}
+            </div>
+          </div>
 
           {scoreItems.length > 0 && (
-            <RailSection icon={<Sparkles className="h-3.5 w-3.5 text-primary" />} title="Creative Scores">
+            <div className="rounded-lg border border-border/40 bg-card overflow-hidden p-4 space-y-3">
+              <p className="text-xs font-semibold text-foreground">Creative Scores</p>
               <div className="space-y-1.5">
                 {scoreItems.map((s) => (
                   <div key={s.label} className="flex items-center gap-2">
@@ -468,27 +466,14 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
                   </div>
                 ))}
               </div>
-            </RailSection>
+            </div>
           )}
 
-          <RailSection icon={<Sparkles className="h-3.5 w-3.5 text-primary" />} title="AI Analysis">
-            {ad.analysis_summary ? (
+          {ad.analysis_summary && (
+            <div className="rounded-lg border border-border/40 bg-card overflow-hidden p-4 space-y-2">
+              <p className="text-xs font-semibold text-foreground">AI Analysis</p>
               <p className="text-xs text-foreground/80 leading-relaxed">{ad.analysis_summary}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground/50">No analysis available yet.</p>
-            )}
-          </RailSection>
-
-          {ad.tags.length > 0 && (
-            <RailSection title="Tags">
-              <div className="flex flex-wrap gap-1">
-                {ad.tags.map((tag) => (
-                  <span key={tag} className="rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            </RailSection>
+            </div>
           )}
         </>
       }
