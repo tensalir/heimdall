@@ -457,7 +457,7 @@ export default function SocialListeningPage() {
     } finally {
       setDiscovering(false)
     }
-  }, [activeTopic, fetchPosts])
+  }, [activeTopic, refetch])
 
   const activeLabel = activeTopic === 'all'
     ? 'All'
