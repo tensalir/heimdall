@@ -51,8 +51,15 @@ export async function mirrorMediaAsset(
         return null
       }
 
-      const { data: publicUrl } = db.storage.from(BUCKET).getPublicUrl(path)
-      return publicUrl?.publicUrl ?? null
+      const SIGNED_URL_TTL = 7 * 24 * 60 * 60 // 7 days
+      const { data: signed, error: signErr } = await db.storage
+        .from(BUCKET)
+        .createSignedUrl(path, SIGNED_URL_TTL)
+      if (signErr || !signed?.signedUrl) {
+        console.error(`[media-mirror] Signed URL failed for ${itemId}:`, signErr?.message)
+        return null
+      }
+      return signed.signedUrl
     } catch (e) {
       if (attempt < MAX_RETRIES) continue
       console.error(`[media-mirror] Error for ${itemId}:`, e instanceof Error ? e.message : e)

@@ -20,6 +20,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
+import { classifyApiRoute } from '@/lib/route-auth'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -62,28 +63,8 @@ function legacyRedirect(request: NextRequest): NextResponse | null {
 }
 
 /* ------------------------------------------------------------------ */
-/*  API route policy classification                                    */
+/*  API route policy classification — imported from lib/route-auth.ts  */
 /* ------------------------------------------------------------------ */
-
-const WEBHOOK_PREFIXES = ['/api/webhooks/']
-const MACHINE_PREFIXES = [
-  '/api/jobs/',
-  '/api/plugin/',
-  '/api/briefing-assistant/trends/discover',
-  '/api/briefing-assistant/social-comments/discover',
-]
-const PUBLIC_PREFIXES = ['/api/auth/', '/api/health']
-const IMAGES_PROXY_PREFIX = '/api/images/proxy'
-
-type ApiPolicy = 'public' | 'user' | 'machine' | 'webhook'
-
-function classifyApiRoute(pathname: string): ApiPolicy {
-  if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return 'public'
-  if (pathname.startsWith(IMAGES_PROXY_PREFIX)) return 'public'
-  if (WEBHOOK_PREFIXES.some((p) => pathname.startsWith(p))) return 'webhook'
-  if (MACHINE_PREFIXES.some((p) => pathname.startsWith(p))) return 'machine'
-  return 'user'
-}
 
 function addCors(response: NextResponse): NextResponse {
   for (const [key, value] of Object.entries(CORS_HEADERS)) {
@@ -110,14 +91,21 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
 
   if (policy === 'machine') {
     const secret = process.env.HEIMDALL_MACHINE_SECRET
-    if (secret) {
-      const provided = request.headers.get('x-heimdall-secret')
-      if (!provided || provided !== secret) {
+    if (!secret) {
+      if (process.env.NODE_ENV === 'production') {
         return addCors(NextResponse.json(
-          { error: 'Machine authentication required' },
-          { status: 403, headers: CORS_HEADERS },
+          { error: 'Machine authentication not configured' },
+          { status: 503, headers: CORS_HEADERS },
         ))
       }
+      return addCors(NextResponse.next())
+    }
+    const provided = request.headers.get('x-heimdall-secret')
+    if (!provided || provided !== secret) {
+      return addCors(NextResponse.json(
+        { error: 'Machine authentication required' },
+        { status: 403, headers: CORS_HEADERS },
+      ))
     }
     return addCors(NextResponse.next())
   }

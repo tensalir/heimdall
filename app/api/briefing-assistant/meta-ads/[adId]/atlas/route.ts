@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 import {
   getSharedBrowser,
@@ -32,6 +33,8 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ adId: string }> },
 ) {
+  const auth = await requireUser(req); if (auth.error) return auth.error
+
   const db = getSupabase()
   if (!db) {
     return new NextResponse(buildMetaPreviewPlaceholderSvg('Meta ad'), {

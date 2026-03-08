@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 import { isValidMediaUrl, thumbnailStatus } from '@/lib/media-utils'
 import { MetaTokenError } from '@/src/integrations/meta/client'
@@ -85,6 +86,8 @@ function setCache(key: string, data: unknown) {
  *   user_id           — for Saved surface
  */
 export async function GET(req: NextRequest) {
+  const auth = await requireUser(req); if (auth.error) return auth.error
+
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
@@ -374,6 +377,8 @@ async function triggerWatchlistSync(db: SupabaseDb) {
  * Sync body: { search_terms, page_ids?, countries?, country?, limit?, source_mode? }
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req); if (auth.error) return auth.error
+
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })

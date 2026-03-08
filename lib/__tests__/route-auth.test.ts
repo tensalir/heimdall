@@ -40,6 +40,18 @@ describe('classifyApiRoute', () => {
     expect(classifyApiRoute('/api/comments/sheet')).toBe('user')
   })
 
+  it('classifies briefing login endpoint as public', () => {
+    expect(classifyApiRoute('/api/briefing-assistant/auth')).toBe('public')
+  })
+
+  it('classifies sheets login endpoint as public', () => {
+    expect(classifyApiRoute('/api/sheets/auth')).toBe('public')
+  })
+
+  it('classifies images proxy as public', () => {
+    expect(classifyApiRoute('/api/images/proxy')).toBe('public')
+  })
+
   it('defaults unknown routes to user', () => {
     expect(classifyApiRoute('/api/unknown/path')).toBe('user')
   })

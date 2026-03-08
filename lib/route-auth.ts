@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server.js'
 import { createSupabaseRouteClient } from './supabase-auth.js'
 
-export type RoutePolicy = 'public' | 'user' | 'admin' | 'machine' | 'webhook'
+export type RoutePolicy = 'public' | 'user' | 'machine' | 'webhook'
 
 /**
  * Require an authenticated Supabase user on a route handler.
@@ -38,54 +38,32 @@ export async function requireUser(request: Request) {
   return { user, supabase }
 }
 
-/**
- * Require a valid machine secret on webhook/cron/plugin routes.
- * Checks the X-Heimdall-Secret header against HEIMDALL_MACHINE_SECRET.
- * Falls back to allowing requests when the secret is not yet configured
- * (compatibility stage 1), but logs a warning.
- */
-export function requireMachineAuth(request: Request): { error?: NextResponse } {
-  const secret = process.env.HEIMDALL_MACHINE_SECRET
-  if (!secret) {
-    console.warn('[route-auth] HEIMDALL_MACHINE_SECRET not configured — machine route is unprotected')
-    return {}
-  }
-
-  const provided = request.headers.get('x-heimdall-secret')
-  if (!provided || provided !== secret) {
-    return {
-      error: NextResponse.json(
-        { error: 'Machine authentication required' },
-        { status: 403 },
-      ),
-    }
-  }
-
-  return {}
-}
-
-const WEBHOOK_PATHS = [
+const WEBHOOK_PREFIXES = [
   '/api/webhooks/',
 ]
 
-const MACHINE_PATHS = [
+const MACHINE_PREFIXES = [
   '/api/jobs/',
   '/api/plugin/',
   '/api/briefing-assistant/trends/discover',
   '/api/briefing-assistant/social-comments/discover',
 ]
 
-const PUBLIC_PATHS = [
+const PUBLIC_PREFIXES = [
   '/api/auth/',
   '/api/health',
+  '/api/briefing-assistant/auth',
+  '/api/sheets/auth',
+  '/api/images/proxy',
 ]
 
 /**
  * Classify an API route pathname into a policy group.
+ * Single source of truth — consumed by middleware.ts and tests.
  */
 export function classifyApiRoute(pathname: string): RoutePolicy {
-  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) return 'public'
-  if (WEBHOOK_PATHS.some((p) => pathname.startsWith(p))) return 'webhook'
-  if (MACHINE_PATHS.some((p) => pathname.startsWith(p))) return 'machine'
+  if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return 'public'
+  if (WEBHOOK_PREFIXES.some((p) => pathname.startsWith(p))) return 'webhook'
+  if (MACHINE_PREFIXES.some((p) => pathname.startsWith(p))) return 'machine'
   return 'user'
 }

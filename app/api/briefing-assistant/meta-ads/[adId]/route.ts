@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 import { isValidMediaUrl } from '@/lib/media-utils'
 
@@ -14,6 +15,8 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ adId: string }> },
 ) {
+  const auth = await requireUser(_req); if (auth.error) return auth.error
+
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
