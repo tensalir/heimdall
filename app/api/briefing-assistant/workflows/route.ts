@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
+import { requireUser } from '@/lib/route-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -7,7 +8,10 @@ export const dynamic = 'force-dynamic'
  * GET /api/briefing-assistant/workflows
  * Returns recent workflow runs.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ runs: [] })
@@ -31,6 +35,9 @@ export async function GET() {
  * Start a new workflow run. Body: { workflow_id }
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })

@@ -1,8 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
 import { isValidMediaUrl, thumbnailStatus } from '@/lib/media-utils'
-import { searchMetaAdLibrary, normalizeMetaAd, isMetaAdLibraryAvailable, MetaTokenError } from '@/src/integrations/meta/client'
-import type { NormalizedMetaAd } from '@/src/integrations/meta/client'
+import { MetaTokenError } from '@/src/integrations/meta/client'
+import {
+  getSourceMode,
+  upsertNormalizedAds,
+  syncViaApify,
+  syncViaBrowser,
+  syncViaApi,
+  isApifyAvailable,
+  isMetaAdLibraryAvailable,
+} from '@/src/domain/briefingAssistant/metaAds/ingest'
+import type { NormalizedMetaAd, SupabaseDb } from '@/src/domain/briefingAssistant/metaAds/ingest'
+import {
+  lazyMirrorPass,
+  runThumbnailWarmup,
+  handleWarmThumbnails,
+  handleMirrorMedia,
+  handlePromoteVideo,
+  handleCleanupMedia,
+} from '@/src/domain/briefingAssistant/metaAds/media'
 import { buildScoringPrompt, computeOverallScore, RUBRIC_VERSION } from '@/src/domain/briefingAssistant/scoring/rubric'
 import {
   computeHeuristicGate,
@@ -14,17 +31,12 @@ import {
 } from '@/src/domain/briefingAssistant/scoring/semanticTagger'
 import { embedAdCreative, upsertAdEmbedding, isAdMemoryAvailable } from '@/lib/adCreativeMemory'
 import { indexAdInGraph } from '@/lib/adGraphClient'
-import { extractMediaFromSnapshot } from '@/src/integrations/meta/preview'
-import { mirrorMediaAsset } from '@/src/integrations/meta/mediaMirror'
 import { scrapeMetaAdsLibrary } from '@/src/integrations/meta/browserScraper'
-import { scrapeViaApify, isApifyAvailable } from '@/src/integrations/apify/metaAdsScraper'
+import { normalizeMetaAd } from '@/src/integrations/meta/client'
 
 export const dynamic = 'force-dynamic'
 
-type SourceMode = 'apify' | 'browser' | 'api' | 'auto'
 type BrowseSurface = 'discovery' | 'top_picks' | 'following' | 'saved'
-
-type SupabaseDb = NonNullable<ReturnType<typeof getSupabase>>
 
 // ---------------------------------------------------------------------------
 // In-process browse cache (SWR pattern)
@@ -49,14 +61,6 @@ function setCache(key: string, data: unknown) {
     const oldest = [...browseCache.entries()].sort((a, b) => a[1].ts - b[1].ts)
     for (let i = 0; i < 50; i++) browseCache.delete(oldest[i][0])
   }
-}
-
-function getSourceMode(): SourceMode {
-  const env = process.env.META_ADS_SOURCE_MODE?.toLowerCase()
-  if (env === 'apify') return 'apify'
-  if (env === 'api') return 'api'
-  if (env === 'browser') return 'browser'
-  return 'auto'
 }
 
 
@@ -355,142 +359,6 @@ async function triggerWatchlistSync(db: SupabaseDb) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Lazy media mirror: progressively move Meta CDN thumbnails to Supabase
-// ---------------------------------------------------------------------------
-
-const LAZY_MIRROR_MAX = 5
-let _lazyMirrorRunning = false
-
-async function lazyMirrorPass(
-  db: SupabaseDb,
-  ads: Array<{ id: string; thumbnail_url: string | null }>,
-) {
-  if (_lazyMirrorRunning) return
-  const candidates = ads
-    .filter((a) => a.thumbnail_url && isValidMediaUrl(a.thumbnail_url) && !a.thumbnail_url!.includes('supabase'))
-    .map((a) => a.id)
-    .slice(0, LAZY_MIRROR_MAX)
-  if (candidates.length === 0) return
-
-  _lazyMirrorRunning = true
-  try {
-    await runThumbnailWarmup(db, candidates)
-  } finally {
-    _lazyMirrorRunning = false
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Shared: convert NormalizedMetaAd[] to DB row shape + upsert
-// ---------------------------------------------------------------------------
-
-function normalizedToRow(n: NormalizedMetaAd, extra?: Record<string, unknown>) {
-  const daysRunning = computeDaysRunning(n.started_at, n.ended_at)
-
-  const row: Record<string, unknown> = {
-    source_type: 'meta_ad' as const,
-    external_id: n.external_id,
-    page_id: n.page_id,
-    title: n.title,
-    preview: n.preview,
-    page_name: n.page_name,
-    body_text: n.body_text,
-    link_url: n.link_url,
-    media_type: n.media_type,
-    platform: n.platform,
-    is_active: n.is_active,
-    started_at: n.started_at,
-    ended_at: n.ended_at,
-    spend_lower: n.spend_lower,
-    spend_upper: n.spend_upper,
-    impressions_lower: n.impressions_lower,
-    impressions_upper: n.impressions_upper,
-    raw_data: n.raw_data,
-    days_running: daysRunning,
-    language: n.language ?? null,
-    cta_text: n.cta_text ?? null,
-    collation_count: n.collation_count ?? null,
-    source_provider: n.source_provider ?? null,
-    ...extra,
-  }
-  if (n.thumbnail_url) row.thumbnail_url = n.thumbnail_url
-  if (n.creative_url) row.creative_url = n.creative_url
-  return row
-}
-
-async function upsertNormalizedAds(
-  db: SupabaseDb,
-  ads: NormalizedMetaAd[],
-  extra?: Record<string, unknown>,
-): Promise<string[]> {
-  const rows = ads.map((n) => normalizedToRow(n, extra))
-  const ingestedIds: string[] = []
-  const BATCH_SIZE = 20
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE)
-    const { data: upserted, error: upsertErr } = await db
-      .from('briefing_source_items')
-      .upsert(batch, { onConflict: 'source_type,external_id' })
-      .select('id')
-    if (!upsertErr && upserted) {
-      for (const row of upserted) {
-        if (row.id) ingestedIds.push(row.id)
-      }
-    }
-  }
-  return ingestedIds
-}
-
-// ---------------------------------------------------------------------------
-// Provider dispatch: apify > browser > api fallback chain
-// ---------------------------------------------------------------------------
-
-async function syncViaApify(params: {
-  search_terms?: string
-  page_ids?: string[]
-  country?: string
-  limit?: number
-}): Promise<{ ads: NormalizedMetaAd[]; provider: string; errors: string[] }> {
-  const result = await scrapeViaApify({
-    search_terms: params.search_terms,
-    search_page_ids: params.page_ids,
-    country: params.country ?? 'US',
-    limit: params.limit,
-  })
-  return { ads: result.ads, provider: 'apify', errors: result.errors }
-}
-
-async function syncViaBrowser(params: {
-  search_terms?: string
-  page_ids?: string[]
-  country?: string
-  limit?: number
-}): Promise<{ ads: NormalizedMetaAd[]; provider: string; errors: string[] }> {
-  const result = await scrapeMetaAdsLibrary({
-    search_terms: params.search_terms,
-    search_page_ids: params.page_ids,
-    country: params.country ?? 'US',
-    limit: params.limit,
-  })
-  return { ads: result.ads, provider: 'browser', errors: result.errors }
-}
-
-async function syncViaApi(params: {
-  search_terms?: string
-  page_ids?: string[]
-  countries?: string[]
-  limit?: number
-}): Promise<{ ads: NormalizedMetaAd[]; provider: string; errors: string[] }> {
-  const result = await searchMetaAdLibrary({
-    search_terms: params.search_terms?.trim(),
-    search_page_ids: params.page_ids,
-    ad_reached_countries: params.countries ?? ['US'],
-    limit: Math.min(params.limit ?? 50, 100),
-  })
-  const ads = result.data.map((ad) => normalizeMetaAd(ad))
-  return { ads, provider: 'api', errors: [] }
-}
 
 /**
  * POST /api/briefing-assistant/meta-ads
@@ -841,252 +709,6 @@ async function handleHealthCheck(db: SupabaseDb) {
 }
 
 // ---------------------------------------------------------------------------
-// Thumbnail warmup: extract real media URLs via Puppeteer and persist to DB
-// ---------------------------------------------------------------------------
-
-const WARMUP_CONCURRENCY = 2
-const WARMUP_MAX_PER_SYNC = 10
-const WARMUP_MAX_BULK = 50
-
-async function warmSingleItem(
-  db: SupabaseDb,
-  item: { id: string; link_url: string | null },
-): Promise<boolean> {
-  if (!item.link_url) return false
-  try {
-    const media = await extractMediaFromSnapshot(item.link_url)
-    if (!media?.thumbnailUrl) return false
-
-    let thumbUrl = media.thumbnailUrl
-    const mirrored = await mirrorMediaAsset(db, media.thumbnailUrl, item.id, 'thumb')
-    if (mirrored) thumbUrl = mirrored
-
-    const update: Record<string, unknown> = {
-      thumbnail_url: thumbUrl,
-      media_type: media.type,
-    }
-    if (media.videoUrl) {
-      update.source_video_url = media.videoUrl
-    }
-
-    await db
-      .from('briefing_source_items')
-      .update(update)
-      .eq('id', item.id)
-
-    return true
-  } catch (e) {
-    console.error(`[thumbnail-warmup] Failed for ${item.id}:`, e instanceof Error ? e.message : e)
-    return false
-  }
-}
-
-async function runWarmupQueue(
-  db: SupabaseDb,
-  items: { id: string; link_url: string | null }[],
-): Promise<{ warmed: number; failed: number }> {
-  let warmed = 0
-  let failed = 0
-  const queue = [...items]
-
-  const workers = Array.from({ length: WARMUP_CONCURRENCY }, async () => {
-    while (queue.length > 0) {
-      const item = queue.shift()
-      if (!item) break
-      const ok = await warmSingleItem(db, item)
-      if (ok) warmed++
-      else failed++
-    }
-  })
-
-  await Promise.allSettled(workers)
-  return { warmed, failed }
-}
-
-async function runThumbnailWarmup(db: SupabaseDb, itemIds: string[]) {
-  if (itemIds.length === 0) return
-  const batch = itemIds.slice(0, WARMUP_MAX_PER_SYNC)
-
-  const { data: items } = await db
-    .from('briefing_source_items')
-    .select('id, link_url, thumbnail_url')
-    .in('id', batch)
-
-  const needsWarmup = (items ?? []).filter(
-    (i: { thumbnail_url: string | null; link_url: string | null }) =>
-      !isValidMediaUrl(i.thumbnail_url),
-  )
-  if (needsWarmup.length === 0) return
-
-  const { warmed, failed } = await runWarmupQueue(db, needsWarmup)
-  console.log(`[thumbnail-warmup] sync batch: ${warmed} warmed, ${failed} failed out of ${needsWarmup.length}`)
-}
-
-async function handleWarmThumbnails(db: SupabaseDb) {
-  const { data: allItems, error: qErr } = await db
-    .from('briefing_source_items')
-    .select('id, link_url, thumbnail_url')
-    .eq('source_type', 'meta_ad')
-    .not('link_url', 'is', null)
-    .order('created_at', { ascending: false })
-    .limit(500)
-
-  if (qErr) {
-    return NextResponse.json({ error: qErr.message }, { status: 500 })
-  }
-
-  const toWarm = (allItems ?? []).filter(
-    (i: { link_url: string | null; thumbnail_url: string | null }) =>
-      !isValidMediaUrl(i.thumbnail_url),
-  )
-
-  if (toWarm.length === 0) {
-    return NextResponse.json({ ok: true, message: 'All ads already have valid thumbnails', warmed: 0, failed: 0, remaining: 0 })
-  }
-
-  const batch = toWarm.slice(0, WARMUP_MAX_BULK)
-  const { warmed, failed } = await runWarmupQueue(db, batch)
-
-  return NextResponse.json({
-    ok: true,
-    candidates: batch.length,
-    warmed,
-    failed,
-    remaining: Math.max(0, toWarm.length - batch.length),
-  })
-}
-
-// ---------------------------------------------------------------------------
-// On-demand media mirror: user-triggered download to CDN
-// ---------------------------------------------------------------------------
-
-async function handleMirrorMedia(
-  db: SupabaseDb,
-  body: { item_id?: string; type?: string },
-) {
-  const itemId = body.item_id
-  if (!itemId) {
-    return NextResponse.json({ error: 'item_id required' }, { status: 400 })
-  }
-
-  const { data: item } = await db
-    .from('briefing_source_items')
-    .select('id, link_url, thumbnail_url, creative_url, source_video_url, media_type')
-    .eq('id', itemId)
-    .single()
-
-  if (!item) {
-    return NextResponse.json({ error: 'Ad not found' }, { status: 404 })
-  }
-
-  const wantVideo = body.type === 'video' || item.media_type === 'video'
-  const results: { thumbnail_url?: string; creative_url?: string } = {}
-
-  if (!isValidMediaUrl(item.thumbnail_url) || !item.thumbnail_url?.includes('supabase')) {
-    if (item.link_url) {
-      const media = await extractMediaFromSnapshot(item.link_url)
-      if (media?.thumbnailUrl) {
-        const mirrored = await mirrorMediaAsset(db, media.thumbnailUrl, itemId, 'thumb')
-        if (mirrored) {
-          results.thumbnail_url = mirrored
-          await db.from('briefing_source_items').update({
-            thumbnail_url: mirrored,
-            media_type: media.type,
-            ...(media.videoUrl ? { source_video_url: media.videoUrl } : {}),
-          }).eq('id', itemId)
-        }
-      }
-    }
-  } else {
-    results.thumbnail_url = item.thumbnail_url
-  }
-
-  if (wantVideo) {
-    const videoSource = item.source_video_url || null
-    if (videoSource) {
-      const mirrored = await mirrorMediaAsset(db, videoSource, itemId, 'video')
-      if (mirrored) {
-        results.creative_url = mirrored
-        await db.from('briefing_source_items').update({ creative_url: mirrored }).eq('id', itemId)
-      }
-    } else if (item.link_url) {
-      const media = await extractMediaFromSnapshot(item.link_url)
-      if (media?.videoUrl) {
-        const mirrored = await mirrorMediaAsset(db, media.videoUrl, itemId, 'video')
-        if (mirrored) {
-          results.creative_url = mirrored
-          await db.from('briefing_source_items').update({
-            creative_url: mirrored,
-            source_video_url: media.videoUrl,
-          }).eq('id', itemId)
-        }
-      }
-    }
-  }
-
-  return NextResponse.json({ ok: true, mirrored: results })
-}
-
-// ---------------------------------------------------------------------------
-// Hot-set video promotion: mirror a full video for a specific ad
-// ---------------------------------------------------------------------------
-
-async function handlePromoteVideo(db: SupabaseDb, itemId: string) {
-  const { data: item } = await db
-    .from('briefing_source_items')
-    .select('id, link_url, creative_url, source_video_url, media_type')
-    .eq('id', itemId)
-    .single()
-
-  if (!item) {
-    return NextResponse.json({ error: 'Ad not found' }, { status: 404 })
-  }
-
-  if (isValidMediaUrl(item.creative_url) && item.creative_url?.includes('supabase')) {
-    return NextResponse.json({ ok: true, status: 'already_mirrored', creative_url: item.creative_url })
-  }
-
-  const videoSource = item.source_video_url || null
-  if (!videoSource) {
-    if (!item.link_url) {
-      return NextResponse.json({ ok: false, status: 'no_source', message: 'No snapshot URL to extract from' })
-    }
-    const media = await extractMediaFromSnapshot(item.link_url)
-    if (!media?.videoUrl) {
-      return NextResponse.json({ ok: false, status: 'no_video', message: 'No video found in snapshot' })
-    }
-
-    const mirrored = await mirrorMediaAsset(db, media.videoUrl, itemId, 'video')
-    if (!mirrored) {
-      return NextResponse.json({ ok: false, status: 'mirror_failed' })
-    }
-
-    await db
-      .from('briefing_source_items')
-      .update({
-        creative_url: mirrored,
-        source_video_url: media.videoUrl,
-        media_type: 'video',
-      })
-      .eq('id', itemId)
-
-    return NextResponse.json({ ok: true, status: 'promoted', creative_url: mirrored })
-  }
-
-  const mirrored = await mirrorMediaAsset(db, videoSource, itemId, 'video')
-  if (!mirrored) {
-    return NextResponse.json({ ok: false, status: 'mirror_failed' })
-  }
-
-  await db
-    .from('briefing_source_items')
-    .update({ creative_url: mirrored })
-    .eq('id', itemId)
-
-  return NextResponse.json({ ok: true, status: 'promoted', creative_url: mirrored })
-}
-
-// ---------------------------------------------------------------------------
 // Manual curation: top-pick / editorial override
 // ---------------------------------------------------------------------------
 
@@ -1316,70 +938,3 @@ async function processSemanticItem(
   }).catch(() => {})
 }
 
-// ---------------------------------------------------------------------------
-// Retention cleanup: expire old competitor media to save storage
-// ---------------------------------------------------------------------------
-
-const POSTER_TTL_DAYS = 90
-const VIDEO_TTL_DAYS = 14
-
-async function handleCleanupMedia(db: SupabaseDb) {
-  const posterCutoff = new Date(Date.now() - POSTER_TTL_DAYS * 86400000).toISOString()
-  const videoCutoff = new Date(Date.now() - VIDEO_TTL_DAYS * 86400000).toISOString()
-
-  const { data: stalePosters } = await db
-    .from('briefing_source_items')
-    .select('id, thumbnail_url')
-    .eq('source_type', 'meta_ad')
-    .neq('media_tier', 'first_party')
-    .lt('updated_at', posterCutoff)
-    .not('thumbnail_url', 'is', null)
-    .limit(100)
-
-  let postersCleared = 0
-  for (const item of stalePosters ?? []) {
-    if (item.thumbnail_url?.includes('supabase')) {
-      const path = item.thumbnail_url.split('/briefing-media/').pop()
-      if (path) {
-        await db.storage.from('briefing-media').remove([path])
-      }
-    }
-    await db
-      .from('briefing_source_items')
-      .update({ thumbnail_url: null, creative_url: null })
-      .eq('id', item.id)
-    postersCleared++
-  }
-
-  const { data: staleVideos } = await db
-    .from('briefing_source_items')
-    .select('id, creative_url')
-    .eq('source_type', 'meta_ad')
-    .neq('media_tier', 'first_party')
-    .lt('updated_at', videoCutoff)
-    .not('creative_url', 'is', null)
-    .limit(100)
-
-  let videosCleared = 0
-  for (const item of staleVideos ?? []) {
-    if (item.creative_url?.includes('supabase')) {
-      const path = item.creative_url.split('/briefing-media/').pop()
-      if (path) {
-        await db.storage.from('briefing-media').remove([path])
-      }
-    }
-    await db
-      .from('briefing_source_items')
-      .update({ creative_url: null })
-      .eq('id', item.id)
-    videosCleared++
-  }
-
-  return NextResponse.json({
-    ok: true,
-    posters_cleared: postersCleared,
-    videos_cleared: videosCleared,
-    poster_ttl_days: POSTER_TTL_DAYS,
-    video_ttl_days: VIDEO_TTL_DAYS,
-  })
-}

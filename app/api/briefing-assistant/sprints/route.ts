@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
+import { requireUser } from '@/lib/route-auth'
 import { z } from 'zod'
 
 export const dynamic = 'force-dynamic'
@@ -30,7 +31,10 @@ const CreateSprintSchema = z.object({
  * GET /api/briefing-assistant/sprints
  * Returns list of sprints with batch count, assignment count, and batch details.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
@@ -112,6 +116,9 @@ export async function GET() {
  * Body: { name, batches?: [{ batch_key, batch_label, monday_board_id?, figma_file_key? }] }
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })

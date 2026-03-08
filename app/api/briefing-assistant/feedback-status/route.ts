@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
+import { requireUser } from '@/lib/route-auth'
 import { z } from 'zod'
 
 export const dynamic = 'force-dynamic'
@@ -14,6 +15,9 @@ const BodySchema = z.object({
  * Returns a map of monday_item_id -> { hasExperiment, roles, sentToMonday } for query-time feedback badge.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })

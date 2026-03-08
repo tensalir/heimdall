@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSupabase } from '@/lib/supabase'
+import { requireUser } from '@/lib/route-auth'
 import { TOPICS } from '@/src/services/socialListeningDiscoveryService'
 
 export const dynamic = 'force-dynamic'
@@ -21,13 +21,9 @@ function extractDateFromText(text: string | null): string | null {
  * Returns social-comment-type source items with filtering, sorting, and topic metadata.
  */
 export async function GET(req: NextRequest) {
-  const db = getSupabase()
-  if (!db) {
-    return NextResponse.json({
-      comments: [],
-      topics: TOPICS.map((t) => ({ id: t.id, label: t.label })),
-    })
-  }
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+  const db = auth.supabase
 
   const { searchParams } = new URL(req.url)
   const q = searchParams.get('q')?.trim() || null

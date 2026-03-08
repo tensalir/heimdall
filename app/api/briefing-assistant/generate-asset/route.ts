@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
+import { requireUser } from '@/lib/route-auth'
 import { generateImage, isVesperAvailable } from '@/src/integrations/vesper/client'
 import Anthropic from '@anthropic-ai/sdk'
 
@@ -11,6 +12,9 @@ export const dynamic = 'force-dynamic'
  * Generates a sacrificial asset using Vesper/Nano Banana and persists the result.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   if (!isVesperAvailable()) {
     return NextResponse.json(
       { error: 'Neither VESPER_API_URL nor GEMINI_API_KEY configured' },

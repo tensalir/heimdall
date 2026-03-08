@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSupabase } from '@/lib/supabase'
+import { requireUser } from '@/lib/route-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,10 +8,9 @@ export const dynamic = 'force-dynamic'
  * Returns recent source items across all types for the Create Ads source picker.
  */
 export async function GET(req: NextRequest) {
-  const db = getSupabase()
-  if (!db) {
-    return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
-  }
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+  const db = auth.supabase
 
   const { searchParams } = new URL(req.url)
   const limit = Math.min(Number(searchParams.get('limit') || 20), 100)

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 
 const SHEETS_COOKIE_NAME = 'heimdall-sheets-token'
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 30 // 30 days
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 30
 
 export async function POST(request: Request) {
   const sheetsPassword = process.env.SHEETS_PASSWORD
@@ -10,6 +11,15 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: 'Sheets authentication is not configured' },
       { status: 500 }
+    )
+  }
+
+  const ip = getClientIp(request)
+  const { allowed, retryAfterMs } = checkRateLimit(`sheets-login:${ip}`, 5, 15 * 60 * 1000)
+  if (!allowed) {
+    return NextResponse.json(
+      { error: 'Too many login attempts. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(retryAfterMs / 1000)) } },
     )
   }
 

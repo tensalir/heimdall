@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getSupabase } from '@/lib/supabase'
+import { requireUser } from '@/lib/route-auth'
 import { VERTICALS } from '@/src/services/trendDiscoveryService'
 
 export const dynamic = 'force-dynamic'
@@ -9,10 +9,9 @@ export const dynamic = 'force-dynamic'
  * Returns trend-type source items with optional vertical filtering.
  */
 export async function GET(req: NextRequest) {
-  const db = getSupabase()
-  if (!db) {
-    return NextResponse.json({ trends: [], verticals: VERTICALS.map((v) => ({ id: v.id, label: v.label })) })
-  }
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+  const db = auth.supabase
 
   const { searchParams } = new URL(req.url)
   const q = searchParams.get('q')?.trim() || null

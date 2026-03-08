@@ -208,7 +208,7 @@ export function normalizeMetaAd(
     link_url: ad.ad_snapshot_url ?? null,
     thumbnail_url: null,
     creative_url: null,
-    media_type: 'image',
+    media_type: 'image' as const,
     media_tier: tier,
     platform: platforms || 'meta',
     is_active: !ad.ad_delivery_stop_time,

@@ -204,9 +204,14 @@ export async function scrapeMetaAdsLibrary(
           const pageLinks = Array.from(card.querySelectorAll('a[href*="facebook.com/"]'))
           for (const link of pageLinks) {
             const href = (link as HTMLAnchorElement).href || ''
-            const pMatch = href.match(/facebook\.com\/(\d{5,})/)
-            if (pMatch) {
-              pageId = pMatch[1]
+            const numericMatch = href.match(/facebook\.com\/(\d{5,})/)
+            if (numericMatch) {
+              pageId = numericMatch[1]
+              break
+            }
+            const vanityMatch = href.match(/facebook\.com\/([a-zA-Z0-9._-]{2,})(?:\/|$|\?)/)
+            if (vanityMatch && !['ads', 'pages', 'groups', 'events', 'marketplace', 'watch', 'gaming', 'stories'].includes(vanityMatch[1].toLowerCase())) {
+              pageId = vanityMatch[1]
               break
             }
           }

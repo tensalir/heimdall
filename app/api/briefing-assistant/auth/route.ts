@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 
 const BRIEFING_COOKIE_NAME = 'heimdall-briefing-token'
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30
@@ -10,6 +11,15 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: 'Local password auth is not configured. Use Supabase magic link instead.' },
       { status: 503 },
+    )
+  }
+
+  const ip = getClientIp(request)
+  const { allowed, retryAfterMs } = checkRateLimit(`briefing-login:${ip}`, 5, 15 * 60 * 1000)
+  if (!allowed) {
+    return NextResponse.json(
+      { error: 'Too many login attempts. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(retryAfterMs / 1000)) } },
     )
   }
 
