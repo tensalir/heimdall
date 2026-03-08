@@ -50,6 +50,13 @@ function formatDate(dateStr: string | null): string {
   })
 }
 
+function cleanTitle(title: string): string {
+  return title
+    .replace(/\s*:\s*r\/\w+\s*-\s*Reddit\s*$/i, '')
+    .replace(/\s*\|\s*r\/\w+\s*$/i, '')
+    .trim()
+}
+
 // ── Hero Image ────────────────────────────────────────────────────
 
 function HeroImage({ src, alt, subreddit }: { src: string | null; alt: string; subreddit: string | null }) {
@@ -140,7 +147,7 @@ export function SocialPostDetailClient({ postId }: { postId: string }) {
   return (
     <DetailShell
       backHref="/briefing-assistant/social-comments"
-      title={post.title}
+      title={cleanTitle(post.title)}
       subtitle={
         <>
           {post.subreddit && (
@@ -170,7 +177,7 @@ export function SocialPostDetailClient({ postId }: { postId: string }) {
           {/* Hero image */}
           <div className="rounded-lg border border-border bg-muted/20 overflow-hidden max-w-2xl mx-auto">
             <div className="relative aspect-[16/9]">
-              <HeroImage src={post.thumbnail} alt={post.title} subreddit={post.subreddit} />
+              <HeroImage src={post.thumbnail} alt={cleanTitle(post.title)} subreddit={post.subreddit} />
             </div>
           </div>
 
@@ -196,8 +203,16 @@ export function SocialPostDetailClient({ postId }: { postId: string }) {
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/60 mb-2">
                 Full Post Content
               </h3>
-              <div className="text-sm text-foreground leading-relaxed whitespace-pre-line">
-                {post.body_text || post.preview}
+              <div className="space-y-3">
+                {(post.body_text || post.preview).split(/\n{2,}/).map((paragraph, i) => {
+                  const trimmed = paragraph.trim()
+                  if (!trimmed) return null
+                  return (
+                    <p key={i} className="text-sm text-foreground leading-relaxed">
+                      {trimmed}
+                    </p>
+                  )
+                })}
               </div>
             </div>
           )}
@@ -218,7 +233,7 @@ export function SocialPostDetailClient({ postId }: { postId: string }) {
       right={
         <>
           {/* Details (merged metadata) */}
-          <RailSection icon={<Info className="h-3.5 w-3.5" />} title="Details">
+          <RailSection icon={<Info className="h-3.5 w-3.5 text-primary" />} title="Details">
             <dl className="space-y-2 text-xs">
               {post.subreddit && (
                 <div className="flex justify-between">
@@ -273,7 +288,7 @@ export function SocialPostDetailClient({ postId }: { postId: string }) {
           </RailSection>
 
           {/* AI Analysis */}
-          <RailSection icon={<Sparkles className="h-3.5 w-3.5 text-primary/60" />} title="AI Analysis">
+          <RailSection icon={<Sparkles className="h-3.5 w-3.5 text-primary" />} title="AI Analysis">
             {aiSummary ? (
               <p className="text-sm text-foreground/80 leading-relaxed">{aiSummary}</p>
             ) : (
@@ -286,7 +301,7 @@ export function SocialPostDetailClient({ postId }: { postId: string }) {
 
           {/* Creative Angles */}
           {post.creative_angles.length > 0 && (
-            <RailSection icon={<Lightbulb className="h-3.5 w-3.5" />} title="Creative Angles">
+            <RailSection icon={<Lightbulb className="h-3.5 w-3.5 text-primary" />} title="Creative Angles">
               <div className="space-y-2.5">
                 {post.creative_angles.map((angle, i) => (
                   <p key={i} className="text-xs text-foreground/80 leading-relaxed pl-3 border-l-2 border-primary/20">
@@ -299,7 +314,7 @@ export function SocialPostDetailClient({ postId }: { postId: string }) {
 
           {/* Language Hooks */}
           {post.language_hooks.length > 0 && (
-            <RailSection icon={<Quote className="h-3.5 w-3.5" />} title="Language Hooks">
+            <RailSection icon={<Quote className="h-3.5 w-3.5 text-primary" />} title="Language Hooks">
               <div className="space-y-2">
                 {post.language_hooks.map((hook, i) => (
                   <div key={i} className="rounded-md border border-violet-500/15 bg-violet-500/[0.04] px-3 py-2.5">

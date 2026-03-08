@@ -16,6 +16,33 @@ function extractDateFromText(text: string | null): string | null {
 }
 
 /**
+ * Strip the scraped metadata preamble from Reddit body text.
+ * Raw text often starts with: title, Author:, Time Posted:, Score:, Link:
+ * followed by the actual content. Remove those lines so only the post body remains.
+ */
+function stripBodyPreamble(body: string, title: string): string {
+  const lines = body.split('\n')
+  let startIdx = 0
+  const metaPatterns = [
+    /^Author:\s/i,
+    /^Time Posted/i,
+    /^Score:\s/i,
+    /^Link:\s/i,
+  ]
+
+  for (let i = 0; i < Math.min(lines.length, 15); i++) {
+    const trimmed = lines[i].trim()
+    if (!trimmed) { startIdx = i + 1; continue }
+    const isTitle = trimmed === title.trim() || title.trim().startsWith(trimmed)
+    const isMeta = metaPatterns.some((p) => p.test(trimmed))
+    if (isTitle || isMeta) { startIdx = i + 1; continue }
+    break
+  }
+
+  return lines.slice(startIdx).join('\n').replace(/^\n+/, '').trim()
+}
+
+/**
  * GET /api/briefing-assistant/social-comments/:id
  * Returns full post detail immediately (no blocking AI call).
  * AI summary is fetched separately via /summary sub-route.
@@ -44,10 +71,13 @@ export async function GET(
 
   const raw = (row.raw_data ?? {}) as Record<string, unknown>
 
+  const rawBody = (row.body_text ?? row.preview ?? '') as string
+  const cleanBody = stripBodyPreamble(rawBody, row.title as string)
+
   return NextResponse.json({
     id: row.id,
     title: row.title,
-    body_text: row.body_text ?? row.preview ?? '',
+    body_text: cleanBody || row.preview || '',
     preview: row.preview ?? '',
     thumbnail: row.thumbnail_url,
     url: row.link_url,

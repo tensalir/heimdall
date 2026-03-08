@@ -354,7 +354,7 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
       right={
         <>
           {/* Details */}
-          <RailSection icon={<Info className="h-3.5 w-3.5" />} title="Details">
+          <RailSection icon={<Info className="h-3.5 w-3.5 text-primary" />} title="Details">
             <dl className="space-y-2.5 text-xs">
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">Ad ID</dt>
@@ -404,7 +404,7 @@ export function MetaAdDetailClient({ adId }: { adId: string }) {
           </RailSection>
 
           {/* AI Analysis */}
-          <RailSection icon={<Sparkles className="h-3.5 w-3.5 text-primary/60" />} title="AI Analysis">
+          <RailSection icon={<Sparkles className="h-3.5 w-3.5 text-primary" />} title="AI Analysis">
             {ad.analysis_summary ? (
               <p className="text-sm text-foreground/80 leading-relaxed">
                 {ad.analysis_summary}

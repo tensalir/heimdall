@@ -185,7 +185,7 @@ export function TrendDetailClient({ trendId }: { trendId: string }) {
       right={
         <>
           {/* Details (merged metadata) */}
-          <RailSection icon={<Info className="h-3.5 w-3.5" />} title="Details">
+          <RailSection icon={<Info className="h-3.5 w-3.5 text-primary" />} title="Details">
             <dl className="space-y-2 text-xs">
               <div className="flex justify-between">
                 <dt className="text-muted-foreground">Source</dt>
@@ -234,7 +234,7 @@ export function TrendDetailClient({ trendId }: { trendId: string }) {
           </RailSection>
 
           {/* AI Analysis */}
-          <RailSection icon={<Sparkles className="h-3.5 w-3.5 text-primary/60" />} title="AI Analysis">
+          <RailSection icon={<Sparkles className="h-3.5 w-3.5 text-primary" />} title="AI Analysis">
             {aiSummary ? (
               <p className="text-sm text-foreground/80 leading-relaxed">{aiSummary}</p>
             ) : (
@@ -247,7 +247,7 @@ export function TrendDetailClient({ trendId }: { trendId: string }) {
 
           {/* Creative Angles */}
           {trend.creative_angles.length > 0 && (
-            <RailSection icon={<Lightbulb className="h-3.5 w-3.5" />} title="Creative Angles">
+            <RailSection icon={<Lightbulb className="h-3.5 w-3.5 text-primary" />} title="Creative Angles">
               <div className="space-y-2.5">
                 {trend.creative_angles.map((angle, i) => (
                   <p key={i} className="text-xs text-foreground/80 leading-relaxed pl-3 border-l-2 border-primary/20">
@@ -260,7 +260,7 @@ export function TrendDetailClient({ trendId }: { trendId: string }) {
 
           {/* Language Hooks (from highlights) */}
           {trend.highlights.length > 0 && (
-            <RailSection icon={<Quote className="h-3.5 w-3.5" />} title="Language Hooks">
+            <RailSection icon={<Quote className="h-3.5 w-3.5 text-primary" />} title="Language Hooks">
               <div className="space-y-2">
                 {trend.highlights.map((hook, i) => (
                   <div key={i} className="rounded-md border border-violet-500/15 bg-violet-500/[0.04] px-3 py-2.5">

@@ -52,7 +52,7 @@ export async function GET(
       messages: [
         {
           role: 'user',
-          content: `Summarize this Reddit post from r/${subreddit} in one short paragraph (3-4 sentences) for a creative strategist at Loop (earplugs, earmuffs, and hearing protection brand). Focus on the consumer insight, the relatable problem or desire, and any potential ad angle. Be specific, not generic. Write in plain text only — no markdown, no bold, no bullet points, no asterisks, no formatting of any kind.\n\nTitle: ${row.title}\n\nContent:\n${content}`,
+          content: `Summarize this Reddit post from r/${subreddit} in exactly one sentence (max 30 words) for a creative strategist at Loop Earplugs. State the core consumer insight or ad angle. Be specific, not generic. Plain text only — no markdown, no formatting.\n\nTitle: ${row.title}\n\nContent:\n${content}`,
         },
       ],
     })
