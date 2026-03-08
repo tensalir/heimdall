@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
 import {
   FileText,
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { useApi } from '@/lib/use-api'
 
 type TabId = 'overview' | 'learnings'
 
@@ -36,24 +37,10 @@ interface SprintSummary {
 }
 
 function OverviewTab() {
-  const [sprints, setSprints] = useState<SprintSummary[]>([])
-  const [loading, setLoading] = useState(true)
-
-  const fetchSprints = useCallback(async () => {
-    try {
-      const res = await fetch('/api/briefing-assistant/sprints')
-      const data = await res.json()
-      setSprints(data.sprints ?? [])
-    } catch {
-      setSprints([])
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    fetchSprints()
-  }, [fetchSprints])
+  const { data, loading } = useApi<{ sprints: SprintSummary[] }>(
+    '/api/briefing-assistant/sprints',
+  )
+  const sprints = data?.sprints ?? []
 
   if (loading) {
     return (
@@ -147,25 +134,12 @@ const SECTION_LABELS: Record<string, string> = {
 }
 
 function LearningsTab() {
-  const [products, setProducts] = useState<ProductAgg[]>([])
-  const [totalBriefs, setTotalBriefs] = useState(0)
-  const [loading, setLoading] = useState(true)
+  const { data, loading } = useApi<{ products: ProductAgg[]; totalBriefs: number }>(
+    '/api/briefing-assistant/learnings',
+  )
+  const products = data?.products ?? []
+  const totalBriefs = data?.totalBriefs ?? 0
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null)
-
-  useEffect(() => {
-    ;(async () => {
-      try {
-        const res = await fetch('/api/briefing-assistant/learnings')
-        const data = await res.json()
-        setProducts(data.products ?? [])
-        setTotalBriefs(data.totalBriefs ?? 0)
-      } catch {
-        setProducts([])
-      } finally {
-        setLoading(false)
-      }
-    })()
-  }, [])
 
   if (loading) {
     return (

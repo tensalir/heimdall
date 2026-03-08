@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Loader2,
@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useApi } from '@/lib/use-api'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -412,37 +413,24 @@ function DigestCard({ topicId, topicLabel }: { topicId: string; topicLabel: stri
 
 export default function SocialListeningPage() {
   const router = useRouter()
-  const [posts, setPosts] = useState<SocialPost[]>([])
-  const [topics, setTopics] = useState<TopicMeta[]>([])
-  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [activeTopic, setActiveTopic] = useState<string>('all')
   const [sort, setSort] = useState<'recent' | 'relevance'>('recent')
   const [discovering, setDiscovering] = useState(false)
   const [discoverResult, setDiscoverResult] = useState<string | null>(null)
 
-  const fetchPosts = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params = new URLSearchParams()
-      if (search.trim()) params.set('q', search.trim())
-      if (activeTopic !== 'all') params.set('topic', activeTopic)
-      params.set('sort', sort)
-      params.set('sinceWeeks', '52')
-      const res = await fetch(`/api/briefing-assistant/social-comments?${params}`)
-      const data = await res.json()
-      setPosts(data.comments ?? [])
-      if (data.topics) setTopics(data.topics)
-    } catch {
-      setPosts([])
-    } finally {
-      setLoading(false)
-    }
+  const postsUrl = useMemo(() => {
+    const params = new URLSearchParams()
+    if (search.trim()) params.set('q', search.trim())
+    if (activeTopic !== 'all') params.set('topic', activeTopic)
+    params.set('sort', sort)
+    params.set('sinceWeeks', '52')
+    return `/api/briefing-assistant/social-comments?${params}`
   }, [search, activeTopic, sort])
 
-  useEffect(() => {
-    fetchPosts()
-  }, [fetchPosts])
+  const { data, loading, refetch } = useApi<{ comments: SocialPost[]; topics: TopicMeta[] }>(postsUrl)
+  const posts = data?.comments ?? []
+  const topics = data?.topics ?? []
 
   const handleDiscover = useCallback(async () => {
     setDiscovering(true)
@@ -463,7 +451,7 @@ export default function SocialListeningPage() {
       setDiscoverResult(
         `Found ${data.discovered} Reddit posts across ${label}. ${data.scored ?? 0} passed quality gate.`,
       )
-      await fetchPosts()
+      await refetch()
     } catch {
       setDiscoverResult('Error: Discovery request failed')
     } finally {

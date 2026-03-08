@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc && next build",
     "dev": "next dev -p 3846",
-    "dev:backend": "tsx watch src/cli.ts",
+    "dev:legacy-backend": "echo 'DEPRECATED: use npm run dev instead. The standalone server has been removed.'",
     "start": "next start -p 3846",
     "queue": "tsx src/scripts/test-e2e.ts",
     "seed:forecast": "tsx scripts/seed-forecast-v3.ts",

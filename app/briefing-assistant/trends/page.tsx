@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   TrendingUp,
@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useApi } from '@/lib/use-api'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -353,34 +354,21 @@ function DigestCard({
 
 export default function TrendsPage() {
   const router = useRouter()
-  const [trends, setTrends] = useState<TrendItem[]>([])
-  const [verticals, setVerticals] = useState<VerticalMeta[]>([])
-  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [activeVertical, setActiveVertical] = useState<string>('all')
   const [discovering, setDiscovering] = useState(false)
   const [discoverResult, setDiscoverResult] = useState<string | null>(null)
 
-  const fetchTrends = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params = new URLSearchParams()
-      if (search.trim()) params.set('q', search.trim())
-      if (activeVertical !== 'all') params.set('vertical', activeVertical)
-      const res = await fetch(`/api/briefing-assistant/trends?${params}`)
-      const data = await res.json()
-      setTrends(data.trends ?? [])
-      if (data.verticals) setVerticals(data.verticals)
-    } catch {
-      setTrends([])
-    } finally {
-      setLoading(false)
-    }
+  const trendsUrl = useMemo(() => {
+    const params = new URLSearchParams()
+    if (search.trim()) params.set('q', search.trim())
+    if (activeVertical !== 'all') params.set('vertical', activeVertical)
+    return `/api/briefing-assistant/trends?${params}`
   }, [search, activeVertical])
 
-  useEffect(() => {
-    fetchTrends()
-  }, [fetchTrends])
+  const { data, loading, refetch } = useApi<{ trends: TrendItem[]; verticals: VerticalMeta[] }>(trendsUrl)
+  const trends = data?.trends ?? []
+  const verticals = data?.verticals ?? []
 
   const handleDiscover = useCallback(async () => {
     setDiscovering(true)
@@ -401,13 +389,13 @@ export default function TrendsPage() {
       setDiscoverResult(
         `Discovered ${data.discovered} articles across ${label}. ${data.scored ?? 0} scored.`,
       )
-      await fetchTrends()
+      await refetch()
     } catch {
       setDiscoverResult('Error: Discovery request failed')
     } finally {
       setDiscovering(false)
     }
-  }, [activeVertical, fetchTrends])
+  }, [activeVertical, refetch])
 
   const activeLabel = activeVertical === 'all'
     ? 'All'
