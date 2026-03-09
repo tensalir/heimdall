@@ -20,6 +20,7 @@ import {
   Focus,
   Tag,
   MessageCircle,
+  AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -449,7 +450,7 @@ function SocialListeningInner() {
     return `/api/briefing-assistant/social-comments?${params}`
   }, [search, activeTopic, sort])
 
-  const { data, loading, refetch } = useApi<{ comments: SocialPost[]; topics: TopicMeta[] }>(postsUrl, { keepPreviousData: true })
+  const { data, loading, error: loadError, refetch } = useApi<{ comments: SocialPost[]; topics: TopicMeta[] }>(postsUrl, { keepPreviousData: true })
   const posts = data?.comments ?? []
   const topics = data?.topics ?? []
 
@@ -602,7 +603,15 @@ function SocialListeningInner() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-6">
-        {loading && posts.length === 0 ? (
+        {loadError && posts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3">
+            <AlertTriangle className="h-10 w-10 text-red-400/60" />
+            <p className="text-sm text-red-600">{loadError}</p>
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              Retry
+            </Button>
+          </div>
+        ) : loading && posts.length === 0 ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>

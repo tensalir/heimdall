@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/route-auth'
+import { getSupabase } from '@/lib/supabase'
 import { VERTICALS } from '@/src/services/trendDiscoveryService'
 
 export const dynamic = 'force-dynamic'
@@ -11,7 +12,11 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const auth = await requireUser(req)
   if (auth.error) return auth.error
-  const db = auth.supabase
+
+  const db = getSupabase()
+  if (!db) {
+    return NextResponse.json({ error: 'Database not configured' }, { status: 503 })
+  }
 
   const { searchParams } = new URL(req.url)
   const q = searchParams.get('q')?.trim() || null
@@ -35,7 +40,8 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await query
   if (error) {
-    return NextResponse.json({ trends: [], verticals: VERTICALS.map((v) => ({ id: v.id, label: v.label })) })
+    console.error('[Trends] List query failed:', error.message)
+    return NextResponse.json({ error: 'Failed to load trends' }, { status: 500 })
   }
 
   const trends = (data ?? []).map((row: Record<string, unknown>) => {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/route-auth'
+import { getSupabase } from '@/lib/supabase'
 import { TOPICS } from '@/src/services/socialListeningDiscoveryService'
 
 export const dynamic = 'force-dynamic'
@@ -23,7 +24,11 @@ function extractDateFromText(text: string | null): string | null {
 export async function GET(req: NextRequest) {
   const auth = await requireUser(req)
   if (auth.error) return auth.error
-  const db = auth.supabase
+
+  const db = getSupabase()
+  if (!db) {
+    return NextResponse.json({ error: 'Database not configured' }, { status: 503 })
+  }
 
   const { searchParams } = new URL(req.url)
   const q = searchParams.get('q')?.trim() || null
@@ -53,10 +58,8 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await query
   if (error) {
-    return NextResponse.json({
-      comments: [],
-      topics: TOPICS.map((t) => ({ id: t.id, label: t.label })),
-    })
+    console.error('[SocialComments] List query failed:', error.message)
+    return NextResponse.json({ error: 'Failed to load social comments' }, { status: 500 })
   }
 
   let comments = (data ?? []).map((row: Record<string, unknown>) => {

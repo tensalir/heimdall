@@ -263,27 +263,30 @@ export async function extractMediaFromSnapshot(
         return null
       }
 
-      const media = await page.evaluate(() => {
-        const isCdnUrl = (src: string) =>
-          /scontent|fbcdn|\.fbsbx\.com/i.test(src) && src.startsWith('http')
+      // Use a raw page expression to avoid transpiled helper leakage
+      // (e.g. "__name is not defined") when this function is executed
+      // from different runtimes.
+      const media = await page.evaluate(`(() => {
+        const isCdnUrl = (src) =>
+          /scontent|fbcdn|\\.fbsbx\\.com/i.test(src) && src.startsWith('http')
 
         const videos = Array.from(document.querySelectorAll('video'))
         for (const video of videos) {
           const poster = video.getAttribute('poster') || ''
           const src =
             video.getAttribute('src') ||
-            video.querySelector('source')?.getAttribute('src') ||
+            (video.querySelector('source') && video.querySelector('source').getAttribute('src')) ||
             ''
           if (src && isCdnUrl(src)) {
             return {
-              type: 'video' as const,
+              type: 'video',
               thumbnailUrl: isCdnUrl(poster) ? poster : '',
               videoUrl: src,
             }
           }
           if (poster && isCdnUrl(poster)) {
             return {
-              type: 'video' as const,
+              type: 'video',
               thumbnailUrl: poster,
               videoUrl: src || null,
             }
@@ -297,23 +300,27 @@ export async function extractMediaFromSnapshot(
             return rect.width > 80 && rect.height > 80 && isCdnUrl(src)
           })
           .sort((a, b) => {
-            const aArea = a.naturalWidth * a.naturalHeight || a.getBoundingClientRect().width * a.getBoundingClientRect().height
-            const bArea = b.naturalWidth * b.naturalHeight || b.getBoundingClientRect().width * b.getBoundingClientRect().height
+            const aArea =
+              a.naturalWidth * a.naturalHeight ||
+              a.getBoundingClientRect().width * a.getBoundingClientRect().height
+            const bArea =
+              b.naturalWidth * b.naturalHeight ||
+              b.getBoundingClientRect().width * b.getBoundingClientRect().height
             return bArea - aArea
           })
 
         if (imgs.length > 0) {
           return {
-            type: 'image' as const,
+            type: 'image',
             thumbnailUrl: imgs[0].src,
             videoUrl: null,
           }
         }
 
         return null
-      })
+      })()`)
 
-      if (media && media.thumbnailUrl) {
+      if (media && (media as Record<string, unknown>).thumbnailUrl) {
         return media as ExtractedMedia
       }
 
@@ -348,7 +355,7 @@ async function screenshotSnapshot(
 
       if (await isLoginWall(page)) {
         console.warn('[preview] Login wall detected in screenshot, returning placeholder')
-        return { buffer: buildMetaPreviewPlaceholderSvg('Login required'), mimeType: 'image/svg+xml' }
+        return { buffer: buildMetaPreviewPlaceholderSvg('Preview unavailable'), mimeType: 'image/svg+xml' }
       }
 
       const clip = await page.evaluate(() => {
