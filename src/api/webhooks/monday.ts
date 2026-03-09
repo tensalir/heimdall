@@ -215,7 +215,6 @@ export async function handleMondayWebhook(body: MondayWebhookPayload): Promise<{
     }
   }
 
-  // Extract doc images alongside doc content
   const briefRaw = getCol(col, 'brief', 'briefing', 'doc')
   const docId = getDocIdFromColumnValue(briefRaw ?? null)
   let docImages: Awaited<ReturnType<typeof getDocImages>> = []
@@ -225,6 +224,11 @@ export async function handleMondayWebhook(body: MondayWebhookPayload): Promise<{
     } catch (err) {
       logger.error('webhook', 'Failed to fetch doc images', err as Error, { docId, mondayItemId: itemId })
     }
+  }
+  if (!docId) {
+    logger.warn('webhook', 'No briefing doc column found — page may be empty', { mondayItemId: itemId, itemName: item.name, briefRaw: briefRaw ?? '' })
+  } else if (docImages.length === 0) {
+    logger.info('webhook', 'Briefing doc has no images', { docId, mondayItemId: itemId, itemName: item.name })
   }
 
   const briefing = mondayItemToBriefing(item, { docImages })
@@ -249,11 +253,17 @@ export async function handleMondayWebhook(body: MondayWebhookPayload): Promise<{
       const tree = await getTemplateNodeTree(target.figmaFileKey)
       let mondayDocContent: string | null = null
       if (docId) mondayDocContent = await getDocContent(docId)
+      if (docId && !mondayDocContent) {
+        logger.warn('mapping', 'Monday doc returned empty content — docs:read scope may be missing', { docId, mondayItemId: itemId, itemName: item.name })
+      }
       const mapping = await computeNodeMapping(item, tree, {
         mondayDocContent: mondayDocContent ?? undefined,
       })
       nodeMapping = mapping.textMappings
       frameRenames = mapping.frameRenames
+      if (mapping.textMappings.length === 0) {
+        logger.warn('mapping', 'Mapping agent produced 0 text mappings — page will be empty', { mondayItemId: itemId, itemName: item.name, docId: docId ?? '', hasDocContent: !!mondayDocContent })
+      }
       mappingTimer.done({
         mondayItemId: itemId,
         textMappingsCount: mapping.textMappings.length,
@@ -366,7 +376,6 @@ export async function queueMondayItem(
     return { outcome: 'failed', message: 'Item not found', error: 'Item not found' }
   }
 
-  // Extract doc images alongside doc content
   const qCol = columnMap(item)
   const qBriefRaw = getCol(qCol, 'brief', 'briefing', 'doc')
   const qDocId = getDocIdFromColumnValue(qBriefRaw ?? null)
@@ -377,6 +386,11 @@ export async function queueMondayItem(
     } catch (err) {
       logger.error('webhook', 'Manual queue: failed to fetch doc images', err as Error, { docId: qDocId, itemId })
     }
+  }
+  if (!qDocId) {
+    logger.warn('webhook', 'Manual queue: no briefing doc column — page may be empty', { itemId, itemName: item.name, briefRaw: qBriefRaw ?? '' })
+  } else if (qDocImages.length === 0) {
+    logger.info('webhook', 'Manual queue: briefing doc has no images', { docId: qDocId, itemId, itemName: item.name })
   }
 
   const briefing = mondayItemToBriefing(item, { docImages: qDocImages })
@@ -402,23 +416,35 @@ export async function queueMondayItem(
     try {
       const tree = await getTemplateNodeTree(mappingFileKey)
       const mondayDocContent = qDocId ? await getDocContent(qDocId) : null
+      if (qDocId && !mondayDocContent) {
+        logger.warn('mapping', 'Manual queue: Monday doc returned empty — docs:read scope may be missing', { docId: qDocId, itemId, itemName: item.name })
+      }
       const mapping = await computeNodeMapping(item, tree, {
         mondayDocContent: mondayDocContent ?? undefined,
         disableAi: options?.disableAiMapping === true,
       })
       nodeMapping = mapping.textMappings
       frameRenames = mapping.frameRenames
+      if (mapping.textMappings.length === 0) {
+        logger.warn('mapping', 'Manual queue: 0 text mappings — page will be empty', { itemId, itemName: item.name, docId: qDocId ?? '', hasDocContent: !!mondayDocContent })
+      }
     } catch (err) {
       logger.error('mapping', 'Manual queue: mapping agent failed', err as Error, { itemId })
     }
   } else {
     const mondayDocContent = qDocId ? await getDocContent(qDocId) : null
+    if (qDocId && !mondayDocContent) {
+      logger.warn('mapping', 'Manual queue (no template): Monday doc returned empty', { docId: qDocId, itemId, itemName: item.name })
+    }
     const mapping = await computeNodeMapping(item, [], {
       mondayDocContent: mondayDocContent ?? undefined,
       disableAi: true,
     })
     nodeMapping = mapping.textMappings
     frameRenames = mapping.frameRenames
+    if (mapping.textMappings.length === 0) {
+      logger.warn('mapping', 'Manual queue (no template): 0 text mappings — page will be empty', { itemId, itemName: item.name })
+    }
   }
 
   const result = await createOrQueueFigmaPage(briefing, {

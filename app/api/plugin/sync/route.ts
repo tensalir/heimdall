@@ -65,9 +65,6 @@ export async function POST(request: NextRequest) {
       const name = String(it.name ?? '').trim()
       const batch = String(it.batch ?? '').trim()
 
-      // Only hard-skip as "already imported" when a concrete fileKey exists.
-      // Name-based refs are used for audit/state continuity, but are too weak
-      // to block queueing because pages may be deleted manually in Figma.
       if (fileKey) {
         const alreadyImported = await hasSuccessfulImport(itemId, fileKey)
         if (alreadyImported) {
@@ -87,7 +84,7 @@ export async function POST(request: NextRequest) {
 
       const result = await queueMondayItem(BOARD_ID, itemId, {
         idempotencySuffix: `plugin-${Date.now()}-${itemId}`,
-        disableAiMapping: true,
+        disableAiMapping: false,
         figmaFileKeyOverride: syncFileRef || undefined,
       })
 

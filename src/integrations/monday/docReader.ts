@@ -265,7 +265,8 @@ export async function getDocContent(docId: string): Promise<string | null> {
       parts.push(formatted)
     }
     return parts.length ? parts.join('\n\n') : null
-  } catch {
+  } catch (err) {
+    console.error('[docReader] getDocContent failed for docId', docId, err instanceof Error ? err.message : err)
     return null
   }
 }
@@ -396,7 +397,8 @@ export async function getDocImages(docId: string): Promise<MondayImageAttachment
       }
     }
     return images
-  } catch {
+  } catch (err) {
+    console.error('[docReader] getDocImages failed for docId', docId, err instanceof Error ? err.message : err)
     return []
   }
 }
