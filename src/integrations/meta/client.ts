@@ -122,12 +122,19 @@ export async function searchMetaAdLibrary(
     }
     if (!res.ok) {
       const body = await res.text()
+      let oauthMessage: string | null = null
+      try {
+        const parsed = JSON.parse(body) as { error?: { message?: string } }
+        oauthMessage = parsed.error?.message?.trim() || null
+      } catch {
+        oauthMessage = null
+      }
       const isTokenError =
         res.status === 190 ||
         /expired|invalid.*token|OAuthException/i.test(body)
       if (isTokenError) {
         throw new MetaTokenError(
-          `Meta Ad Library token expired or invalid (HTTP ${res.status}). ` +
+          `${oauthMessage || 'Meta Ad Library token expired or invalid'} (HTTP ${res.status}). ` +
           'Rotate META_AD_LIBRARY_ACCESS_TOKEN and redeploy — see docs/briefing-assistant-rollout.md.',
         )
       }

@@ -38,9 +38,9 @@ async function main() {
   const { createClient } = await import('@supabase/supabase-js')
 
   const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseKey = process.env.SUPABASE_SERVICE_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY
+  const supabaseKey = process.env.SUPABASE_SERVICE_KEY
   if (!supabaseUrl || !supabaseKey) {
-    console.error('SUPABASE_URL and SUPABASE_SERVICE_KEY required')
+    console.error('SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_SERVICE_KEY are required.')
     process.exit(1)
   }
   if (!process.env.VOYAGE_API_KEY) {

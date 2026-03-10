@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import { getJobByIdempotencyKey, updateJobState } from '@/lib/kv'
 import { logger } from '@/lib/logger'
-import { upsertSync, appendImportEvent } from '@/src/services/briefingSyncStore'
+import { upsertSync, appendImportEvent, getSyncForItem } from '@/src/services/briefingSyncStore'
 import { updateItemPipelineStatus } from '@/src/services/opsBoardStore'
+import { captureVersion } from '@/src/services/briefingVersionStore'
 
 export async function POST(request: Request) {
   try {
@@ -53,6 +54,33 @@ export async function POST(request: Request) {
         figma_page_id: figmaPageId || undefined,
         figma_page_url: figmaFileUrl || undefined,
         synced_at: new Date().toISOString(),
+      })
+    }
+
+    if (job.mondayItemId && job.figmaFileKey) {
+      const syncRecord = await getSyncForItem(job.mondayItemId, job.figmaFileKey)
+      await captureVersion({
+        mondayItemId: job.mondayItemId,
+        mondayBoardId: job.mondayBoardId,
+        batchCanonical: job.batchCanonical,
+        figmaFileKey: job.figmaFileKey,
+        figmaPageId: figmaPageId || undefined,
+        figmaPageName: job.experimentPageName ?? undefined,
+        capturePhase: 'post_write',
+        operationKind: pluginOutcome === 'updated' ? 'update' : 'create',
+        source: 'plugin_sync',
+        idempotencyKey: job.idempotencyKey,
+        syncId: syncRecord?.id ?? undefined,
+        inputSnapshot: {
+          nodeMapping: job.nodeMapping ?? [],
+          frameRenames: job.frameRenames ?? [],
+          imageCount: job.images?.length ?? 0,
+        },
+        writeMetadata: {
+          jobId: job.id,
+          pluginOutcome,
+          figmaFileUrl,
+        },
       })
     }
 

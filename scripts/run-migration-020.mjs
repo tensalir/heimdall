@@ -7,11 +7,15 @@
 
 import { readFileSync } from 'fs'
 
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ozmnspzxcatvmubyswni.supabase.co'
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
 
+if (!SUPABASE_URL) {
+  console.error('SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) is required.')
+  process.exit(1)
+}
 if (!SERVICE_KEY) {
-  console.error('SUPABASE_SERVICE_KEY is required. Set it in your environment.')
+  console.error('SUPABASE_SERVICE_KEY is required.')
   process.exit(1)
 }
 
@@ -46,8 +50,9 @@ async function execViaPg() {
 
   const pgUrl = `postgresql://postgres.${dbUrl}:[YOUR-PASSWORD]@aws-0-eu-west-1.pooler.supabase.com:6543/postgres`
 
+  const projectRef = SUPABASE_URL.replace('https://', '').replace('.supabase.co', '')
   console.log('\n--- Migration SQL to run in Supabase SQL Editor ---')
-  console.log('Go to: https://supabase.com/dashboard/project/ozmnspzxcatvmubyswni/sql/new')
+  console.log(`Go to: https://supabase.com/dashboard/project/${projectRef}/sql/new`)
   console.log('Paste the contents of: supabase/migrations/020_meta_intelligence.sql')
   console.log('---\n')
   console.log(sql)

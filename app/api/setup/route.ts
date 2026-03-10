@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getRoutingMap, getWebhookLog } from '@/lib/kv'
+import { getSupabase, hasSupabase } from '@/lib/supabase'
 
 export async function GET() {
   try {
@@ -10,8 +11,30 @@ export async function GET() {
     const routingMapHasEntries = Object.keys(routingMap).length > 0
     const webhookReceived = webhookLog.length > 0
 
+    const supabaseConfigured = hasSupabase()
+    const supabaseAuthConfigured = !!(
+      process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    )
+
+    let supabaseReachable = false
+    if (supabaseConfigured) {
+      try {
+        const db = getSupabase()
+        if (db) {
+          const { error } = await db.from('comment_files').select('file_key').limit(1)
+          supabaseReachable = !error
+        }
+      } catch { /* unreachable */ }
+    }
+
+    const supabaseUrlMismatch =
+      process.env.SUPABASE_URL &&
+      process.env.NEXT_PUBLIC_SUPABASE_URL &&
+      process.env.SUPABASE_URL !== process.env.NEXT_PUBLIC_SUPABASE_URL
+
     const allPass =
-      kv && monday && figma && routingMapHasEntries && webhookReceived
+      kv && monday && figma && routingMapHasEntries && webhookReceived &&
+      supabaseConfigured && supabaseAuthConfigured && supabaseReachable && !supabaseUrlMismatch
 
     return NextResponse.json(
       {
@@ -22,6 +45,10 @@ export async function GET() {
           figma,
           routingMap: routingMapHasEntries,
           webhookReceived,
+          supabase: supabaseConfigured,
+          supabaseAuth: supabaseAuthConfigured,
+          supabaseReachable,
+          supabaseUrlMismatch: !!supabaseUrlMismatch,
         },
       },
       { status: 200 }

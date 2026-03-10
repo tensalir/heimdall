@@ -9,6 +9,7 @@ export interface SemanticTags {
   proof_type: string | null
   creator_style: string | null
   target_market: 'b2b' | 'b2c' | null
+  need_state: string | null
   ai_slop_risk: number
   legibility_risk: number
   proof_missing_risk: number
@@ -77,12 +78,34 @@ export const CREATOR_STYLES = [
   'lifestyle',
 ] as const
 
+export const NEED_STATES = [
+  'sleep',
+  'focus',
+  'sensory',
+  'festivals',
+  'parenting',
+  'travel',
+  'wellness',
+] as const
+
+const NEED_STATE_DESCRIPTIONS: Record<string, string> = {
+  sleep: 'Sleep & rest — noise blocking for sleep, snoring partners, noisy neighbors, shift work',
+  focus: 'Focus & productivity — open office, deep work, studying, coworking noise',
+  sensory: 'Sensory overload & neurodivergence — autism, ADHD, misophonia, overstimulation',
+  festivals: 'Festivals & live events — concerts, music festivals, hearing protection, tinnitus prevention',
+  parenting: 'Parenting & baby — infant/toddler hearing protection, sensory-sensitive children',
+  travel: 'Travel — plane/train/hotel noise, commuting, travel sleep',
+  wellness: 'Wellness & mental health — noise-induced anxiety, burnout, quiet self-care',
+}
+
 export interface AdForTagging {
   body_text: string | null
   page_name: string | null
   platform: string | null
   media_type: string | null
   cta_text?: string | null
+  source_query?: string | null
+  intended_need_state?: string | null
   is_active: boolean
   started_at: string | null
   ended_at: string | null
@@ -128,8 +151,12 @@ export function buildSemanticTaggingPrompt(ad: AdForTagging, daysRunning: number
   if (ad.media_type) parts.push(`Format: ${ad.media_type}`)
   if (ad.body_text) parts.push(`Ad copy:\n${ad.body_text}`)
   if (ad.cta_text) parts.push(`CTA: ${ad.cta_text}`)
+  if (ad.source_query) parts.push(`Discovery seed query: ${ad.source_query}`)
+  if (ad.intended_need_state) parts.push(`Intended need state: ${ad.intended_need_state}`)
   parts.push(`Active: ${ad.is_active}`)
   parts.push(`Days running: ${daysRunning}`)
+
+  const needStateList = NEED_STATES.map((ns) => `${ns}: ${NEED_STATE_DESCRIPTIONS[ns]}`).join('\n')
 
   return `You are an expert performance ad creative analyst. Classify this ad.
 
@@ -143,9 +170,12 @@ ${parts.join('\n')}
 3. **proof_type**: one from: ${PROOF_TYPES.join(', ')}
 4. **creator_style**: one from: ${CREATOR_STYLES.join(', ')} (or null)
 5. **target_market**: "b2b", "b2c", or null
-6. **ai_slop_risk**: 0-100. High = generic stock feel, AI text artifacts, no real product specificity, template, nonsensical claims.
-7. **legibility_risk**: 0-100. High = cluttered, too much text, unreadable, poor contrast.
-8. **proof_missing_risk**: 0-100. High = claims without evidence, no testimonial/stat/demo.
+6. **need_state**: Which Loop Earplugs need state does this ad's audience or problem best match? Pick one from the list below, or null if none fit.
+${needStateList}
+7. If the ad is clearly unrelated to the discovery seed query or intended need state, set **need_state** to null and reflect that mismatch in the summary.
+8. **ai_slop_risk**: 0-100. High = generic stock feel, AI text artifacts, no real product specificity, template, nonsensical claims.
+9. **legibility_risk**: 0-100. High = cluttered, too much text, unreadable, poor contrast.
+10. **proof_missing_risk**: 0-100. High = claims without evidence, no testimonial/stat/demo.
 
 Return ONLY valid JSON:
 {
@@ -154,6 +184,7 @@ Return ONLY valid JSON:
   "proof_type": "type",
   "creator_style": "style_or_null",
   "target_market": "b2b_or_b2c_or_null",
+  "need_state": "state_or_null",
   "ai_slop_risk": 0,
   "legibility_risk": 0,
   "proof_missing_risk": 0,
@@ -180,6 +211,12 @@ export function parseSemanticResponse(rawText: string): SemanticTags | null {
       (CONTENT_STYLES as readonly string[]).includes(s),
     )
 
+    const rawNeedState = typeof parsed.need_state === 'string' ? parsed.need_state : null
+    const validNeedState =
+      rawNeedState && (NEED_STATES as readonly string[]).includes(rawNeedState)
+        ? rawNeedState
+        : null
+
     return {
       content_style_tags: validStyles.length > 0 ? validStyles : ['features_benefits'],
       hook_type: typeof parsed.hook_type === 'string' ? parsed.hook_type : null,
@@ -191,6 +228,7 @@ export function parseSemanticResponse(rawText: string): SemanticTags | null {
           : parsed.target_market === 'b2c'
             ? 'b2c'
             : null,
+      need_state: validNeedState,
       ai_slop_risk: clamp(parsed.ai_slop_risk),
       legibility_risk: clamp(parsed.legibility_risk),
       proof_missing_risk: clamp(parsed.proof_missing_risk),
@@ -211,6 +249,67 @@ const VALUED_STYLES = new Set([
   'comparison',
   'demo',
 ])
+
+const NEED_STATE_SEED_KEYWORDS: Record<string, string[]> = {
+  sleep: ['sleep', 'snore', 'snoring', 'bedtime', 'noisy neighbor', 'nighttime'],
+  focus: ['study', 'productivity', 'deep work', 'distraction', 'coworking', 'concentration', 'background noise', 'open office'],
+  sensory: ['sensory', 'overstim', 'overstimulation', 'autism', 'adhd', 'misophonia', 'noise sensitivity'],
+  festivals: ['concert', 'festival', 'music', 'hearing', 'hearing protection', 'tinnitus', 'live event', 'gig'],
+  parenting: ['baby', 'infant', 'toddler', 'child', 'children', 'kid', 'kids', 'newborn'],
+  travel: ['plane', 'flight', 'train', 'hotel', 'commute', 'jet lag', 'airplane'],
+  wellness: ['anxiety', 'stress', 'burnout', 'mental health', 'self-care', 'panic'],
+}
+
+const QUERY_STOPWORDS = new Set([
+  'and',
+  'the',
+  'for',
+  'with',
+  'from',
+  'that',
+  'this',
+  'your',
+  'into',
+  'their',
+  'them',
+  'have',
+  'will',
+  'just',
+  'been',
+])
+
+export function assessSeedRelevance(
+  ad: Pick<AdForTagging, 'body_text' | 'page_name' | 'cta_text'>,
+  intendedNeedState: string | null,
+  sourceQuery?: string | null,
+  classifiedNeedState?: string | null,
+): { pass: boolean; matched_terms: string[] } {
+  if (!intendedNeedState && !sourceQuery) {
+    return { pass: true, matched_terms: [] }
+  }
+
+  const haystack = [
+    ad.page_name ?? '',
+    ad.body_text ?? '',
+    ad.cta_text ?? '',
+  ].join('\n').toLowerCase()
+
+  const stateTerms = intendedNeedState
+    ? (NEED_STATE_SEED_KEYWORDS[intendedNeedState] ?? []).filter((term) => haystack.includes(term))
+    : []
+
+  const queryTerms = (sourceQuery ?? '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((term) => term.length >= 4 && !QUERY_STOPWORDS.has(term))
+    .filter((term, idx, arr) => arr.indexOf(term) === idx)
+    .filter((term) => haystack.includes(term))
+
+  const pass = intendedNeedState
+    ? stateTerms.length > 0
+    : queryTerms.length >= 2
+  return { pass, matched_terms: [...stateTerms.slice(0, 4), ...queryTerms.slice(0, 4)] }
+}
 
 export function computeQualityScore(
   heuristic: { pass: boolean; days_running: number },
@@ -240,7 +339,7 @@ export function computeQualityScore(
   score = Math.max(0, Math.min(100, score))
 
   const status: 'approved' | 'rejected' | 'pending' =
-    score >= 35 ? 'approved' : 'rejected'
+    score >= 34 ? 'approved' : 'rejected'
 
   return { score, status }
 }

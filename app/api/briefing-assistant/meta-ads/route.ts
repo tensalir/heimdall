@@ -30,6 +30,7 @@ import {
   buildSemanticTaggingPrompt,
   parseSemanticResponse,
   computeQualityScore,
+  assessSeedRelevance,
   type AdForTagging,
 } from '@/src/domain/briefingAssistant/scoring/semanticTagger'
 import { embedAdCreative, upsertAdEmbedding, isAdMemoryAvailable } from '@/lib/adCreativeMemory'
@@ -64,6 +65,40 @@ function setCache(key: string, data: unknown) {
   }
 }
 
+const OWN_DISCOVERY_PAGE_IDS = new Set([
+  '517850318391712',
+])
+
+const OWN_DISCOVERY_PAGE_NAMES = new Set([
+  'loop',
+])
+
+function isOwnedDiscoveryAd(ad: { page_id: string | null; page_name: string | null }) {
+  const pageName = (ad.page_name ?? '').trim().toLowerCase()
+  return OWN_DISCOVERY_PAGE_IDS.has(ad.page_id ?? '') || OWN_DISCOVERY_PAGE_NAMES.has(pageName)
+}
+
+function getCreativeSignature(ad: {
+  page_id: string | null
+  page_name: string | null
+  body_text: string | null
+  link_url: string | null
+  thumbnail_url: string | null
+  ad_id: string | null
+}) {
+  const brandKey = ad.page_id ?? ad.page_name ?? ''
+  const normalizedCopy = (ad.body_text ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .slice(0, 180)
+  const fallbackKey = (ad.link_url ?? ad.thumbnail_url ?? ad.ad_id ?? '')
+    .replace(/\?.*$/, '')
+    .trim()
+    .toLowerCase()
+  return `${brandKey}::${normalizedCopy || fallbackKey}`
+}
+
 
 /**
  * GET /api/briefing-assistant/meta-ads
@@ -79,6 +114,7 @@ function setCache(key: string, data: unknown) {
  *   format            — 'image' | 'video'
  *   active            — 'true' to show only active ads
  *   min_days_running  — minimum days running threshold
+ *   need_state        — 'sleep' | 'focus' | 'sensory' | 'festivals' | 'parenting' | 'travel' | 'wellness'
  *   sort              — 'longest_running' (default) | 'newest' | 'score' | 'quality'
  *   limit             — max results (default 50, max 200)
  *   check=health      — lightweight diagnostics
@@ -101,9 +137,12 @@ export async function GET(req: NextRequest) {
 
   const cacheKey = `${searchParams.toString()}:u=${auth.user?.id ?? 'anon'}`
   const cached = getCached(cacheKey)
-  if (cached) return NextResponse.json(cached, {
-    headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' },
-  })
+  const cachedPayload = cached as { ads?: Array<{ source_provider?: string | null; id?: string }> } | null
+  if (cached) {
+    return NextResponse.json(cached, {
+      headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' },
+    })
+  }
 
   const legacyTab = searchParams.get('tab')
   let surface: BrowseSurface = 'discovery'
@@ -117,6 +156,7 @@ export async function GET(req: NextRequest) {
   const q = searchParams.get('q')?.trim() || null
   const contentStyleFilter = searchParams.get('content_style')?.split(',').filter(Boolean) || []
   const targetMarketFilter = searchParams.get('target_market') || null
+  const needStateFilter = searchParams.get('need_state') || null
   const languageFilter = searchParams.get('language') || null
   const formatFilter = searchParams.get('format') || null
   const activeOnly = searchParams.get('active') === 'true'
@@ -124,7 +164,7 @@ export async function GET(req: NextRequest) {
   const sort = searchParams.get('sort') || 'longest_running'
   const limit = Math.min(Number(searchParams.get('limit') || 50), 200)
   const followedPageIds = searchParams.get('followed_page_ids')?.split(',').filter(Boolean) || []
-  const userId = searchParams.get('user_id') || auth.user?.id || null
+  const userId = auth.user?.id || null
 
   const selectFields = `
     id, source_type, external_id, page_id, title, preview, thumbnail_url, creative_url,
@@ -133,7 +173,7 @@ export async function GET(req: NextRequest) {
     tags, created_at, updated_at,
     quality_status, quality_score, quality_summary,
     content_style_tags, hook_type, proof_type, creator_style, target_market,
-    ai_slop_risk, days_running, language, is_top_pick, source_provider
+    ai_slop_risk, days_running, language, is_top_pick, source_provider, need_state
   `
 
   let query = db
@@ -180,6 +220,7 @@ export async function GET(req: NextRequest) {
   if (contentStyleFilter.length > 0) {
     query = query.overlaps('content_style_tags', contentStyleFilter)
   }
+  if (needStateFilter) query = query.eq('need_state', needStateFilter)
   if (targetMarketFilter) query = query.eq('target_market', targetMarketFilter)
   if (languageFilter) query = query.eq('language', languageFilter)
   if (formatFilter) query = query.eq('media_type', formatFilter)
@@ -206,6 +247,14 @@ export async function GET(req: NextRequest) {
   if (dbErr) {
     return NextResponse.json({ error: dbErr.message }, { status: 500 })
   }
+
+  const recentApiSince = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+  const { count: recentApiCount } = await db
+    .from('briefing_source_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('source_type', 'meta_ad')
+    .eq('source_provider', 'api')
+    .gte('created_at', recentApiSince)
 
   const itemIds = (items ?? []).map((i: { id: string }) => i.id)
   const scoreMap = new Map<string, { score_hook: number | null; score_overall: number | null }>()
@@ -258,6 +307,7 @@ export async function GET(req: NextRequest) {
       proof_type: item.proof_type ?? null,
       creator_style: item.creator_style ?? null,
       target_market: item.target_market ?? null,
+      need_state: item.need_state ?? null,
       days_running: item.days_running ?? null,
       language: item.language ?? null,
       is_top_pick: item.is_top_pick ?? false,
@@ -265,7 +315,44 @@ export async function GET(req: NextRequest) {
     }
   })
 
-  let watchlistStatus: { token_ok: boolean | null; last_synced: string | null } | null = null
+  let feedAds = ads
+  let ownAdsExcluded = 0
+  let duplicateCreativesExcluded = 0
+
+  if (surface === 'discovery') {
+    feedAds = ads.filter((ad) => {
+      const keep = !isOwnedDiscoveryAd(ad)
+      if (!keep) ownAdsExcluded++
+      return keep
+    })
+
+    const seenCreatives = new Set<string>()
+    feedAds = feedAds.filter((ad) => {
+      const signature = getCreativeSignature(ad)
+      if (seenCreatives.has(signature)) {
+        duplicateCreativesExcluded++
+        return false
+      }
+      seenCreatives.add(signature)
+      return true
+    })
+  }
+
+  // #region agent log
+  fetch('http://127.0.0.1:7361/ingest/094a9dc1-e41a-4125-9223-f32e94ba95d7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6b4a97'},body:JSON.stringify({sessionId:'6b4a97',runId:'dedupe-own-repro',hypothesisId:'H1',location:'app/api/briefing-assistant/meta-ads/route.ts:319',message:'discovery cleanup counts',data:{surface,rawAds:ads.length,afterDiscoveryCleanup:feedAds.length,ownAdsExcluded,duplicateCreativesExcluded,topPages:feedAds.slice(0,10).map((ad)=>ad.page_name)},timestamp:Date.now()})}).catch(()=>{})
+  // #endregion
+
+  const MAX_PER_BRAND = 3
+  const brandCount = new Map<string, number>()
+  const diverseAds = feedAds.filter((ad) => {
+    const key = ad.page_id ?? ad.page_name
+    const count = brandCount.get(key) ?? 0
+    if (count >= MAX_PER_BRAND) return false
+    brandCount.set(key, count + 1)
+    return true
+  })
+
+  let watchlistStatus: { token_ok: boolean | null; last_synced: string | null; last_error?: string | null } | null = null
   try {
     const { data: wl } = await db
       .from('meta_ads_watchlist')
@@ -275,8 +362,11 @@ export async function GET(req: NextRequest) {
       .limit(1)
       .maybeSingle()
     watchlistStatus = {
-      token_ok: isMetaAdLibraryAvailable() ? null : false,
+      token_ok: wl?.last_error && /token expired or invalid/i.test(String(wl.last_error))
+        ? false
+        : isMetaAdLibraryAvailable() ? null : false,
       last_synced: (wl?.last_success_at as string) ?? null,
+      last_error: (wl?.last_error as string) ?? null,
     }
   } catch { /* watchlist table may not exist yet */ }
 
@@ -286,13 +376,17 @@ export async function GET(req: NextRequest) {
     syncState = 'syncing'
   }
 
-  const payload = { ads, watchlist_status: watchlistStatus, surface, sync_state: syncState }
+  // #region agent log
+  fetch('http://127.0.0.1:7361/ingest/094a9dc1-e41a-4125-9223-f32e94ba95d7',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6b4a97'},body:JSON.stringify({sessionId:'6b4a97',runId:'dedupe-own-repro',hypothesisId:'H2',location:'app/api/briefing-assistant/meta-ads/route.ts:350',message:'discovery final payload',data:{surface,diverseAdsCount:diverseAds.length,topRows:diverseAds.slice(0,12).map((ad)=>({page:ad.page_name,provider:ad.source_provider,need_state:ad.need_state,id:ad.id}))},timestamp:Date.now()})}).catch(()=>{})
+  // #endregion
 
-  if (ads.length > 0) {
+  const payload = { ads: diverseAds, watchlist_status: watchlistStatus, surface, sync_state: syncState }
+
+  if (diverseAds.length > 0) {
     setCache(cacheKey, payload)
   }
 
-  lazyMirrorPass(db, ads).catch(() => {})
+  lazyMirrorPass(db, diverseAds).catch(() => {})
 
   return NextResponse.json(payload, {
     headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' },
@@ -308,7 +402,7 @@ async function triggerWatchlistSync(db: SupabaseDb) {
   try {
     const { data: entries } = await db
       .from('meta_ads_watchlist')
-      .select('id, search_term, page_id, region_code')
+      .select('id, search_term, page_id, region_code, need_state')
       .eq('enabled', true)
       .limit(10)
 
@@ -346,6 +440,7 @@ async function triggerWatchlistSync(db: SupabaseDb) {
         const ingestedIds = await upsertNormalizedAds(db, ads, {
           watchlist_id: entry.id,
           source_query: entry.search_term || entry.page_id,
+          ...(entry.need_state ? { need_state: entry.need_state } : {}),
         })
 
         await db
@@ -415,6 +510,27 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'sync-watchlist') {
+    const mode = getSourceMode()
+    if (mode === 'api' && isMetaAdLibraryAvailable()) {
+      try {
+        await searchMetaAdLibrary({
+          search_terms: 'sleep',
+          ad_reached_countries: ['US'],
+          limit: 1,
+        })
+      } catch (e) {
+        if (e instanceof MetaTokenError) {
+          return NextResponse.json(
+            { error: e.message, token_expired: true },
+            { status: 401 },
+          )
+        }
+        return NextResponse.json(
+          { error: e instanceof Error ? e.message : 'Watchlist sync preflight failed' },
+          { status: 502 },
+        )
+      }
+    }
     triggerWatchlistSync(db).catch(console.error)
     return NextResponse.json({ ok: true, message: 'Watchlist sync triggered in background' })
   }
@@ -430,6 +546,11 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'run-quality-pass') {
+    const body = await req.json().catch(() => ({})) as { requalify_all?: boolean }
+    if (body.requalify_all) {
+      runSemanticQualityPassAll(db).catch(console.error)
+      return NextResponse.json({ ok: true, message: 'Full re-quality pass triggered for all meta ads' })
+    }
     runSemanticQualityPass(db).catch(console.error)
     return NextResponse.json({ ok: true, message: 'Semantic quality pass triggered in background' })
   }
@@ -800,7 +921,7 @@ async function runSemanticQualityPassForIds(db: SupabaseDb, itemIds: string[]) {
   const batch = itemIds.slice(0, SEMANTIC_BATCH_SIZE)
   const { data: items } = await db
     .from('briefing_source_items')
-    .select('id, body_text, page_name, page_id, platform, media_type, cta_text, is_active, started_at, ended_at, thumbnail_url, creative_url, collation_count, quality_status')
+    .select('id, body_text, page_name, page_id, platform, media_type, cta_text, is_active, started_at, ended_at, thumbnail_url, creative_url, collation_count, quality_status, source_query, need_state')
     .in('id', batch)
 
   for (const item of items ?? []) {
@@ -826,6 +947,29 @@ async function runSemanticQualityPass(db: SupabaseDb) {
   if (ids.length > 0) {
     await runSemanticQualityPassForIds(db, ids)
   }
+}
+
+async function runSemanticQualityPassAll(db: SupabaseDb) {
+  const BATCH = 50
+  let offset = 0
+  let processed = 0
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { data: batch } = await db
+      .from('briefing_source_items')
+      .select('id')
+      .eq('source_type', 'meta_ad')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + BATCH - 1)
+
+    const ids = (batch ?? []).map((r: { id: string }) => r.id)
+    if (ids.length === 0) break
+    await runSemanticQualityPassForIds(db, ids)
+    processed += ids.length
+    offset += BATCH
+    if (ids.length < BATCH) break
+  }
+  console.log(`[requalify-all] Processed ${processed} ads`)
 }
 
 async function applyHeuristicOnly(db: SupabaseDb, itemIds: string[]) {
@@ -874,6 +1018,8 @@ async function processSemanticItem(
     platform: item.platform as string | null,
     media_type: item.media_type as string | null,
     cta_text: item.cta_text as string | null,
+    source_query: item.source_query as string | null,
+    intended_need_state: item.need_state as string | null,
     is_active: item.is_active as boolean,
     started_at: item.started_at as string | null,
     ended_at: item.ended_at as string | null,
@@ -909,14 +1055,31 @@ async function processSemanticItem(
     .maybeSingle()
 
   const rubricOverall = (existingScores?.score_overall as number) ?? null
-  const { score, status } = computeQualityScore(heuristic, tags, rubricOverall)
+  const intendedNeedState = (item.need_state as string | null) ?? null
+  const sourceQuery = (item.source_query as string | null) ?? null
+  const seedRelevance = assessSeedRelevance(ad, intendedNeedState, sourceQuery, tags.need_state)
+  let { score, status } = computeQualityScore(heuristic, tags, rubricOverall)
+  let qualitySummary = tags.quality_summary
+  const resolvedNeedState = tags.need_state ?? intendedNeedState
+
+  if (!seedRelevance.pass) {
+    score = 0
+    status = 'rejected'
+    qualitySummary = [
+      'Seed mismatch',
+      sourceQuery ? `query="${sourceQuery}"` : null,
+      intendedNeedState ? `need_state="${intendedNeedState}"` : null,
+      seedRelevance.matched_terms.length > 0 ? `matched=${seedRelevance.matched_terms.join(',')}` : null,
+      tags.quality_summary,
+    ].filter(Boolean).join(' | ')
+  }
 
   await db
     .from('briefing_source_items')
     .update({
       quality_status: status,
       quality_score: score,
-      quality_summary: tags.quality_summary,
+      quality_summary: qualitySummary,
       content_style_tags: tags.content_style_tags,
       hook_type: tags.hook_type,
       proof_type: tags.proof_type,
@@ -927,6 +1090,7 @@ async function processSemanticItem(
       proof_missing_risk: tags.proof_missing_risk,
       duplicate_risk: 0,
       days_running: heuristic.days_running,
+      need_state: resolvedNeedState,
     })
     .eq('id', item.id)
 
@@ -968,6 +1132,7 @@ async function processSemanticItem(
     creator_style: tags.creator_style,
     media_type: item.media_type as string | null,
     target_market: tags.target_market,
+    need_state: resolvedNeedState,
   }).catch(() => {})
 }
 

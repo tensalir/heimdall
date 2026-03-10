@@ -8,10 +8,21 @@ import { cookies } from 'next/headers'
  * Handles the redirect from Supabase magic link emails.
  * Exchanges the ?code= parameter for a session and sets auth cookies.
  */
+function sanitizeRedirect(raw: string): string {
+  if (!raw.startsWith('/') || raw.startsWith('//')) return '/admin'
+  try {
+    const url = new URL(raw, 'http://localhost')
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '/admin'
+    return url.pathname + url.search
+  } catch {
+    return '/admin'
+  }
+}
+
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
-  const next = searchParams.get('next') ?? '/admin'
+  const next = sanitizeRedirect(searchParams.get('next') ?? '/admin')
 
   if (code) {
     const cookieStore = await cookies()
@@ -40,6 +51,5 @@ export async function GET(request: Request) {
     }
   }
 
-  // If code exchange failed, redirect to login with error
   return NextResponse.redirect(new URL('/login?error=auth_failed', request.url))
 }

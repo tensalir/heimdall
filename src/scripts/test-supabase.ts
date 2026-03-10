@@ -4,8 +4,8 @@ import { createClient } from '@supabase/supabase-js'
 const url = process.env.SUPABASE_URL!
 const key = process.env.SUPABASE_SERVICE_KEY!
 
-console.log('SUPABASE_URL:', url ? url.slice(0, 30) + '...' : '(missing)')
-console.log('SUPABASE_SERVICE_KEY:', key ? key.slice(0, 20) + '...' : '(missing)')
+console.log('SUPABASE_URL:', url ? '(set)' : '(missing)')
+console.log('SUPABASE_SERVICE_KEY:', key ? '(set)' : '(missing)')
 console.log('')
 
 const sb = createClient(url, key)

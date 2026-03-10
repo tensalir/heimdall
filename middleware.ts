@@ -28,6 +28,17 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Heimdall-Secret',
 }
 
+const PRIVILEGED_EMAIL_DOMAINS = (process.env.HEIMDALL_ALLOWED_EMAIL_DOMAINS || 'thoughtform.co,loopearplugs.com')
+  .split(',')
+  .map((d) => d.trim().toLowerCase())
+  .filter(Boolean)
+
+function isPrivilegedUser(email: string | undefined): boolean {
+  if (!email) return false
+  const domain = email.split('@')[1]?.toLowerCase()
+  return PRIVILEGED_EMAIL_DOMAINS.includes(domain)
+}
+
 /* ------------------------------------------------------------------ */
 /*  Legacy redirects — old paths → new paths                          */
 /* ------------------------------------------------------------------ */
@@ -121,6 +132,12 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   if (!supabaseUrl || !supabaseAnonKey) {
+    if (process.env.NODE_ENV === 'production') {
+      return addCors(NextResponse.json(
+        { error: 'Authentication not configured' },
+        { status: 503, headers: CORS_HEADERS },
+      ))
+    }
     return addCors(NextResponse.next())
   }
 
@@ -158,19 +175,15 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
 /* ------------------------------------------------------------------ */
 
 async function handleAdminAuth(request: NextRequest): Promise<NextResponse> {
-  const { pathname } = request.nextUrl
-
-  // Login page is at /login (outside admin layout), not /admin/login
-  // No special handling needed here
-
-  // If Supabase is not configured, fall back to no auth (dev mode)
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   if (!supabaseUrl || !supabaseAnonKey) {
+    if (process.env.NODE_ENV === 'production') {
+      return NextResponse.json({ error: 'Authentication not configured' }, { status: 503 })
+    }
     return NextResponse.next()
   }
 
-  // Create Supabase client for middleware
   let response = NextResponse.next({ request: { headers: request.headers } })
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
@@ -190,13 +203,16 @@ async function handleAdminAuth(request: NextRequest): Promise<NextResponse> {
     },
   })
 
-  // Refresh session and check for user
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
+  }
+
+  if (!isPrivilegedUser(user.email)) {
+    return NextResponse.json({ error: 'Insufficient privileges' }, { status: 403 })
   }
 
   return response

@@ -105,6 +105,7 @@ export async function indexAdInGraph(
     creator_style?: string | null
     media_type?: string | null
     target_market?: string | null
+    need_state?: string | null
   },
 ): Promise<void> {
   const db = getSupabase()
@@ -140,6 +141,11 @@ export async function indexAdInGraph(
   if (tags.media_type) {
     const formatId = await ensureNode('format', tags.media_type)
     if (formatId) nodeIds.push(formatId)
+  }
+
+  if (tags.need_state) {
+    const useCaseId = await ensureNode('use_case', tags.need_state)
+    if (useCaseId) nodeIds.push(useCaseId)
   }
 
   for (const nodeId of nodeIds) {

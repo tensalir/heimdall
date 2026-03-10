@@ -1084,7 +1084,19 @@ Script:`;
           const f = figma.createFrame();
           f.name = "NAME-EXP-" + size;
           f.resize(dim.w, dim.h);
-          f.fills = [{ type: "SOLID", color: { r: 1, g: 1, b: 1 } }];
+          f.fills = [];
+          f.clipsContent = true;
+          const media = figma.createRectangle();
+          media.name = "Media Target";
+          media.resize(dim.w, dim.h);
+          media.fills = [{ type: "SOLID", color: { r: 1, g: 1, b: 1 } }];
+          f.appendChild(media);
+          media.x = 0;
+          media.y = 0;
+          try {
+            media.constraints = { horizontal: "SCALE", vertical: "SCALE" };
+          } catch (e) {
+          }
           assetRow.appendChild(f);
         }
       }
@@ -1309,6 +1321,7 @@ Script:`;
       analysis.childrenStretched = phaseStretchChildren(nameBriefing);
       phaseDisableClipping(nameBriefing);
       fixAssetFrameRatios(nameBriefing);
+      ensureMediaTargets(nameBriefing);
       const gap = 24 * S;
       const columnsRow = nameBriefing.children.find(
         (c) => c.type === "FRAME" && c.name === "Columns"
@@ -1349,6 +1362,40 @@ Script:`;
       result.pagesFixed++;
     }
     return result;
+  }
+  function ensureMediaTargets(node) {
+    let added = 0;
+    if (node.type === "FRAME") {
+      const frame = node;
+      const nameLower = frame.name.toLowerCase();
+      const isAssetFrame = Object.keys(ASSET_SIZES).some((k) => nameLower.endsWith(k.toLowerCase()));
+      if (isAssetFrame) {
+        const hasMediaTarget = frame.children.some(
+          (c) => c.name === "Media Target"
+        );
+        if (!hasMediaTarget) {
+          const media = figma.createRectangle();
+          media.name = "Media Target";
+          media.resize(frame.width, frame.height);
+          media.fills = [{ type: "SOLID", color: { r: 1, g: 1, b: 1 } }];
+          frame.insertChild(0, media);
+          media.x = 0;
+          media.y = 0;
+          try {
+            media.constraints = { horizontal: "SCALE", vertical: "SCALE" };
+          } catch (e) {
+          }
+          frame.clipsContent = true;
+          added++;
+        }
+        return added;
+      }
+    }
+    const container = node;
+    if (container.children) {
+      for (const child of container.children) added += ensureMediaTargets(child);
+    }
+    return added;
   }
   function fixAssetFrameRatios(node) {
     if (node.type === "FRAME") {
@@ -2062,6 +2109,59 @@ Script:`;
     return results;
   }
   var uiHtml = `<html><head><style>body{font-family:Inter,sans-serif;padding:12px;margin:0;}h3{margin:0 0 8px 0;font-size:13px;}.tabs{display:flex;gap:0;margin:0 0 10px 0;border-bottom:1px solid #ddd;}.tab{width:auto!important;padding:8px 12px;border:none!important;border-radius:0!important;border-bottom:2px solid transparent!important;background:transparent!important;color:#666!important;cursor:pointer;font-size:11px;font-weight:600;}.tab:hover{background:#f6f7f9!important;color:#222!important;}.tab.active{background:transparent!important;color:#111!important;border-bottom-color:#0d99ff!important;}.row{display:flex;gap:8px;align-items:center;margin:8px 0;}.label{font-size:11px;color:#555;min-width:68px;}input{flex:1;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:11px;}button{padding:8px 16px;background:#0d99ff;color:#fff;border:none;border-radius:6px;cursor:pointer;width:100%;font-size:12px;}button:hover{background:#0b85e0;}.secondary{background:#fff;color:#333;border:1px solid #ddd;width:auto;padding:6px 10px;}.secondary:hover{background:#f6f6f6;}.outlined{background:transparent;color:#0d99ff;border:1.5px solid #0d99ff;}.outlined:hover{background:rgba(13,153,255,0.06);}.btn-row{display:flex;gap:8px;margin-top:8px;}.btn-row button{flex:1;}.small-row{display:flex;gap:8px;margin-top:6px;}.small-row button{flex:1;padding:5px 8px;font-size:10px;background:#fff;color:#555;border:1px solid #ddd;}.small-row button:hover{background:#f4f4f4;color:#333;}#msg{font-size:11px;color:#666;margin-top:8px;min-height:20px;}.err{color:#f24822;}.list{list-style:none;padding:0;margin:8px 0;max-height:220px;overflow-y:auto;}.list li{padding:6px 8px;margin:2px 0;background:#f6f6f6;border-radius:4px;font-size:11px;display:flex;justify-content:space-between;align-items:center;border-left:3px solid transparent;}.list li.new{border-left-color:#0d99ff;background:#f6f6f6;}.list li.synced{border-left-color:#0fa958;background:linear-gradient(90deg,#e8f5e9 0%,#f1f8f2 100%);color:#666;}.badge{font-size:9px;padding:2px 6px;border-radius:4px;background:#0d99ff;color:#fff;white-space:nowrap;}.badge.synced{background:#0fa958;}.badge.new{background:#888;}select{padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:11px;min-width:140px;}.list li label{display:flex;align-items:center;gap:6px;flex:1;cursor:pointer;min-width:0;}.list li label input[type=checkbox]{margin:0;flex-shrink:0;}.list li label span.item-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.list li .badge-group{display:flex;align-items:center;gap:4px;flex-shrink:0;}.overwrite-btn{background:none;border:none;padding:2px 4px;cursor:pointer;font-size:11px;color:#999;width:auto;}.overwrite-btn:hover{color:#f24822;}.overwrite-btn.active{color:#f24822;font-weight:600;}.select-bar{display:flex;justify-content:space-between;align-items:center;margin:4px 0;font-size:10px;color:#666;}.select-bar a{color:#0d99ff;cursor:pointer;text-decoration:none;font-size:10px;}.select-bar a:hover{text-decoration:underline;}.list li.exists{border-left-color:#f5a623;background:linear-gradient(90deg,#fef9ef 0%,#fefcf6 100%);}.badge.exists{background:#f5a623;}.list li.populated{border-left-color:#0fa958;background:linear-gradient(90deg,#e8f5e9 0%,#f1f8f2 100%);color:#666;}.badge.populated{background:#0fa958;}.list li.empty-import{border-left-color:#f24822;background:linear-gradient(90deg,#fdecea 0%,#fef5f3 100%);}.badge.empty-import{background:#f24822;}</style></head><body><div class="tabs"><button class="tab active" id="tab-sync">Sync Briefings</button><button class="tab" id="tab-comments">Export Comments</button></div><h3>Heimdall Sync</h3><div class="row"><span class="label">API base</span><input id="api-base" placeholder="http://localhost:3846" /><button class="secondary" id="save-api">Save</button></div><div id="sync-panel">  <div id="batch-select-wrap" style="display:none;"><span class="label">Batch</span><select id="batch-select"></select><button class="secondary" id="batch-apply">Apply</button></div>  <p id="batch-label" style="margin:4px 0;font-size:12px;font-weight:600;"></p>  <ul id="briefings-list" class="list"></ul>  <p id="msg" style="margin:8px 0;min-height:20px;font-size:11px;color:#666;"></p>  <div class="btn-row"><button id="sync">Sync</button><button id="create-template" class="outlined">Create Template</button></div>  <div class="small-row"><button id="migrate-widgets">Migrate Status Widgets</button><button id="fix-layouts">Fix Layouts</button></div></div><script>parent.postMessage({ pluginMessage: { type: "ui-boot" } }, "*");window.onerror = function(message, source, lineno, colno) {  parent.postMessage({ pluginMessage: { type: "ui-script-error", message: String(message || ""), source: String(source || ""), lineno: Number(lineno || 0), colno: Number(colno || 0) } }, "*");};window.addEventListener("unhandledrejection", function(ev) {  var reason = ev && ev.reason ? (ev.reason.message || String(ev.reason)) : "unknown";  parent.postMessage({ pluginMessage: { type: "ui-script-rejection", reason: String(reason) } }, "*");});var DEFAULT_HEIMDALL_API = "http://localhost:3846";var HEIMDALL_API = DEFAULT_HEIMDALL_API;var fileKey = "";var fileName = "";var isSyncing = false;var currentBriefings = [];var queuedJobIds = [];var existingPageNames = [];var existingPageNameSet = {};var existingMondayItemIdSet = {};var pendingResults = null;var pageContentStatusMap = {};var pageScoreDebugMap = {};function sanitizeApiBase(raw) {  var v = (raw || "").trim();  if (!v) return DEFAULT_HEIMDALL_API;  return v.replace(/\\/$/, "");}function setApiBase(raw) {  HEIMDALL_API = sanitizeApiBase(raw);  var input = document.getElementById("api-base");  if (input) input.value = HEIMDALL_API;}function requestJson(url, options) {  return fetch(url, options).then(function(r) {    var status = r.status;    var contentType = (r.headers.get("content-type") || "").toLowerCase();    return r.text().then(function(t) {      var raw = t || "";      var parsed = null;      if (raw) {        try { parsed = JSON.parse(raw); } catch (_) { parsed = null; }      }      if (!r.ok) {        var err = parsed && (parsed.error || parsed.reason) ? (parsed.error || parsed.reason) : ("HTTP " + status);        throw new Error(err + " @ " + url);      }      if (parsed !== null) return parsed;      var preview = raw.slice(0, 80).replace(/\\s+/g, " ");      throw new Error("Expected JSON but got non-JSON response @ " + url + " (status " + status + ", content-type: " + contentType + ", body: " + preview + ")");    });  });}document.getElementById("save-api").onclick = function() {  var input = document.getElementById("api-base");  setApiBase(input ? input.value : "");  parent.postMessage({ pluginMessage: { type: "save-api-base", apiBase: HEIMDALL_API } }, "*");  document.getElementById("msg").textContent = "Saved API base: " + HEIMDALL_API;  document.getElementById("msg").className = "";};document.getElementById("tab-comments").onclick = function() {  parent.postMessage({ pluginMessage: { type: "open-export-comments" } }, "*");};document.getElementById("create-template").onclick = function() {  document.getElementById("msg").textContent = "Creating template...";  document.getElementById("msg").className = "";  parent.postMessage({ pluginMessage: { type: "create-template" } }, "*");};document.getElementById("migrate-widgets").onclick = function() {  document.getElementById("msg").textContent = "Migrating status widgets...";  document.getElementById("msg").className = "";  parent.postMessage({ pluginMessage: { type: "migrate-widgets" } }, "*");};document.getElementById("fix-layouts").onclick = function() {  document.getElementById("msg").textContent = "Fixing layouts...";  document.getElementById("msg").className = "";  parent.postMessage({ pluginMessage: { type: "fix-layouts" } }, "*");};function normalizeBriefingName(name) {  return String(name || "").toLowerCase().replace(/\\s+/g, " ").trim();}function rebuildExistingLookupSets(existingMondayItemIds) {  existingPageNameSet = {};  for (var i = 0; i < existingPageNames.length; i++) {    var normalizedPage = normalizeBriefingName(existingPageNames[i]);    if (normalizedPage) existingPageNameSet[normalizedPage] = true;  }  existingMondayItemIdSet = {};  for (var j = 0; j < existingMondayItemIds.length; j++) {    var id = String(existingMondayItemIds[j] || "").trim();    if (id) existingMondayItemIdSet[id] = true;  }}function briefingExistsInFigma(item) {  var itemId = item && item.id != null ? String(item.id).trim() : "";  if (itemId && existingMondayItemIdSet[itemId]) return true;  var needle = normalizeBriefingName(item && item.name ? item.name : "");  if (!needle) return false;  return !!existingPageNameSet[needle];}function classifyBriefing(item) {  var itemId = item && item.id != null ? String(item.id).trim() : "";  var hasMondayId = itemId && existingMondayItemIdSet[itemId];  var needle = normalizeBriefingName(item && item.name ? item.name : "");  var hasPageName = needle && !!existingPageNameSet[needle];  if (!hasMondayId && !hasPageName) return "new";  if (hasMondayId && pageContentStatusMap[itemId] === "populated") return "populated";  if (hasMondayId && pageContentStatusMap[itemId] === "empty") return "empty-import";  return "exists";}function updateSyncBtnCount() {  var checked = document.querySelectorAll("#briefings-list input[type=checkbox]:checked");  var btn = document.getElementById("sync");  btn.textContent = checked.length > 0 ? "Sync " + checked.length + " briefing(s)" : "Sync";  btn.disabled = checked.length === 0;}function showBriefings(data) {  currentBriefings = data.items || [];  var listEl = document.getElementById("briefings-list");  listEl.innerHTML = "";  var batchLabel = document.getElementById("batch-label");  batchLabel.textContent = data.batchLabel ? (data.batchLabel + " (" + currentBriefings.length + ")") : "";  var selectBar = document.getElementById("select-bar");  if (!selectBar) {    selectBar = document.createElement("div");    selectBar.id = "select-bar";    selectBar.className = "select-bar";    listEl.parentNode.insertBefore(selectBar, listEl);  }  selectBar.innerHTML = "<span></span><span><a id=\\"select-all\\">Select all</a> | <a id=\\"deselect-all\\">Deselect all</a></span>";  for (var i = 0; i < currentBriefings.length; i++) {    var it = currentBriefings[i];    var classification = classifyBriefing(it);    var exists = classification !== "new";    it._exists = exists;    it._classification = classification;    it._overwrite = false;    var li = document.createElement("li");    li.className = classification !== "new" ? classification : (it.syncState || "new");    li.setAttribute("data-idx", String(i));    var lbl = document.createElement("label");    var cb = document.createElement("input");    cb.type = "checkbox";    cb.checked = classification === "new" || classification === "empty-import";    cb.disabled = classification === "populated";    cb.setAttribute("data-idx", String(i));    cb.onchange = function() { updateSyncBtnCount(); };    lbl.appendChild(cb);    var nameSpan = document.createElement("span");    nameSpan.className = "item-name";    nameSpan.textContent = it.name;    lbl.appendChild(nameSpan);    li.appendChild(lbl);    var badgeGroup = document.createElement("span");    badgeGroup.className = "badge-group";    if (classification === "populated" || classification === "exists") {      var owBtn = document.createElement("button");      owBtn.className = "overwrite-btn";      owBtn.title = "Enable overwrite";      owBtn.textContent = "\\u21bb";      owBtn.setAttribute("data-idx", String(i));      owBtn.onclick = (function(idx, owBtnRef, cbRef) { return function(e) {        e.preventDefault();        var item = currentBriefings[idx];        item._overwrite = !item._overwrite;        owBtnRef.className = item._overwrite ? "overwrite-btn active" : "overwrite-btn";        cbRef.disabled = !item._overwrite;        if (item._overwrite) { cbRef.checked = true; } else { cbRef.checked = false; }        updateSyncBtnCount();      }; })(i, owBtn, cb);      badgeGroup.appendChild(owBtn);    }    var badge = document.createElement("span");    var badgeClass = "new"; var badgeLabel = "New";    if (classification === "populated") { badgeClass = "populated"; badgeLabel = "\\u2713 Working"; }    else if (classification === "empty-import") { badgeClass = "empty-import"; badgeLabel = "\\u26A0 Empty"; }    else if (classification === "exists") { badgeClass = "exists"; badgeLabel = "Exists"; }    else if (it.syncState === "synced") { badgeClass = "synced"; badgeLabel = "\\u2713 Synced"; }    badge.className = "badge " + badgeClass;    badge.textContent = badgeLabel;    badgeGroup.appendChild(badge);    li.appendChild(badgeGroup);    listEl.appendChild(li);  }  document.getElementById("select-all").onclick = function() {    var cbs = listEl.querySelectorAll("input[type=checkbox]");    for (var j = 0; j < cbs.length; j++) { if (!cbs[j].disabled) cbs[j].checked = true; }    updateSyncBtnCount();  };  document.getElementById("deselect-all").onclick = function() {    var cbs = listEl.querySelectorAll("input[type=checkbox]");    for (var j = 0; j < cbs.length; j++) { cbs[j].checked = false; }    updateSyncBtnCount();  };  updateSyncBtnCount();  document.getElementById("msg").textContent = currentBriefings.length === 0 ? "No briefings match this batch and filters." : "";  document.getElementById("msg").className = "";}function fetchBriefings(selectedBatch) {  document.getElementById("msg").textContent = "Loading briefings...";  document.getElementById("msg").className = "";  var body = { fileName: fileName, fileKey: fileKey };  if (selectedBatch) body.batch = selectedBatch;  requestJson(HEIMDALL_API + "/api/plugin/briefings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })    .then(function(data) {      if (data.needsBatchSelection && data.availableBatches && data.availableBatches.length > 0) {        document.getElementById("batch-select-wrap").style.display = "flex";        document.getElementById("batch-select-wrap").className = "row";        var sel = document.getElementById("batch-select");        sel.innerHTML = "";        var labels = data.batchLabels || data.availableBatches;        for (var i = 0; i < data.availableBatches.length; i++) {          var opt = document.createElement("option");          opt.value = data.availableBatches[i];          opt.textContent = labels[i] || data.availableBatches[i];          sel.appendChild(opt);        }        document.getElementById("batch-label").textContent = "";        document.getElementById("briefings-list").innerHTML = "";        document.getElementById("msg").textContent = "Select a batch to show briefings.";        return;      }      document.getElementById("batch-select-wrap").style.display = "none";      if (data.error) { document.getElementById("msg").textContent = data.error; document.getElementById("msg").className = "err"; return; }      showBriefings(data);    })    .catch(function(e) {      document.getElementById("msg").textContent = "Error: " + e.message;      document.getElementById("msg").className = "err";    });}document.getElementById("batch-apply").onclick = function() {  var sel = document.getElementById("batch-select");  fetchBriefings(sel && sel.value ? sel.value : null);};document.getElementById("sync").onclick = function() {  if (isSyncing) return;  if (currentBriefings.length === 0) {    document.getElementById("msg").textContent = "No briefings loaded yet. Wait for load or check API base/filters.";    document.getElementById("msg").className = "err";    return;  }  isSyncing = true;  document.getElementById("msg").textContent = "Queueing briefings...";  document.getElementById("sync").disabled = true;  var cbs = document.querySelectorAll("#briefings-list input[type=checkbox]:checked");  var selectedIdxs = [];  for (var ci = 0; ci < cbs.length; ci++) selectedIdxs.push(parseInt(cbs[ci].getAttribute("data-idx"), 10));  var items = selectedIdxs.map(function(idx){ var it = currentBriefings[idx]; return { id: it.id, name: it.name, batch: it.batch }; });  if (items.length === 0) {    document.getElementById("msg").textContent = "No briefings selected.";    isSyncing = false;    document.getElementById("sync").disabled = false;    return;  }  requestJson(HEIMDALL_API + "/api/plugin/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileKey: fileKey || "", fileName: fileName || "", items: items }) })    .then(function(data) {      if (data.error) { document.getElementById("msg").textContent = data.error; document.getElementById("msg").className = "err"; isSyncing = false; document.getElementById("sync").disabled = false; return; }      queuedJobIds = (data.jobs || []).map(function(j){ return j.id; });      document.getElementById("msg").textContent = "Queued " + (data.queued || 0) + ". Fetching jobs...";      var q = "";      if (queuedJobIds.length > 0) q = "ids=" + queuedJobIds.map(function(id){ return encodeURIComponent(id); }).join(",");      else if (fileKey) q = "fileKey=" + encodeURIComponent(fileKey);      else if (items.length > 0 && items[0].batch) q = "batch=" + encodeURIComponent(items[0].batch);      return requestJson(HEIMDALL_API + "/api/jobs/queued" + (q ? ("?" + q) : ""));    })    .then(function(data2) {      var jobs = (data2 && data2.jobs) ? data2.jobs : [];      if (jobs.length === 0) { document.getElementById("msg").textContent = "No jobs returned. Try again in a moment."; isSyncing = false; document.getElementById("sync").disabled = false; return; }      document.getElementById("msg").textContent = "Creating " + jobs.length + " page(s)...";      parent.postMessage({ pluginMessage: { type: "process-jobs", jobs: jobs } }, "*");    })    .catch(function(e) {      isSyncing = false;      document.getElementById("sync").disabled = false;      document.getElementById("msg").textContent = "Error: " + e.message;      document.getElementById("msg").className = "err";    });};parent.postMessage({ pluginMessage: { type: "ui-handlers-bound" } }, "*");function fetchJobs(fk) {  fileKey = fk;  requestJson(HEIMDALL_API + "/api/jobs/queued?fileKey=" + encodeURIComponent(fk))    .then(function(data) {      var jobs = data.jobs || [];      if (jobs.length === 0) {        document.getElementById("msg").textContent = "No file-specific jobs. Checking all queued...";        return requestJson(HEIMDALL_API + "/api/jobs/queued").then(function(d2){          var all = d2.jobs || [];          if (all.length === 0) { document.getElementById("msg").textContent = "No queued jobs."; isSyncing = false; return; }          document.getElementById("msg").textContent = "Found " + all.length + " job(s). Creating pages...";          parent.postMessage({ pluginMessage: { type: "process-jobs", jobs: all } }, "*");        });      }      document.getElementById("msg").textContent = "Found " + jobs.length + " job(s). Creating pages...";      parent.postMessage({ pluginMessage: { type: "process-jobs", jobs: jobs } }, "*");    })    .catch(function(e) {      isSyncing = false;      document.getElementById("msg").textContent = "Fetch error: " + e.message;      document.getElementById("msg").className = "err";    });}function reportResults(results, imageLine) {  var done = 0; var updated = 0; var failed = [];  var promises = [];  for (var i = 0; i < results.length; i++) {    var r = results[i];    if (r.error) {      failed.push(r.experimentPageName);      promises.push(fetch(HEIMDALL_API + "/api/jobs/fail", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: r.error}) }).catch(function(){}));    } else if (r.contentEmpty) {      failed.push(r.experimentPageName + " (empty)");      promises.push(fetch(HEIMDALL_API + "/api/jobs/fail", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: "content_empty"}) }).catch(function(){}));    } else {      if (r.outcome === "updated") updated++; else done++;      promises.push(fetch(HEIMDALL_API + "/api/jobs/complete", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({idempotencyKey: r.idempotencyKey, figmaPageId: r.pageId, figmaFileUrl: r.fileUrl, outcome: r.outcome || "created"}) }).catch(function(){}));    }  }  Promise.all(promises).then(function() {    isSyncing = false;    var syncBtn = document.getElementById("sync");    if (syncBtn) syncBtn.disabled = false;    var el = document.getElementById("msg");    var msg = "Done: " + done + " created"; if (updated > 0) msg += ", " + updated + " updated"; msg += "."; if (failed.length) msg += " Failed: " + failed.join(", ");    if (imageLine) msg += " | " + imageLine;    el.textContent = msg;    el.className = failed.length ? "err" : "";  });}function fetchAllImages(images) {  var el = document.getElementById("msg");  el.textContent = "Fetching " + images.length + " image(s) from Monday...";  el.className = "";  var results = [];  var fetchFailures = [];  var done = 0;  function next(i) {    if (i >= images.length) {      el.textContent = "Images fetched: " + results.length + " ok, " + fetchFailures.length + " failed. Importing...";      parent.postMessage({ pluginMessage: { type: "images-fetched", images: results, imageCount: images.length, fetchFailures: fetchFailures } }, "*");      return;    }    var img = images[i];    el.textContent = "Fetching image " + (i + 1) + "/" + images.length + ": " + img.name;    var fetchUrl = img.assetId ? (HEIMDALL_API + "/api/images/proxy?assetId=" + encodeURIComponent(img.assetId)) : (HEIMDALL_API + "/api/images/proxy?url=" + encodeURIComponent(img.url || ""));    function doFetch(attempt) {      fetch(fetchUrl)        .then(function(r) {          if (!r.ok) { var errBody = r.status + " " + (r.statusText || ""); return r.json().then(function(j){ throw new Error(j.error || j.reason || errBody); }, function(){ throw new Error(errBody); }); }          return r.arrayBuffer();        })        .then(function(buf) {          if (buf && buf.byteLength > 0) results.push({ url: img.url, name: img.name, pageId: img.pageId, bytes: Array.from(new Uint8Array(buf)) });          else fetchFailures.push({ name: img.name, reason: "Empty response" });          done++; next(i + 1);        })        .catch(function(err) {          if (attempt < 2) { setTimeout(function() { doFetch(attempt + 1); }, 500); }          else { var reason = err && err.message ? err.message : String(err); fetchFailures.push({ name: img.name, reason: reason }); console.warn("Image fetch failed:", img.name, reason); done++; next(i + 1); }        });    }    doFetch(1);  }  next(0);}onmessage = function(e) {  var d = typeof e.data === "object" && e.data.pluginMessage ? e.data.pluginMessage : e.data;  if (d.type === "context") {    fileKey = d.fileKey || "";    fileName = d.fileName || "";    existingPageNames = Array.isArray(d.existingPages) ? d.existingPages : [];    pageContentStatusMap = d.pageContentStatus || {};    pageScoreDebugMap = d.pageScoreDebug || {};    rebuildExistingLookupSets(Array.isArray(d.existingMondayItemIds) ? d.existingMondayItemIds : []);    var scoreSample = Object.keys(pageScoreDebugMap).slice(0,6).map(function(id){ return { id:id, debug: pageScoreDebugMap[id] }; });    fetchBriefings(null);    if (!fileKey) document.getElementById("msg").textContent = "File key unavailable in this context. Continuing with batch-based sync.";  }  if (d.type === "file-key") {    fetchJobs(d.fileKey);  }  if (d.type === "progress") {    document.getElementById("msg").textContent = "Creating page " + d.current + "/" + d.total + ": " + (d.name || "");  }  if (d.type === "jobs-processed") {    if (d.hasImages) {      pendingResults = d.results;      document.getElementById("msg").textContent = "Pages created. Importing images...";    } else {      reportResults(d.results);    }  }  if (d.type === "api-base") setApiBase(d.apiBase || DEFAULT_HEIMDALL_API);  if (d.type === "create-template-done") {    var el = document.getElementById("msg");    el.textContent = d.error ? "Template error: " + d.error : "Template created. Place the 'Custom Labels - Status Tracker' widget in each column header (Briefing, Copy, Design).";    el.className = d.error ? "err" : "";  }  if (d.type === "migrate-widgets-done") {    var el = document.getElementById("msg");    if (d.error) { el.textContent = "Migrate error: " + d.error; el.className = "err"; }    else { el.textContent = "Migrated: " + (d.pagesMigrated || 0) + " pages, skipped: " + (d.pagesSkipped || 0) + (d.pagesFailed ? ", failed: " + d.pagesFailed : ""); el.className = ""; }  }  if (d.type === "fetch-images" && d.images && d.images.length > 0) {    fetchAllImages(d.images);  }  if (d.type === "images-import-done") {    var line = "Images: " + d.placed + "/" + d.total + " placed in Figma.";    var fetchFailures = d.fetchFailures || [];    var failures = d.failures || [];    if (fetchFailures.length || failures.length) {      line += " Failed: ";      var parts = [];      for (var i = 0; i < fetchFailures.length; i++) parts.push(fetchFailures[i].name + " (fetch: " + fetchFailures[i].reason + ")");      for (var j = 0; j < failures.length; j++) parts.push(failures[j].name + " (" + failures[j].reason + ")");      line += parts.join("; ");    }    if (pendingResults) {      reportResults(pendingResults, line);      pendingResults = null;    } else {      var el = document.getElementById("msg");      var prev = el.textContent || "";      el.textContent = prev ? (prev + " | " + line) : line;      if (fetchFailures.length || failures.length) el.className = "err";    }  }  if (d.type === "fix-layouts-done") {    var el = document.getElementById("msg");    if (d.error) { el.textContent = "Error: " + d.error; el.className = "err"; }    else { el.textContent = "Fixed " + (d.pagesFixed || 0) + " page(s), skipped " + (d.pagesSkipped || 0) + "."; el.className = ""; }  }  if (d.type === "debug-log") {    var el = document.getElementById("msg");    el.style.whiteSpace = "pre-wrap";    el.style.fontSize = "9px";    el.style.maxHeight = "300px";    el.style.overflow = "auto";    el.textContent = d.text;  }};parent.postMessage({ pluginMessage: { type: "get-api-base" } }, "*");<\/script></body></html>`;
+  function serializePageSnapshot(page) {
+    function serializeNode(node, depth) {
+      var _a;
+      const out = {
+        id: node.id,
+        name: node.name,
+        type: node.type
+      };
+      if (node.type === "TEXT") {
+        out.characters = ((_a = node.characters) != null ? _a : "").substring(0, 500);
+      }
+      if (depth < 4) {
+        const withChildren = node;
+        if (withChildren.children) {
+          out.children = Array.from(withChildren.children).map((c) => serializeNode(c, depth + 1));
+        }
+      }
+      return out;
+    }
+    return {
+      pageId: page.id,
+      pageName: page.name,
+      childCount: page.children.length,
+      children: Array.from(page.children).map((c) => serializeNode(c, 0)),
+      pluginData: {
+        heimdallMondayItemId: page.getPluginData("heimdallMondayItemId") || null,
+        heimdallBoardId: page.getPluginData("heimdallBoardId") || null
+      }
+    };
+  }
+  async function capturePreWriteSnapshot(apiBase, page, operationKind, mondayItemId, mondayBoardId) {
+    try {
+      const snapshot = serializePageSnapshot(page);
+      const itemId = mondayItemId || page.getPluginData("heimdallMondayItemId") || page.name;
+      const boardId = mondayBoardId || page.getPluginData("heimdallBoardId") || "";
+      await fetch(apiBase + "/api/plugin/capture-version", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mondayItemId: itemId,
+          mondayBoardId: boardId,
+          figmaFileKey: figma.fileKey || "",
+          figmaPageId: page.id,
+          figmaPageName: page.name,
+          capturePhase: "pre_write",
+          operationKind,
+          source: "plugin_sync",
+          pageSnapshot: snapshot
+        })
+      });
+    } catch (e) {
+    }
+  }
   function runSyncBriefings() {
     figma.showUI(uiHtml, { width: 460, height: 580 });
     figma.ui.onmessage = async function(msg) {
@@ -2141,10 +2241,23 @@ Script:`;
         figma.ui.postMessage({ type: "file-key", fileKey: figma.fileKey || "" });
       }
       if (msg.type === "create-template") {
+        const saved = await figma.clientStorage.getAsync("heimdallApiBase");
+        const _apiBase = typeof saved === "string" && saved.trim() ? saved.trim() : "http://localhost:3846";
+        const templatePage = findTemplatePage();
+        if (templatePage) {
+          await capturePreWriteSnapshot(_apiBase, templatePage, "template_create");
+        }
         const result2 = await createAutoLayoutTemplate();
         figma.ui.postMessage({ type: "create-template-done", error: result2.error });
       }
       if (msg.type === "migrate-widgets") {
+        const saved = await figma.clientStorage.getAsync("heimdallApiBase");
+        const _apiBase = typeof saved === "string" && saved.trim() ? saved.trim() : "http://localhost:3846";
+        for (const page of figma.root.children) {
+          if (page.type === "PAGE" && page.getPluginData("heimdallMondayItemId")) {
+            await capturePreWriteSnapshot(_apiBase, page, "widget_migrate");
+          }
+        }
         const result2 = await migrateStatusWidgets();
         figma.ui.postMessage({
           type: "migrate-widgets-done",
@@ -2155,6 +2268,13 @@ Script:`;
         });
       }
       if (msg.type === "fix-layouts") {
+        const saved = await figma.clientStorage.getAsync("heimdallApiBase");
+        const _apiBase = typeof saved === "string" && saved.trim() ? saved.trim() : "http://localhost:3846";
+        for (const page of figma.root.children) {
+          if (page.type === "PAGE" && page.getPluginData("heimdallMondayItemId")) {
+            await capturePreWriteSnapshot(_apiBase, page, "layout_fix");
+          }
+        }
         const result2 = await fixLayouts();
         figma.ui.postMessage({
           type: "fix-layouts-done",
@@ -2164,6 +2284,19 @@ Script:`;
         });
       }
       if (msg.type === "process-jobs" && msg.jobs) {
+        const saved = await figma.clientStorage.getAsync("heimdallApiBase");
+        const _apiBase = typeof saved === "string" && saved.trim() ? saved.trim() : "http://localhost:3846";
+        for (const job2 of msg.jobs) {
+          for (const page of figma.root.children) {
+            if (page.type === "PAGE") {
+              const itemId = page.getPluginData("heimdallMondayItemId");
+              if (itemId && itemId === job2.mondayItemId) {
+                await capturePreWriteSnapshot(_apiBase, page, "update", job2.mondayItemId, job2.mondayBoardId);
+                break;
+              }
+            }
+          }
+        }
         var results;
         try {
           results = await processJobs(msg.jobs);
@@ -2225,6 +2358,18 @@ Script:`;
         }
       }
       if (msg.type === "images-fetched" && msg.images) {
+        const saved = await figma.clientStorage.getAsync("heimdallApiBase");
+        const _apiBase = typeof saved === "string" && saved.trim() ? saved.trim() : "http://localhost:3846";
+        const capturedPageIds = /* @__PURE__ */ new Set();
+        for (const imgData2 of msg.images) {
+          if (imgData2.pageId && !capturedPageIds.has(imgData2.pageId)) {
+            capturedPageIds.add(imgData2.pageId);
+            const _node2 = await figma.getNodeByIdAsync(imgData2.pageId);
+            if (_node2 && _node2.type === "PAGE") {
+              await capturePreWriteSnapshot(_apiBase, _node2, "image_import");
+            }
+          }
+        }
         var totalPlaced = 0;
         var allFailures = [];
         var fetchFailures = (_e = msg.fetchFailures) != null ? _e : [];

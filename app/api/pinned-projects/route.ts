@@ -1,30 +1,24 @@
 import { NextResponse } from 'next/server'
 import { createSupabaseRouteClient } from '@/lib/supabase-auth'
-import { getSupabase } from '@/lib/supabase'
 
 /**
  * GET /api/pinned-projects
  *
  * Returns pinned project IDs for the current authenticated user.
+ * Uses the session-bound client so RLS enforces per-user access.
  */
 export async function GET(request: Request) {
-  const { supabase: authClient } = createSupabaseRouteClient(request)
-  if (!authClient) return NextResponse.json({ pinnedProjectIds: [] })
+  const { supabase } = createSupabaseRouteClient(request)
+  if (!supabase) return NextResponse.json({ pinnedProjectIds: [] })
 
-  const { data: { user } } = await authClient.auth.getUser()
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return NextResponse.json({ pinnedProjectIds: [] })
   }
 
-  const db = getSupabase()
-  if (!db) {
-    return NextResponse.json({ pinnedProjectIds: [] })
-  }
-
-  const { data, error } = await db
+  const { data, error } = await supabase
     .from('pinned_projects')
     .select('project_id')
-    .eq('user_id', user.id)
     .order('pinned_at', { ascending: false })
 
   if (error) {
@@ -44,17 +38,12 @@ export async function GET(request: Request) {
  * Body: { projectId: string }
  */
 export async function POST(request: Request) {
-  const { supabase: authClient } = createSupabaseRouteClient(request)
-  if (!authClient) return NextResponse.json({ error: 'Auth not configured' }, { status: 500 })
+  const { supabase } = createSupabaseRouteClient(request)
+  if (!supabase) return NextResponse.json({ error: 'Auth not configured' }, { status: 500 })
 
-  const { data: { user } } = await authClient.auth.getUser()
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
-  }
-
-  const db = getSupabase()
-  if (!db) {
-    return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
   }
 
   let body: { projectId?: string }
@@ -68,7 +57,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'projectId is required' }, { status: 400 })
   }
 
-  const { error } = await db
+  const { error } = await supabase
     .from('pinned_projects')
     .upsert(
       { user_id: user.id, project_id: body.projectId },
@@ -90,17 +79,12 @@ export async function POST(request: Request) {
  * Body: { projectId: string }
  */
 export async function DELETE(request: Request) {
-  const { supabase: authClient } = createSupabaseRouteClient(request)
-  if (!authClient) return NextResponse.json({ error: 'Auth not configured' }, { status: 500 })
+  const { supabase } = createSupabaseRouteClient(request)
+  if (!supabase) return NextResponse.json({ error: 'Auth not configured' }, { status: 500 })
 
-  const { data: { user } } = await authClient.auth.getUser()
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
-  }
-
-  const db = getSupabase()
-  if (!db) {
-    return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
   }
 
   let body: { projectId?: string }
@@ -114,7 +98,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: 'projectId is required' }, { status: 400 })
   }
 
-  const { error } = await db
+  const { error } = await supabase
     .from('pinned_projects')
     .delete()
     .eq('user_id', user.id)

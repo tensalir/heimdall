@@ -10,6 +10,17 @@ import { createSupabaseRouteClient } from './supabase-auth.js'
 
 export type RoutePolicy = 'public' | 'user' | 'machine' | 'webhook' | 'dual'
 
+const PRIVILEGED_EMAIL_DOMAINS = (process.env.HEIMDALL_ALLOWED_EMAIL_DOMAINS || 'thoughtform.co,loopearplugs.com')
+  .split(',')
+  .map((d) => d.trim().toLowerCase())
+  .filter(Boolean)
+
+export function isPrivilegedEmail(email: string | undefined): boolean {
+  if (!email) return false
+  const domain = email.split('@')[1]?.toLowerCase()
+  return PRIVILEGED_EMAIL_DOMAINS.includes(domain)
+}
+
 /**
  * Require an authenticated Supabase user on a route handler.
  * Returns { user, supabase } on success, or a 401 NextResponse.
@@ -36,6 +47,26 @@ export async function requireUser(request: Request) {
   }
 
   return { user, supabase }
+}
+
+/**
+ * Require a user from a privileged email domain (staff only).
+ * Use for admin/ops/forecast/feedback API routes.
+ */
+export async function requirePrivilegedUser(request: Request) {
+  const result = await requireUser(request)
+  if (result.error) return result
+
+  if (!isPrivilegedEmail(result.user.email)) {
+    return {
+      error: NextResponse.json(
+        { error: 'Insufficient privileges' },
+        { status: 403 },
+      ),
+    }
+  }
+
+  return result
 }
 
 const WEBHOOK_PREFIXES = [

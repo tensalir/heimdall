@@ -1,9 +1,18 @@
 import { createClient } from '@supabase/supabase-js'
 
-const db = createClient(
-  'https://ozmnspzxcatvmubyswni.supabase.co',
-  process.env.SUPABASE_SERVICE_KEY,
-)
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY
+
+if (!SUPABASE_URL) {
+  console.error('SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) is required.')
+  process.exit(1)
+}
+if (!SERVICE_KEY) {
+  console.error('SUPABASE_SERVICE_KEY is required.')
+  process.exit(1)
+}
+
+const db = createClient(SUPABASE_URL, SERVICE_KEY)
 
 const statements = [
   // 1. Create watchlist table

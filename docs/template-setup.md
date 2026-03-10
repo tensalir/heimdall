@@ -57,7 +57,53 @@ Monthly design files use **empty pages as section headers** to group experiments
 2. Add the name to `KNOWN_SECTIONS` in `src/domain/briefing/mondayToBriefing.ts`.
 3. Ensure the Monday item has a matching value in its `use_case` / `product` column.
 
+## Design asset slots and media targets
+
+Each design variation (A through D) contains an **Assets** row with three aspect-ratio frames:
+
+- `NAME-EXP-9x16` (1080 x 1920)
+- `NAME-EXP-4x5` (1080 x 1350)
+- `NAME-EXP-1x1` (1080 x 1080)
+
+Inside each of these outer frames, there is a **Media Target** rectangle node. This is the intended selection layer for placing visual assets (images, video posters) and using Figma's native preview (`Shift+Space`).
+
+- The outer `NAME-EXP-*` frame is the structural slot used by Heimdall for mapping, renaming, and layout.
+- The inner `Media Target` is the leaf node designers should select when placing content or previewing.
+- **Fix Layouts** will automatically backfill a `Media Target` into any existing asset frame that is missing one, without removing existing content.
+
 ## Long text (overflow)
 
 - By default, the plugin sets **text auto-resize** to **HEIGHT** on filled text nodes so they grow with content.
-- Ensure the frame containing these text nodes uses auto-layout (or enough space) so that growing height doesn’t clip. For very long copy, consider a scrollable container or a “notes” block in the template.
+- Ensure the frame containing these text nodes uses auto-layout (or enough space) so that growing height doesn't clip. For very long copy, consider a scrollable container or a "notes" block in the template.
+
+## Version history and restore
+
+Every plugin write operation (sync, template creation, layout fix, widget migration, image import) captures page snapshots in Supabase for version history.
+
+### How it works
+
+- **Pre-write snapshots** are captured automatically before destructive operations (template overwrite, page update, image import).
+- **Post-write snapshots** are captured after successful job completion via `/api/jobs/complete`.
+- Snapshots are stored in the `briefing_page_versions` table, linked to `briefing_syncs` via `current_version_id`.
+
+### Browsing history
+
+- `GET /api/plugin/versions?mondayItemId=X&figmaFileKey=Y` returns version history for a specific page.
+- `GET /api/plugin/versions?figmaFileKey=Y` returns all versions for a file.
+
+### Restoring a version
+
+- `POST /api/plugin/restore` queues a restore-as-copy operation for a specific version.
+- The plugin fetches pending restore items via `GET /api/plugin/restore?figmaFileKey=X` and creates a new page from the snapshot.
+- Default restore mode is **restore_copy**: a new page is created alongside the current one, named `[Original] [restored vN]`. The current page is never overwritten by default.
+
+### Backfilling existing pages
+
+- `POST /api/plugin/backfill-versions` creates version-1 snapshots for synced pages that have no history yet.
+- Run this before structural repairs (like media target backfill) to ensure a restore point exists.
+
+### Known limitations
+
+- Snapshots capture page structure (node tree, text content, plugin data) but not binary image data. Image fidelity on restore is best-effort.
+- Pages synced with a file-name fallback (no real `figma_file_key`) have limited restore reliability.
+- In-place restore is not yet supported; only restore-as-copy is available in V1.

@@ -58,6 +58,7 @@ export interface MetaAdItem {
   proof_type: string | null
   creator_style: string | null
   target_market: string | null
+  need_state: string | null
   days_running: number | null
   language: string | null
   is_top_pick: boolean
@@ -65,6 +66,7 @@ export interface MetaAdItem {
 }
 
 interface Filters {
+  need_state: string
   format: string
   platform: string
   status: string
@@ -77,10 +79,11 @@ interface Filters {
 }
 
 const INITIAL_FILTERS: Filters = {
+  need_state: '',
   format: '',
   platform: '',
   status: '',
-  sort: 'longest_running',
+  sort: 'newest',
   content_style: '',
   target_market: '',
   language: '',
@@ -102,6 +105,16 @@ const CONTENT_STYLE_OPTIONS = [
   { value: 'comparison', label: 'Comparison' },
   { value: 'demo', label: 'Demo' },
   { value: 'storytelling', label: 'Storytelling' },
+]
+
+const NEED_STATE_OPTIONS = [
+  { value: 'sleep', label: 'Sleep' },
+  { value: 'focus', label: 'Focus' },
+  { value: 'sensory', label: 'Sensory / Neurodivergent' },
+  { value: 'festivals', label: 'Festivals / Live Events' },
+  { value: 'parenting', label: 'Parenting' },
+  { value: 'travel', label: 'Travel' },
+  { value: 'wellness', label: 'Wellness' },
 ]
 
 const DAYS_RUNNING_OPTIONS = [
@@ -474,7 +487,7 @@ function MetaAdsLibraryInner() {
   const [filters, setFilters] = useState<Filters>({
     ...INITIAL_FILTERS,
     content_style: urlParams.get('content_style') ?? '',
-    sort: urlParams.get('sort') ?? 'longest_running',
+    sort: urlParams.get('sort') ?? 'newest',
   })
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const { followedBrands, toggleBrand, isFollowing } = useFollowedBrands()
@@ -486,7 +499,7 @@ function MetaAdsLibraryInner() {
     const params = new URLSearchParams()
     const currentSurface = overrideSurface ?? surface
     params.set('surface', currentSurface)
-    const defaultSort = currentSurface === 'top_picks' ? 'quality' : 'longest_running'
+    const defaultSort = currentSurface === 'top_picks' ? 'quality' : 'newest'
     params.set('sort', filters.sort || defaultSort)
     params.set('limit', '200')
 
@@ -499,6 +512,7 @@ function MetaAdsLibraryInner() {
     const searchQ = overrideSearch ?? search
     if (searchQ.trim()) params.set('q', searchQ.trim())
 
+    if (filters.need_state) params.set('need_state', filters.need_state)
     if (filters.content_style) params.set('content_style', filters.content_style)
     if (filters.target_market) params.set('target_market', filters.target_market)
     if (filters.language) params.set('language', filters.language)
@@ -526,7 +540,10 @@ function MetaAdsLibraryInner() {
       const res = await fetch(`/api/briefing-assistant/meta-ads?${params}`)
       const data = await res.json()
 
-      if (data.watchlist_status?.token_ok === false) {
+      if (data.watchlist_status?.last_error) {
+        setTokenWarning(data.watchlist_status.last_error)
+        setBackgroundSyncing(false)
+      } else if (data.watchlist_status?.token_ok === false) {
         setTokenWarning('Meta API token is not configured. Some features may be limited.')
       } else {
         setTokenWarning(null)
@@ -581,8 +598,28 @@ function MetaAdsLibraryInner() {
   const handleSync = useCallback(async () => {
     const query = search.trim()
     if (!query) {
-      fetch('/api/briefing-assistant/meta-ads?action=sync-watchlist', { method: 'POST' }).catch(() => {})
-      setBackgroundSyncing(true)
+      setSyncing(true)
+      setSyncResult(null)
+      try {
+        const res = await fetch('/api/briefing-assistant/meta-ads?action=sync-watchlist', { method: 'POST' })
+        const data = await res.json()
+        if (res.ok) {
+          setFilters((prev) => (prev.sort === 'newest' ? prev : { ...prev, sort: 'newest' }))
+          setSyncResult(data.message ?? 'Watchlist sync triggered. New ads will appear shortly.')
+          setBackgroundSyncing(true)
+        } else {
+          if (data.token_expired) {
+            setTokenWarning(data.error ?? 'Meta API token expired')
+          } else {
+            setError(data.error ?? 'Sync failed')
+          }
+          setBackgroundSyncing(false)
+        }
+      } catch {
+        setError('Sync request failed')
+      } finally {
+        setSyncing(false)
+      }
       return
     }
     setSyncing(true)
@@ -718,6 +755,12 @@ function MetaAdsLibraryInner() {
       <div className="flex-1 overflow-y-auto scrollbar-subtle">
         <div className="flex items-center gap-3 px-6 py-3 border-b border-border bg-card/30">
           <div className="flex items-center gap-1.5 flex-wrap">
+            <FilterDropdown
+              label="Need State"
+              value={filters.need_state}
+              options={NEED_STATE_OPTIONS}
+              onChange={(v) => updateFilter('need_state', v)}
+            />
             <FilterDropdown
               label="Content Style"
               value={filters.content_style}

@@ -1027,7 +1027,16 @@ async function createAutoLayoutTemplate(): Promise<{ error?: string }> {
       const f = figma.createFrame()
       f.name = 'NAME-EXP-' + size
       f.resize(dim.w, dim.h)
-      f.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }]
+      f.fills = []
+      f.clipsContent = true
+      const media = figma.createRectangle()
+      media.name = 'Media Target'
+      media.resize(dim.w, dim.h)
+      media.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }]
+      f.appendChild(media)
+      media.x = 0
+      media.y = 0
+      try { media.constraints = { horizontal: 'SCALE', vertical: 'SCALE' } } catch {}
       assetRow.appendChild(f)
     }
   }
@@ -1319,8 +1328,8 @@ async function fixLayouts(): Promise<FixLayoutsResult> {
     analysis.childrenStretched = phaseStretchChildren(nameBriefing)
     phaseDisableClipping(nameBriefing)
 
-    // Fix asset frame proportions inside Design column variations
     fixAssetFrameRatios(nameBriefing)
+    ensureMediaTargets(nameBriefing)
 
     const gap = 24 * S
     const columnsRow = nameBriefing.children.find(
@@ -1369,6 +1378,42 @@ async function fixLayouts(): Promise<FixLayoutsResult> {
     result.pagesFixed++
   }
   return result
+}
+
+/**
+ * Ensure every NAME-EXP-* asset frame contains a dedicated 'Media Target' child.
+ * If the inner target is missing, insert one without removing existing content.
+ */
+function ensureMediaTargets(node: BaseNode): number {
+  let added = 0
+  if (node.type === 'FRAME') {
+    const frame = node as FrameNode
+    const nameLower = frame.name.toLowerCase()
+    const isAssetFrame = Object.keys(ASSET_SIZES).some(k => nameLower.endsWith(k.toLowerCase()))
+    if (isAssetFrame) {
+      const hasMediaTarget = frame.children.some(
+        c => c.name === 'Media Target'
+      )
+      if (!hasMediaTarget) {
+        const media = figma.createRectangle()
+        media.name = 'Media Target'
+        media.resize(frame.width, frame.height)
+        media.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }]
+        frame.insertChild(0, media)
+        media.x = 0
+        media.y = 0
+        try { media.constraints = { horizontal: 'SCALE', vertical: 'SCALE' } } catch {}
+        frame.clipsContent = true
+        added++
+      }
+      return added
+    }
+  }
+  const container = node as { children?: readonly BaseNode[] }
+  if (container.children) {
+    for (const child of container.children) added += ensureMediaTargets(child)
+  }
+  return added
 }
 
 /** Walk a subtree and correct any asset frames whose dimensions have drifted. */
@@ -2835,6 +2880,65 @@ var uiHtml = '<html><head><style>'
   + 'parent.postMessage({ pluginMessage: { type: "get-api-base" } }, "*");'
   + '</script></body></html>'
 
+function serializePageSnapshot(page: PageNode): Record<string, unknown> {
+  function serializeNode(node: BaseNode, depth: number): Record<string, unknown> {
+    const out: Record<string, unknown> = {
+      id: node.id,
+      name: node.name,
+      type: node.type,
+    }
+    if (node.type === 'TEXT') {
+      out.characters = ((node as TextNode).characters ?? '').substring(0, 500)
+    }
+    if (depth < 4) {
+      const withChildren = node as { children?: readonly BaseNode[] }
+      if (withChildren.children) {
+        out.children = Array.from(withChildren.children).map(c => serializeNode(c, depth + 1))
+      }
+    }
+    return out
+  }
+  return {
+    pageId: page.id,
+    pageName: page.name,
+    childCount: page.children.length,
+    children: Array.from(page.children).map(c => serializeNode(c, 0)),
+    pluginData: {
+      heimdallMondayItemId: page.getPluginData('heimdallMondayItemId') || null,
+      heimdallBoardId: page.getPluginData('heimdallBoardId') || null,
+    },
+  }
+}
+
+async function capturePreWriteSnapshot(
+  apiBase: string,
+  page: PageNode,
+  operationKind: string,
+  mondayItemId?: string,
+  mondayBoardId?: string,
+): Promise<void> {
+  try {
+    const snapshot = serializePageSnapshot(page)
+    const itemId = mondayItemId || page.getPluginData('heimdallMondayItemId') || page.name
+    const boardId = mondayBoardId || page.getPluginData('heimdallBoardId') || ''
+    await fetch(apiBase + '/api/plugin/capture-version', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mondayItemId: itemId,
+        mondayBoardId: boardId,
+        figmaFileKey: figma.fileKey || '',
+        figmaPageId: page.id,
+        figmaPageName: page.name,
+        capturePhase: 'pre_write',
+        operationKind,
+        source: 'plugin_sync',
+        pageSnapshot: snapshot,
+      }),
+    })
+  } catch {}
+}
+
 export function runSyncBriefings() {
   figma.showUI(uiHtml, { width: 460, height: 580 })
 
@@ -2928,10 +3032,23 @@ export function runSyncBriefings() {
       figma.ui.postMessage({ type: 'file-key', fileKey: figma.fileKey || '' })
     }
     if (msg.type === 'create-template') {
+      const saved = await figma.clientStorage.getAsync('heimdallApiBase')
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      const templatePage = findTemplatePage()
+      if (templatePage) {
+        await capturePreWriteSnapshot(_apiBase, templatePage, 'template_create')
+      }
       const result = await createAutoLayoutTemplate()
       figma.ui.postMessage({ type: 'create-template-done', error: result.error })
     }
     if (msg.type === 'migrate-widgets') {
+      const saved = await figma.clientStorage.getAsync('heimdallApiBase')
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      for (const page of figma.root.children) {
+        if (page.type === 'PAGE' && page.getPluginData('heimdallMondayItemId')) {
+          await capturePreWriteSnapshot(_apiBase, page as PageNode, 'widget_migrate')
+        }
+      }
       const result = await migrateStatusWidgets()
       figma.ui.postMessage({
         type: 'migrate-widgets-done',
@@ -2942,6 +3059,13 @@ export function runSyncBriefings() {
       })
     }
     if (msg.type === 'fix-layouts') {
+      const saved = await figma.clientStorage.getAsync('heimdallApiBase')
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      for (const page of figma.root.children) {
+        if (page.type === 'PAGE' && page.getPluginData('heimdallMondayItemId')) {
+          await capturePreWriteSnapshot(_apiBase, page as PageNode, 'layout_fix')
+        }
+      }
       const result = await fixLayouts()
       figma.ui.postMessage({
         type: 'fix-layouts-done',
@@ -2951,6 +3075,19 @@ export function runSyncBriefings() {
       })
     }
     if (msg.type === 'process-jobs' && msg.jobs) {
+      const saved = await figma.clientStorage.getAsync('heimdallApiBase')
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      for (const job of msg.jobs) {
+        for (const page of figma.root.children) {
+          if (page.type === 'PAGE') {
+            const itemId = (page as PageNode).getPluginData('heimdallMondayItemId')
+            if (itemId && itemId === job.mondayItemId) {
+              await capturePreWriteSnapshot(_apiBase, page as PageNode, 'update', job.mondayItemId, job.mondayBoardId)
+              break
+            }
+          }
+        }
+      }
       var results: Array<{ idempotencyKey: string; experimentPageName: string; pageId: string; fileUrl: string; error?: string; contentEmpty?: boolean }>
       try {
         results = await processJobs(msg.jobs)
@@ -3014,6 +3151,18 @@ export function runSyncBriefings() {
     }
 
     if (msg.type === 'images-fetched' && msg.images) {
+      const saved = await figma.clientStorage.getAsync('heimdallApiBase')
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      const capturedPageIds = new Set<string>()
+      for (const imgData of msg.images) {
+        if (imgData.pageId && !capturedPageIds.has(imgData.pageId)) {
+          capturedPageIds.add(imgData.pageId)
+          const _node = await figma.getNodeByIdAsync(imgData.pageId)
+          if (_node && _node.type === 'PAGE') {
+            await capturePreWriteSnapshot(_apiBase, _node as PageNode, 'image_import')
+          }
+        }
+      }
       var totalPlaced = 0
       var allFailures: Array<{ name: string; reason: string }> = []
       var fetchFailures: Array<{ name: string; reason: string }> = (msg.fetchFailures as Array<{ name: string; reason: string }>) ?? []

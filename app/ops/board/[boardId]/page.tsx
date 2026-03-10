@@ -188,9 +188,9 @@ export default function BoardDetailPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-6 h-[calc(100vh-4rem)] overflow-hidden">
       {/* Header */}
-      <div>
+      <div className="shrink-0">
         <Link href="/ops" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-3">
           <ArrowLeft className="h-4 w-4" /> All Boards
         </Link>
@@ -218,7 +218,7 @@ export default function BoardDetailPage() {
 
       {/* Progress bar */}
       {board && (
-        <PipelineProgress
+        <PipelineProgress className="shrink-0"
           total={filteredItems.length}
           synced={filteredItems.filter(i => i.pipeline_status === 'synced').length}
           queued={filteredItems.filter(i => i.pipeline_status === 'queued' || i.pipeline_status === 'syncing').length}
@@ -228,7 +228,7 @@ export default function BoardDetailPage() {
       )}
 
       {/* Filters + view toggle */}
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-4 shrink-0">
         <div className="flex items-center gap-2 flex-wrap">
           {/* Batch filter */}
           <div className="flex items-center gap-1">
@@ -348,17 +348,19 @@ export default function BoardDetailPage() {
       </div>
 
       {/* Content */}
-      {viewMode === 'kanban' ? (
-        <KanbanView
-          items={filteredItems}
-          showOther={showOtherLane}
-          onToggleOther={() => setShowOtherLane(!showOtherLane)}
-          onQueueReady={handleQueueEligible}
-          onItemClick={setSelectedItem}
-        />
-      ) : (
-        <TableView items={filteredItems} onItemClick={setSelectedItem} />
-      )}
+      <div className="flex-1 min-h-0">
+        {viewMode === 'kanban' ? (
+          <KanbanView
+            items={filteredItems}
+            showOther={showOtherLane}
+            onToggleOther={() => setShowOtherLane(!showOtherLane)}
+            onQueueReady={handleQueueEligible}
+            onItemClick={setSelectedItem}
+          />
+        ) : (
+          <TableView items={filteredItems} onItemClick={setSelectedItem} />
+        )}
+      </div>
 
       <BriefingDocModal
         open={selectedItem !== null}
@@ -372,6 +374,52 @@ export default function BoardDetailPage() {
 }
 
 // ── Kanban ──────────────────────────────────────────────────────────────────
+
+const LANE_PAGE_SIZE = 15
+
+function KanbanLaneColumn({
+  lane,
+  items,
+  onItemClick,
+  headerAction,
+}: {
+  lane: KanbanLane
+  items: OpsBoardItem[]
+  onItemClick: (item: OpsBoardItem) => void
+  headerAction?: React.ReactNode
+}) {
+  const [visibleCount, setVisibleCount] = useState(LANE_PAGE_SIZE)
+  const visible = items.slice(0, visibleCount)
+  const remaining = items.length - visibleCount
+
+  return (
+    <div className="flex flex-col min-h-0">
+      <div className="flex items-center justify-between px-1 shrink-0 mb-2">
+        <LanePill lane={lane} count={items.length} />
+        {headerAction}
+      </div>
+      <div className="flex-1 min-h-[120px] overflow-y-auto scrollbar-subtle rounded-lg bg-muted/40 p-2 space-y-2 max-h-[calc(100vh-280px)]">
+        {items.length === 0 ? (
+          <p className="py-6 text-center text-[11px] text-muted-foreground/50">Empty</p>
+        ) : (
+          <>
+            {visible.map(item => (
+              <KanbanCard key={item.id} item={item} onClick={() => onItemClick(item)} />
+            ))}
+            {remaining > 0 && (
+              <button
+                className="w-full rounded-md border border-dashed border-border py-2 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                onClick={() => setVisibleCount(c => c + LANE_PAGE_SIZE)}
+              >
+                Load more ({remaining} remaining)
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function KanbanView({
   items,
@@ -398,35 +446,27 @@ function KanbanView({
   }, [items])
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {WORKFLOW_LANES.map(lane => {
-          const columnItems = laneItems[lane]
-          return (
-            <div key={lane} className="space-y-2">
-              <div className="flex items-center justify-between px-1">
-                <LanePill lane={lane} count={columnItems.length} />
-                {lane === 'ready_for_figma' && columnItems.length > 0 && (
-                  <Button variant="ghost" size="sm" className="h-6 gap-1 text-[10px] px-1.5" onClick={onQueueReady}>
-                    <Play className="h-2.5 w-2.5" /> Queue All
-                  </Button>
-                )}
-              </div>
-              <div className="space-y-2 rounded-lg bg-muted/40 p-2 min-h-[120px]">
-                {columnItems.length === 0 ? (
-                  <p className="py-6 text-center text-[11px] text-muted-foreground/50">Empty</p>
-                ) : (
-                  columnItems.map(item => <KanbanCard key={item.id} item={item} onClick={() => onItemClick(item)} />)
-                )}
-              </div>
-            </div>
-          )
-        })}
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 items-start flex-1 min-h-0">
+        {WORKFLOW_LANES.map(lane => (
+          <KanbanLaneColumn
+            key={lane}
+            lane={lane}
+            items={laneItems[lane]}
+            onItemClick={onItemClick}
+            headerAction={
+              lane === 'ready_for_figma' && laneItems[lane].length > 0 ? (
+                <Button variant="ghost" size="sm" className="h-6 gap-1 text-[10px] px-1.5" onClick={onQueueReady}>
+                  <Play className="h-2.5 w-2.5" /> Queue All
+                </Button>
+              ) : undefined
+            }
+          />
+        ))}
       </div>
 
-      {/* Other lane (collapsible) */}
       {laneItems.other.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-2 shrink-0">
           <button
             className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground hover:text-foreground"
             onClick={onToggleOther}
