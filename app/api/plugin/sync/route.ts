@@ -5,6 +5,7 @@ import {
   hasSuccessfulImport,
   appendImportEvent,
 } from '@/src/services/briefingSyncStore'
+import { updateItemPipelineStatus } from '@/src/services/opsBoardStore'
 export const dynamic = 'force-dynamic'
 
 const BOARD_ID = process.env.MONDAY_BOARD_ID ?? '9147622374'
@@ -123,6 +124,14 @@ export async function POST(request: NextRequest) {
       if (result.outcome === 'queued' || result.outcome === 'skipped') {
         queued++
         if (result.job) jobs.push({ id: result.job.id, itemName: result.job.experimentPageName ?? name })
+        if (result.outcome === 'queued') {
+          syncPromises.push(
+            updateItemPipelineStatus(itemId, BOARD_ID, 'queued', {
+              queued_at: new Date().toISOString(),
+              figma_file_key: result.job?.figmaFileKey ?? undefined,
+            }).then(() => {})
+          )
+        }
         if (syncFileRef) {
           syncPromises.push(
             upsertSync({

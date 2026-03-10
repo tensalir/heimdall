@@ -293,6 +293,15 @@ export async function syncBoardItems(boardId: string): Promise<{
 
   const existingSyncs = await getExistingSyncsForBoard(board.monday_board_id)
 
+  const PRESERVE_STATUSES: Set<PipelineStatus> = new Set(['failed', 'queued', 'syncing', 'synced'])
+  const { data: existingRows } = await db
+    .from('ops_board_items')
+    .select('monday_item_id, pipeline_status')
+    .eq('monday_board_id', board.monday_board_id)
+  const existingStatusMap = new Map<string, PipelineStatus>(
+    (existingRows ?? []).map(r => [r.monday_item_id, r.pipeline_status as PipelineStatus])
+  )
+
   const errors: string[] = []
   let upserted = 0
 
@@ -308,9 +317,11 @@ export async function syncBoardItems(boardId: string): Promise<{
       })
       const experimentName = row.name
 
-      const alreadySynced = existingSyncs.has(row.id)
+      const currentStatus = existingStatusMap.get(row.id)
       let pipelineStatus: PipelineStatus = 'new'
-      if (alreadySynced) {
+      if (currentStatus && PRESERVE_STATUSES.has(currentStatus)) {
+        pipelineStatus = currentStatus
+      } else if (existingSyncs.has(row.id)) {
         pipelineStatus = 'synced'
       } else if (mondayStatus && eligibleSet.has(mondayStatus.toLowerCase().trim())) {
         pipelineStatus = 'eligible'

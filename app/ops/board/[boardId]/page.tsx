@@ -86,7 +86,15 @@ export default function BoardDetailPage() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('kanban')
-  const [filterBatch, setFilterBatch] = useState<string | 'all'>('all')
+  const batchStorageKey = `heimdall:ops:last-batch:${boardId}`
+  const [filterBatch, _setFilterBatch] = useState<string | 'all'>(() => {
+    if (typeof window === 'undefined') return 'all'
+    return localStorage.getItem(batchStorageKey) ?? 'all'
+  })
+  const setFilterBatch = useCallback((v: string | 'all') => {
+    _setFilterBatch(v)
+    try { localStorage.setItem(batchStorageKey, v) } catch {}
+  }, [batchStorageKey])
   const [filterPartners, setFilterPartners] = useState<Set<string>>(new Set())
   const [showOtherLane, setShowOtherLane] = useState(false)
   const [filtersInitialized, setFiltersInitialized] = useState(false)
@@ -125,7 +133,10 @@ export default function BoardDetailPage() {
     const batchValues = [...new Set(items.map(i => i.batch_canonical).filter(Boolean))] as string[]
     if (batchValues.length > 0) {
       const sorted = batchValues.sort()
-      setFilterBatch(sorted[sorted.length - 1])
+      const persisted = filterBatch !== 'all' && sorted.includes(filterBatch) ? filterBatch : null
+      if (!persisted) {
+        setFilterBatch(sorted[sorted.length - 1])
+      }
     }
 
     setFiltersInitialized(true)

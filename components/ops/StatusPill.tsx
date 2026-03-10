@@ -108,6 +108,7 @@ export function StatusDot({ status, className }: { status: PipelineStatus; class
 }
 
 export function getKanbanLane(mondayStatus: string | null, pipelineStatus: PipelineStatus): KanbanLane {
+  if (pipelineStatus === 'failed' || pipelineStatus === 'skipped') return 'other'
   if (pipelineStatus === 'synced' || pipelineStatus === 'queued' || pipelineStatus === 'syncing') {
     const status = (mondayStatus ?? '').toLowerCase().trim()
     if (status === 'exported to frontify') return 'exported'
