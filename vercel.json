@@ -6,6 +6,10 @@
   "outputDirectory": ".next",
   "crons": [
     {
+      "path": "/api/cron/hibob-sync",
+      "schedule": "0 6 * * 1-5"
+    },
+    {
       "path": "/api/briefing-assistant/trends/discover",
       "schedule": "0 7 * * *"
     },

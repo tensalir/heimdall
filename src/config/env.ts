@@ -102,6 +102,26 @@ const envSchema = z.object({
   MONDAY_BRIEFING_DOC_COLUMN_ID: z.string().optional(),
   /** Monday briefing group ID. */
   MONDAY_BRIEFING_GROUP_ID: z.string().optional(),
+
+  // HiBob → Monday leave sync
+  /** HiBob service user ID for API authentication. */
+  HIBOB_SERVICE_USER_ID: z.string().min(1).optional(),
+  /** HiBob service user API token. */
+  HIBOB_API_TOKEN: z.string().min(1).optional(),
+  /** Shared secret appended as ?secret= to the HiBob webhook URL for verification. */
+  HIBOB_WEBHOOK_SECRET: z.string().min(1).optional(),
+  /** Monday board ID for the team/leave board (e.g. 4826368978). */
+  MONDAY_HIBOB_BOARD_ID: z.string().optional(),
+  /** Monday column ID used for email lookup (join key). */
+  MONDAY_HIBOB_EMAIL_COLUMN_ID: z.string().optional(),
+  /** Monday status column ID to write leave status into. */
+  MONDAY_HIBOB_STATUS_COLUMN_ID: z.string().optional(),
+  /** Optional: column ID for leave type (text). */
+  MONDAY_HIBOB_LEAVE_TYPE_COLUMN_ID: z.string().optional(),
+  /** Optional: column ID for leave start date. */
+  MONDAY_HIBOB_LEAVE_START_COLUMN_ID: z.string().optional(),
+  /** Optional: column ID for leave end date. */
+  MONDAY_HIBOB_LEAVE_END_COLUMN_ID: z.string().optional(),
 })
 
 export type Env = z.infer<typeof envSchema>

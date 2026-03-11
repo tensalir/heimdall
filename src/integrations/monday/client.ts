@@ -196,3 +196,43 @@ export async function updateColumnValue(
   )
   return !!data?.change_column_value?.id
 }
+
+/**
+ * Update multiple column values in a single API call.
+ * `columnValues` is a map of column ID → value (string for simple, object for JSON types).
+ */
+export async function updateMultipleColumnValues(
+  boardId: string,
+  itemId: string,
+  columnValues: Record<string, unknown>,
+): Promise<boolean> {
+  const data = await mondayGraphql<{ change_multiple_column_values: { id: string } }>(
+    `mutation ($boardId: ID!, $itemId: ID!, $columnValues: JSON!) {
+      change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $columnValues) { id }
+    }`,
+    { boardId, itemId, columnValues: JSON.stringify(columnValues) },
+  )
+  return !!data?.change_multiple_column_values?.id
+}
+
+/**
+ * Find items on a board where a specific column matches the given value.
+ * Useful for looking up an employee row by email.
+ */
+export async function findItemsByColumnValue(
+  boardId: string,
+  columnId: string,
+  value: string,
+): Promise<Array<{ id: string; name: string }>> {
+  const data = await mondayGraphql<{
+    items_page_by_column_values: { items: Array<{ id: string; name: string }> }
+  }>(
+    `query ($boardId: ID!, $columns: [ItemsByColumnValuesQuery!]!) {
+      items_page_by_column_values(board_id: $boardId, columns: $columns, limit: 5) {
+        items { id name }
+      }
+    }`,
+    { boardId, columns: [{ column_id: columnId, column_values: [value] }] },
+  )
+  return data?.items_page_by_column_values?.items ?? []
+}
