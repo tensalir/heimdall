@@ -86,7 +86,7 @@ body{font-family:Inter,-apple-system,system-ui,sans-serif;background:#1e1e1e;col
 
 <div class="footer">
   <span class="field-label">API</span>
-  <input id="api-base" class="field-input" placeholder="http://localhost:3846" style="font-size:9px;" />
+  <input id="api-base" class="field-input" placeholder="https://heimdall-tensalir.vercel.app" style="font-size:9px;" />
   <button class="btn btn-outline btn-sm" id="save-api">Save</button>
 </div>
 
@@ -94,7 +94,7 @@ body{font-family:Inter,-apple-system,system-ui,sans-serif;background:#1e1e1e;col
 parent.postMessage({ pluginMessage: { type: "get-api-base" } }, "*");
 parent.postMessage({ pluginMessage: { type: "get-file-key" } }, "*");
 
-var DEFAULT_HEIMDALL_API = "http://localhost:3846";
+var DEFAULT_HEIMDALL_API = "https://heimdall-tensalir.vercel.app";
 var HEIMDALL_API = DEFAULT_HEIMDALL_API;
 var fileKey = "";
 var allComments = [];
@@ -292,17 +292,28 @@ export function runExportComments() {
   figma.ui.onmessage = async function (msg: {
     type: string;
     apiBase?: string;
+    token?: string;
   }) {
     if (msg.type === 'get-api-base') {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      const apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
       figma.ui.postMessage({ type: 'api-base', apiBase })
     }
     if (msg.type === 'save-api-base') {
       const raw = msg.apiBase ?? ''
-      const apiBase = raw.trim().replace(/\/$/, '') || 'http://localhost:3846'
+      const apiBase = raw.trim().replace(/\/$/, '') || 'https://heimdall-tensalir.vercel.app'
       await figma.clientStorage.setAsync('heimdallApiBase', apiBase)
       figma.ui.postMessage({ type: 'api-base', apiBase })
+    }
+    if (msg.type === 'get-plugin-token') {
+      const saved = await figma.clientStorage.getAsync('heimdallPluginToken')
+      const token = typeof saved === 'string' && saved.trim() ? saved.trim() : ''
+      figma.ui.postMessage({ type: 'plugin-token', token })
+    }
+    if (msg.type === 'save-plugin-token') {
+      const token = (msg.token ?? '').trim()
+      await figma.clientStorage.setAsync('heimdallPluginToken', token)
+      figma.ui.postMessage({ type: 'plugin-token', token })
     }
     if (msg.type === 'get-file-key') {
       figma.ui.postMessage({ type: 'file-key', fileKey: figma.fileKey || '' })

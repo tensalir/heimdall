@@ -73,7 +73,9 @@ interface QueuedJob {
   /** Pre-computed frame renames */
   frameRenames?: Array<{ oldName: string; newName: string }>
   /** Image attachments from Monday briefing to import into Figma */
-  images?: Array<{ url: string; name: string; source: string }>
+  images?: Array<{ url: string; name: string; source: string; assetId?: string }>
+  /** Reference URLs extracted from the Monday doc Reference section */
+  referenceLinks?: Array<{ url: string; label?: string; source: string }>
 }
 
 /** Pending image import request sent to UI for fetching. */
@@ -146,6 +148,269 @@ async function loadFontsForTextNode(textNode: TextNode): Promise<void> {
       }
     }
   }
+}
+
+/**
+ * Dynamic-page mode can deadlock when traversing instance/component internals.
+ * Layout repair only needs editable frame/text structure, so skip those subtrees.
+ */
+function getTraversableChildren(node: BaseNode): readonly BaseNode[] | null {
+  if (node.type === 'INSTANCE' || node.type === 'COMPONENT' || node.type === 'COMPONENT_SET') {
+    return null
+  }
+  const withChildren = node as { children?: readonly BaseNode[] }
+  return withChildren.children ?? null
+}
+
+// #region agent log
+const DEBUG_ENDPOINT = ''
+const DEBUG_SESSION_ID = 'ee788c'
+let debugSelectionListenerBound = false
+let debugSelectionLogCount = 0
+let debugFixLayoutsRunCounter = 0
+let debugActiveFixLayoutsRunId = ''
+let debugFixLayoutsFrameReports: Array<Record<string, unknown>> = []
+let debugFixLayoutsFocusPageName = ''
+
+function postDebugLog(
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+  hypothesisId: string,
+  runId: string,
+): void {
+  fetch(DEBUG_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':DEBUG_SESSION_ID},body:JSON.stringify({sessionId:DEBUG_SESSION_ID,location,message,data,timestamp:Date.now(),runId,hypothesisId})}).catch(()=>{})
+}
+
+function getDebugNodeLabel(node: BaseNode | null | undefined): string {
+  if (!node) return 'null'
+  const withName = node as { name?: string }
+  return `${node.type}:${withName.name ?? ''}`
+}
+
+function getDebugNodePath(node: BaseNode | null | undefined): string[] {
+  const path: string[] = []
+  let current: BaseNode | null = node ?? null
+  let depth = 0
+  while (current && depth < 12) {
+    path.unshift(getDebugNodeLabel(current))
+    current = current.parent ?? null
+    depth++
+  }
+  return path
+}
+
+function summarizeDebugChildren(children: readonly BaseNode[]): Array<{ type: string; name: string }> {
+  return Array.from(children).slice(0, 8).map((child) => ({
+    type: child.type,
+    name: (child as { name?: string }).name ?? '',
+  }))
+}
+
+function summarizeNodeFills(node: BaseNode): unknown {
+  const fills = (node as SceneNode & { fills?: unknown }).fills
+  if (!fills) return null
+  if (!Array.isArray(fills)) return String(fills)
+  return fills.slice(0, 4).map((fill) => {
+    const paint = fill as Record<string, unknown>
+    return {
+      type: paint.type ?? null,
+      visible: paint.visible ?? true,
+      scaleMode: paint.scaleMode ?? null,
+      opacity: paint.opacity ?? null,
+    }
+  })
+}
+
+function summarizeNodeReactions(node: BaseNode): number {
+  const maybe = node as { reactions?: unknown }
+  if (!maybe.reactions || !Array.isArray(maybe.reactions)) return 0
+  return maybe.reactions.length
+}
+
+function summarizeNodeLayoutContext(node: BaseNode): Record<string, unknown> {
+  const parent = node.parent
+  if (!parent || parent.type !== 'FRAME') return { parentType: parent?.type ?? null }
+  const frameParent = parent as FrameNode
+  return {
+    parentType: 'FRAME',
+    parentName: frameParent.name,
+    parentLayoutMode: frameParent.layoutMode,
+    parentClipsContent: frameParent.clipsContent,
+  }
+}
+
+function summarizeNodeVideoFillState(node: BaseNode): Record<string, unknown> {
+  if (node.type !== 'RECTANGLE') return { rectangle: false, hasVideoFill: false }
+  const fills = getRectangleFills(node as RectangleNode)
+  return {
+    rectangle: true,
+    hasVideoFill: isVideoPaintFill(fills),
+    fillCount: fills?.length ?? 0,
+  }
+}
+
+function summarizePageFlowState(page: PageNode, node: BaseNode): Record<string, unknown> {
+  const startsRaw = (page as unknown as { flowStartingPoints?: Array<{ nodeId?: string; name?: string }> }).flowStartingPoints
+  const starts = Array.isArray(startsRaw) ? startsRaw : []
+  const ancestorIds = new Set<string>()
+  let current: BaseNode | null = node
+  let depth = 0
+  while (current && depth < 12) {
+    ancestorIds.add(current.id)
+    current = current.parent
+    depth++
+  }
+  const matching = starts.filter((sp) => sp?.nodeId && ancestorIds.has(sp.nodeId))
+  return {
+    flowStartCount: starts.length,
+    selectedOrAncestorIsFlowStart: matching.length > 0,
+    matchingFlowStarts: matching.slice(0, 3).map((sp) => ({ nodeId: sp.nodeId ?? null, name: sp.name ?? null })),
+  }
+}
+
+function findAssetFrameAncestor(node: BaseNode | null | undefined): FrameNode | null {
+  let current: BaseNode | null = node ?? null
+  while (current) {
+    if (current.type === 'FRAME') {
+      const frame = current as FrameNode
+      if (getAssetFrameKey(frame)) {
+        return frame
+      }
+    }
+    current = current.parent ?? null
+  }
+  return null
+}
+
+function getAssetSizeMatch(width: number, height: number): string | null {
+  for (const [key, dim] of Object.entries(ASSET_SIZES)) {
+    if (Math.abs(width - dim.w) <= 2 && Math.abs(height - dim.h) <= 2) {
+      return key
+    }
+  }
+  return null
+}
+
+function getAssetFrameKey(frame: FrameNode): string | null {
+  const nameLower = frame.name.toLowerCase()
+  const byName = Object.keys(ASSET_SIZES).find((key) => nameLower.endsWith(key.toLowerCase()))
+  if (byName) return byName
+  const bySize = getAssetSizeMatch(frame.width, frame.height)
+  if (!bySize) return null
+  if (frame.parent?.type === 'FRAME' && frame.parent.name === 'Assets') return bySize
+  return null
+}
+
+function getAncestorFrameDebug(node: BaseNode | null | undefined): Array<Record<string, unknown>> {
+  const frames: Array<Record<string, unknown>> = []
+  let current: BaseNode | null = node ?? null
+  let depth = 0
+  while (current && depth < 12) {
+    if (current.type === 'FRAME') {
+      const frame = current as FrameNode
+      frames.push({
+        name: frame.name,
+        width: Math.round(frame.width),
+        height: Math.round(frame.height),
+        assetSizeMatch: getAssetSizeMatch(frame.width, frame.height),
+        parentName: frame.parent?.type === 'FRAME' ? frame.parent.name : frame.parent?.type ?? null,
+        reactions: summarizeNodeReactions(frame),
+      })
+    }
+    current = current.parent ?? null
+    depth++
+  }
+  return frames
+}
+
+function getSelectionDebugData(): Record<string, unknown> {
+  const selection = figma.currentPage.selection
+  const first = selection[0] ?? null
+  const assetFrame = findAssetFrameAncestor(first)
+  return {
+    currentPage: figma.currentPage.name,
+    selectionCount: selection.length,
+    selected: selection.slice(0, 3).map((node) => ({
+      type: node.type,
+      name: node.name,
+      path: getDebugNodePath(node),
+      ancestorFrames: getAncestorFrameDebug(node),
+      fills: summarizeNodeFills(node),
+      reactions: summarizeNodeReactions(node),
+      layoutContext: summarizeNodeLayoutContext(node),
+      videoFillState: summarizeNodeVideoFillState(node),
+      flowState: summarizePageFlowState(figma.currentPage, node),
+    })),
+    assetFrame: assetFrame ? {
+      name: assetFrame.name,
+      path: getDebugNodePath(assetFrame),
+      hasMediaTarget: assetFrame.children.some((child) => child.name === 'Media Target'),
+      childSummary: summarizeDebugChildren(assetFrame.children),
+      childFills: Array.from(assetFrame.children).slice(0, 6).map((child) => ({
+        type: child.type,
+        name: child.name,
+        fills: summarizeNodeFills(child),
+      })),
+    } : null,
+  }
+}
+
+function recordFixLayoutsFrameReport(frame: FrameNode, hadMediaTarget: boolean, addedMediaTarget: boolean): void {
+  if (!debugActiveFixLayoutsRunId) return
+  const framePath = getDebugNodePath(frame)
+  const belongsToFocusPage = debugFixLayoutsFocusPageName
+    ? framePath.includes(`PAGE:${debugFixLayoutsFocusPageName}`)
+    : false
+  if (!belongsToFocusPage && debugFixLayoutsFrameReports.length >= 20) return
+  debugFixLayoutsFrameReports.push({
+    frameName: frame.name,
+    framePath,
+    assetFrameKey: getAssetFrameKey(frame),
+    hadMediaTarget,
+    addedMediaTarget,
+    childSummary: summarizeDebugChildren(frame.children),
+    childGeometry: Array.from(frame.children).slice(0, 6).map((child) => ({
+      type: child.type,
+      name: child.name,
+      width: 'width' in child ? Math.round((child as SceneNode).width) : null,
+      height: 'height' in child ? Math.round((child as SceneNode).height) : null,
+      fills: summarizeNodeFills(child),
+    })),
+  })
+}
+// #endregion
+
+function getRectangleFills(node: SceneNode): readonly Paint[] | null {
+  if (node.type !== 'RECTANGLE') return null
+  const fills = (node as RectangleNode).fills
+  if (!Array.isArray(fills)) return null
+  return fills as readonly Paint[]
+}
+
+function isVideoPaintFill(fills: readonly Paint[] | null): boolean {
+  if (!fills || fills.length === 0) return false
+  return fills.some((paint) => paint.type === 'VIDEO' && paint.visible !== false)
+}
+
+function isSolidOnlyFill(fills: readonly Paint[] | null): boolean {
+  if (!fills || fills.length === 0) return false
+  return fills.every((paint) => paint.type === 'SOLID')
+}
+
+function isFrameSizedRectangle(node: SceneNode, frame: FrameNode): boolean {
+  if (node.type !== 'RECTANGLE') return false
+  return Math.abs(node.width - frame.width) <= 2 && Math.abs(node.height - frame.height) <= 2
+}
+
+function findFrameVideoRect(frame: FrameNode): RectangleNode | null {
+  for (const child of frame.children) {
+    if (child.type !== 'RECTANGLE') continue
+    if (!isFrameSizedRectangle(child, frame)) continue
+    const fills = getRectangleFills(child)
+    if (isVideoPaintFill(fills)) return child
+  }
+  return null
 }
 
 async function fillTextNodes(node: BaseNode, briefing: BriefingPayload): Promise<void> {
@@ -1277,16 +1542,27 @@ interface FixLayoutsResult {
   pagesSkipped: number
 }
 
-/** Detect whether a page uses the Heimdall template structure. */
-function isHeimdallTemplatePage(page: PageNode): boolean {
-  const nameBriefing = page.children.find(
-    (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Name Briefing'
-  ) as FrameNode | undefined
-  if (!nameBriefing) return false
-  const hasColumnsRow = nameBriefing.children.some(
+function hasColumnsRow(frame: FrameNode): boolean {
+  return frame.children.some(
     (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Columns'
   )
-  return hasColumnsRow
+}
+
+/**
+ * Legacy imported pages are not always rooted at "Name Briefing".
+ * Some older files use the experiment name for the same top-level frame.
+ */
+function findPageContentRoot(page: PageNode): FrameNode | null {
+  const directFrames = page.children.filter((c) => c.type === 'FRAME') as FrameNode[]
+  const canonical = directFrames.find((frame) => frame.name === 'Name Briefing')
+  if (canonical) return canonical
+  const legacy = directFrames.find((frame) => hasColumnsRow(frame))
+  return legacy ?? null
+}
+
+/** Detect whether a page uses the Heimdall template structure. */
+function isHeimdallTemplatePage(page: PageNode): boolean {
+  return !!findPageContentRoot(page)
 }
 
 /**
@@ -1296,10 +1572,25 @@ function isHeimdallTemplatePage(page: PageNode): boolean {
 async function fixLayouts(): Promise<FixLayoutsResult> {
   const result: FixLayoutsResult = { pagesFixed: 0, pagesSkipped: 0 }
   const root = figma.root
-  try {
-    await figma.loadFontAsync(TEMPLATE_FONT)
-    await figma.loadFontAsync(TEMPLATE_FONT_BOLD)
-  } catch (_) {}
+  const debugRunId = `fix-layouts-${++debugFixLayoutsRunCounter}`
+  const debugFixedPages: string[] = []
+  const debugSkippedPages: Array<Record<string, unknown>> = []
+  debugActiveFixLayoutsRunId = debugRunId
+  debugFixLayoutsFocusPageName = figma.currentPage.name
+  debugFixLayoutsFrameReports = []
+  // #region agent log
+  postDebugLog(
+    'syncBriefings.ts:fixLayouts:start',
+    'fix layouts started',
+    {
+      fileKey: figma.fileKey || '',
+      rootPageCount: root.children.length,
+      selection: getSelectionDebugData(),
+    },
+    'H2',
+    debugRunId,
+  )
+  // #endregion
 
   for (let i = 0; i < root.children.length; i++) {
     const node = root.children[i]
@@ -1313,70 +1604,98 @@ async function fixLayouts(): Promise<FixLayoutsResult> {
 
     if (!isHeimdallTemplatePage(page)) {
       result.pagesSkipped++
+      debugSkippedPages.push({ pageName: page.name, reason: 'not_heimdall_template' })
       continue
     }
+    try {
+      const nameBriefing = findPageContentRoot(page)
+      if (!nameBriefing) {
+        result.pagesSkipped++
+        debugSkippedPages.push({ pageName: page.name, reason: 'missing_name_briefing' })
+        continue
+      }
 
-    const nameBriefing = page.children.find(
-      (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Name Briefing'
-    ) as FrameNode
+      // Only run safe, additive fixes on existing pages.
+      // The 6-phase normalization (auto-layout conversion, hug-content,
+      // stretch, disable-clipping) is destructive on completed designs and
+      // belongs in the sync path for freshly filled templates only.
+      fixAssetFrameRatios(nameBriefing)
+      ensureMediaTargets(nameBriefing)
 
-    // Run normalization phases on the main layout
-    const analysis: LayoutAnalysis = { framesConverted: 0, framesHugged: 0, childrenStretched: 0, skippedFrames: [] }
-    await phaseFixTextNodes(nameBriefing)
-    phaseEnableAutoLayout(nameBriefing, analysis)
-    phaseEnsureHugContent(nameBriefing, analysis)
-    analysis.childrenStretched = phaseStretchChildren(nameBriefing)
-    phaseDisableClipping(nameBriefing)
+      const gap = 24 * S
+      const columnsRow = nameBriefing.children.find(
+        (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Columns'
+      ) as FrameNode | undefined
 
-    fixAssetFrameRatios(nameBriefing)
-    ensureMediaTargets(nameBriefing)
-
-    const gap = 24 * S
-    const columnsRow = nameBriefing.children.find(
-      (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Columns'
-    ) as FrameNode | undefined
-
-    // Widen Design Column (and its children) so the larger asset frames fit
-    const targetDesignW = 1200 * S
-    if (columnsRow) {
-      for (let ci = 0; ci < columnsRow.children.length; ci++) {
-        const col = columnsRow.children[ci]
-        if (col.type === 'FRAME' && (col as FrameNode).name === 'Design Column') {
-          const dc = col as FrameNode
-          if (dc.width < targetDesignW) {
-            dc.resize(targetDesignW, dc.height)
-            for (let vi = 0; vi < dc.children.length; vi++) {
-              const child = dc.children[vi]
-              if (child.type === 'FRAME' && (child as FrameNode).counterAxisSizingMode === 'FIXED') {
-                const cf = child as FrameNode
-                if (cf.width < targetDesignW) cf.resize(targetDesignW, cf.height)
+      // Widen Design Column (and its children) so the larger asset frames fit
+      const targetDesignW = 1200 * S
+      if (columnsRow) {
+        for (let ci = 0; ci < columnsRow.children.length; ci++) {
+          const col = columnsRow.children[ci]
+          if (col.type === 'FRAME' && (col as FrameNode).name === 'Design Column') {
+            const dc = col as FrameNode
+            if (dc.width < targetDesignW) {
+              dc.resize(targetDesignW, dc.height)
+              for (let vi = 0; vi < dc.children.length; vi++) {
+                const child = dc.children[vi]
+                if (child.type === 'FRAME' && (child as FrameNode).counterAxisSizingMode === 'FIXED') {
+                  const cf = child as FrameNode
+                  if (cf.width < targetDesignW) cf.resize(targetDesignW, cf.height)
+                }
               }
             }
+            break
           }
-          break
         }
       }
-    }
 
-    // Re-anchor references column
-    const anchorY = columnsRow ? nameBriefing.y + columnsRow.y : nameBriefing.y
+      // Re-anchor references column
+      const anchorY = columnsRow ? nameBriefing.y + columnsRow.y : nameBriefing.y
 
-    const uploadsBody = findUploadsBody(page)
-    if (uploadsBody) {
-      const wrapper = uploadsBody.parent
-      if (wrapper && wrapper.type === 'FRAME' && wrapper !== page) {
-        const wf = wrapper as FrameNode
-        wf.x = nameBriefing.x - wf.width - gap
-        wf.y = anchorY
-        // Run normalization on references wrapper too
-        phaseEnsureHugContent(wf, analysis)
-        phaseStretchChildren(wf)
-        phaseDisableClipping(wf)
+      const uploadsBody = findUploadsBody(page)
+      if (uploadsBody) {
+        const wrapper = uploadsBody.parent
+        if (wrapper && wrapper.type === 'FRAME' && wrapper !== page) {
+          const wf = wrapper as FrameNode
+          wf.x = nameBriefing.x - wf.width - gap
+          wf.y = anchorY
+        }
       }
-    }
 
-    result.pagesFixed++
+      result.pagesFixed++
+      debugFixedPages.push(`${page.name}=>${nameBriefing.name}`)
+    } catch (error) {
+      result.pagesSkipped++
+      debugSkippedPages.push({
+        pageName: page.name,
+        reason: 'exception',
+        detail: error instanceof Error ? error.message : String(error),
+      })
+      console.warn(
+        '[Layout] Skipping page during Fix Layouts:',
+        page.name,
+        error instanceof Error ? error.message : error
+      )
+    }
   }
+  // #region agent log
+  postDebugLog(
+    'syncBriefings.ts:fixLayouts:end',
+    'fix layouts finished',
+    {
+      pagesFixed: result.pagesFixed,
+      pagesSkipped: result.pagesSkipped,
+      fixedPages: debugFixedPages.slice(0, 20),
+      skippedPages: debugSkippedPages.slice(0, 40),
+      assetFrameReports: debugFixLayoutsFrameReports,
+      selection: getSelectionDebugData(),
+    },
+    'H3',
+    debugRunId,
+  )
+  // #endregion
+  debugActiveFixLayoutsRunId = ''
+  debugFixLayoutsFocusPageName = ''
   return result
 }
 
@@ -1388,30 +1707,75 @@ function ensureMediaTargets(node: BaseNode): number {
   let added = 0
   if (node.type === 'FRAME') {
     const frame = node as FrameNode
-    const nameLower = frame.name.toLowerCase()
-    const isAssetFrame = Object.keys(ASSET_SIZES).some(k => nameLower.endsWith(k.toLowerCase()))
-    if (isAssetFrame) {
-      const hasMediaTarget = frame.children.some(
-        c => c.name === 'Media Target'
-      )
+    const assetFrameKey = getAssetFrameKey(frame)
+    if (assetFrameKey) {
+      const existingMediaTarget = frame.children.find(
+        (c) => c.type === 'RECTANGLE' && c.name === 'Media Target'
+      ) as RectangleNode | undefined
+      const hasMediaTarget = !!existingMediaTarget
+      const videoRect = findFrameVideoRect(frame)
+      let addedMediaTarget = false
       if (!hasMediaTarget) {
-        const media = figma.createRectangle()
-        media.name = 'Media Target'
-        media.resize(frame.width, frame.height)
-        media.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }]
-        frame.insertChild(0, media)
-        media.x = 0
-        media.y = 0
-        try { media.constraints = { horizontal: 'SCALE', vertical: 'SCALE' } } catch {}
-        frame.clipsContent = true
-        added++
+        if (videoRect) {
+          videoRect.name = 'Media Target'
+          try { videoRect.constraints = { horizontal: 'SCALE', vertical: 'SCALE' } } catch {}
+          frame.clipsContent = true
+          // #region agent log
+          postDebugLog(
+            'syncBriefings.ts:ensureMediaTargets:promoteVideoRect',
+            'promoted legacy video rectangle to media target',
+            {
+              frameName: frame.name,
+              framePath: getDebugNodePath(frame),
+              promotedNodeName: videoRect.name,
+            },
+            'H4',
+            debugActiveFixLayoutsRunId || 'no-run',
+          )
+          // #endregion
+        } else {
+          const media = figma.createRectangle()
+          media.name = 'Media Target'
+          media.resize(frame.width, frame.height)
+          media.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }]
+          frame.insertChild(0, media)
+          media.x = 0
+          media.y = 0
+          try { media.constraints = { horizontal: 'SCALE', vertical: 'SCALE' } } catch {}
+          frame.clipsContent = true
+          added++
+          addedMediaTarget = true
+        }
+      } else if (existingMediaTarget && videoRect && existingMediaTarget !== videoRect) {
+        const existingFills = getRectangleFills(existingMediaTarget)
+        if (isSolidOnlyFill(existingFills)) {
+          existingMediaTarget.name = 'Media Target Placeholder'
+          videoRect.name = 'Media Target'
+          try { videoRect.constraints = { horizontal: 'SCALE', vertical: 'SCALE' } } catch {}
+          frame.clipsContent = true
+          // #region agent log
+          postDebugLog(
+            'syncBriefings.ts:ensureMediaTargets:swapToVideoRect',
+            'repointed media target from placeholder to legacy video rectangle',
+            {
+              frameName: frame.name,
+              framePath: getDebugNodePath(frame),
+              previousTargetName: existingMediaTarget.name,
+              newTargetName: videoRect.name,
+            },
+            'H4',
+            debugActiveFixLayoutsRunId || 'no-run',
+          )
+          // #endregion
+        }
       }
+      recordFixLayoutsFrameReport(frame, hasMediaTarget, addedMediaTarget)
       return added
     }
   }
-  const container = node as { children?: readonly BaseNode[] }
-  if (container.children) {
-    for (const child of container.children) added += ensureMediaTargets(child)
+  const children = getTraversableChildren(node)
+  if (children) {
+    for (const child of children) added += ensureMediaTargets(child)
   }
   return added
 }
@@ -1442,19 +1806,18 @@ function fixAssetFrameRatios(node: BaseNode): void {
       }
     }
 
-    const nameLower = name.toLowerCase()
-    for (const [key, dim] of Object.entries(ASSET_SIZES)) {
-      if (nameLower.endsWith(key.toLowerCase())) {
-        if (Math.abs(frame.width - dim.w) > 1 || Math.abs(frame.height - dim.h) > 1) {
-          frame.resize(dim.w, dim.h)
-        }
-        return
+    const assetFrameKey = getAssetFrameKey(frame)
+    if (assetFrameKey) {
+      const dim = ASSET_SIZES[assetFrameKey]
+      if (Math.abs(frame.width - dim.w) > 1 || Math.abs(frame.height - dim.h) > 1) {
+        frame.resize(dim.w, dim.h)
       }
+      return
     }
   }
-  const container = node as { children?: readonly BaseNode[] }
-  if (container.children) {
-    for (const child of container.children) fixAssetFrameRatios(child)
+  const children = getTraversableChildren(node)
+  if (children) {
+    for (const child of children) fixAssetFrameRatios(child)
   }
 }
 
@@ -1579,9 +1942,9 @@ async function phaseFixTextNodes(node: BaseNode): Promise<number> {
       } catch (_) {}
     }
   }
-  const container = node as { children?: readonly BaseNode[] }
-  if (container.children) {
-    for (const child of container.children) {
+  const children = getTraversableChildren(node)
+  if (children) {
+    for (const child of children) {
       count += await phaseFixTextNodes(child)
     }
   }
@@ -1595,9 +1958,9 @@ async function phaseFixTextNodes(node: BaseNode): Promise<number> {
  * with inferred spacing and padding.
  */
 function phaseEnableAutoLayout(node: BaseNode, analysis: LayoutAnalysis): void {
-  const container = node as { children?: readonly BaseNode[] }
-  if (container.children) {
-    for (const child of container.children) {
+  const children = getTraversableChildren(node)
+  if (children) {
+    for (const child of children) {
       phaseEnableAutoLayout(child, analysis)
     }
   }
@@ -1696,9 +2059,9 @@ function phaseEnsureHugContent(node: BaseNode, analysis: LayoutAnalysis): void {
       }
     }
   }
-  const container = node as { children?: readonly BaseNode[] }
-  if (container.children) {
-    for (const child of container.children) {
+  const children = getTraversableChildren(node)
+  if (children) {
+    for (const child of children) {
       phaseEnsureHugContent(child, analysis)
     }
   }
@@ -1732,9 +2095,9 @@ function phaseStretchChildren(node: BaseNode): number {
       }
     }
   }
-  const container = node as { children?: readonly BaseNode[] }
-  if (container.children) {
-    for (const child of container.children) {
+  const children = getTraversableChildren(node)
+  if (children) {
+    for (const child of children) {
       count += phaseStretchChildren(child)
     }
   }
@@ -1758,9 +2121,9 @@ function phaseDisableClipping(node: BaseNode): number {
       }
     }
   }
-  const container = node as { children?: readonly BaseNode[] }
-  if (container.children) {
-    for (const child of container.children) {
+  const children = getTraversableChildren(node)
+  if (children) {
+    for (const child of children) {
       count += phaseDisableClipping(child)
     }
   }
@@ -1949,6 +2312,122 @@ function createFallbackDocImagesTarget(page: PageNode): FrameNode {
   return frame
 }
 
+const REFERENCE_URL_REGEX = /https?:\/\/[^\s<>"'`]+/gi
+const REFERENCE_PLACEHOLDER_PATTERNS = [
+  'images from monday',
+  'uploads placeholder',
+  'references placeholder',
+]
+
+function isReferencePlaceholderText(text: string): boolean {
+  const normalized = text.toLowerCase().trim()
+  if (!normalized) return false
+  if (normalized === 'frontify') return true
+  return REFERENCE_PLACEHOLDER_PATTERNS.some((p) => normalized.includes(p))
+}
+
+async function resolveUploadsBody(page: PageNode): Promise<FrameNode> {
+  let uploadsBody = findUploadsBody(page)
+  if (!uploadsBody) {
+    await new Promise((r) => setTimeout(r, 500))
+    uploadsBody = findUploadsBody(page)
+  }
+  if (!uploadsBody) {
+    uploadsBody = createFallbackDocImagesTarget(page)
+  }
+  return uploadsBody
+}
+
+function alignUploadsBodyToPage(page: PageNode, uploadsBody: FrameNode): void {
+  const nameBriefing = page.children.find(
+    (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Name Briefing'
+  ) as FrameNode | undefined
+  if (!nameBriefing) return
+
+  const gap = 24 * S
+  // Align References to the Columns row top (not Name Briefing top) so it
+  // stays level with Briefing/Copy/Design and doesn't drift upward on import.
+  const columnsRow = nameBriefing.children.find(
+    (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Columns'
+  ) as FrameNode | undefined
+  const anchorY = columnsRow
+    ? nameBriefing.y + columnsRow.y
+    : nameBriefing.y
+
+  const wrapper = uploadsBody.parent
+  if (wrapper && wrapper.type === 'FRAME' && wrapper !== page) {
+    const wf = wrapper as FrameNode
+    wf.x = nameBriefing.x - wf.width - gap
+    wf.y = anchorY
+  } else {
+    uploadsBody.x = nameBriefing.x - uploadsBody.width - gap
+    uploadsBody.y = anchorY
+  }
+}
+
+function clearUploadsPlaceholders(uploadsBody: FrameNode): void {
+  for (let i = uploadsBody.children.length - 1; i >= 0; i--) {
+    const child = uploadsBody.children[i]
+    if (child.type === 'TEXT') {
+      const text = (child as TextNode).characters.toLowerCase()
+      if (isReferencePlaceholderText(text)) {
+        child.remove()
+      }
+    } else if (child.type === 'FRAME') {
+      const block = child as FrameNode
+      let hasOnlyPlaceholder = true
+      for (let j = block.children.length - 1; j >= 0; j--) {
+        const nested = block.children[j]
+        if (nested.type === 'TEXT') {
+          const text = (nested as TextNode).characters.toLowerCase()
+          if (isReferencePlaceholderText(text)) {
+            nested.remove()
+          } else {
+            hasOnlyPlaceholder = false
+          }
+        } else {
+          hasOnlyPlaceholder = false
+        }
+      }
+      if (hasOnlyPlaceholder && block.children.length === 0) {
+        block.remove()
+      }
+    }
+  }
+}
+
+function normalizeReferenceUrl(url: string): string {
+  return url.trim().replace(/[)>.,;]+$/g, '')
+}
+
+function collectExistingReferenceUrls(root: BaseNode): Set<string> {
+  const urls = new Set<string>()
+  function walk(node: BaseNode): void {
+    try {
+      if ('getPluginData' in node && typeof (node as SceneNode).getPluginData === 'function') {
+        const pluginUrl = normalizeReferenceUrl((node as SceneNode).getPluginData('heimdallReferenceUrl') || '')
+        if (pluginUrl) urls.add(pluginUrl)
+      }
+    } catch (_) {}
+
+    if (node.type === 'TEXT') {
+      const matches = ((node as TextNode).characters || '').match(REFERENCE_URL_REGEX) ?? []
+      for (const match of matches) {
+        const normalized = normalizeReferenceUrl(match)
+        if (normalized) urls.add(normalized)
+      }
+    }
+
+    const children = getTraversableChildren(node)
+    if (!children) return
+    for (let i = 0; i < children.length; i++) {
+      walk(children[i])
+    }
+  }
+  walk(root)
+  return urls
+}
+
 /** Figma createImage supports PNG, JPEG, GIF only. Validate by magic bytes and skip unsupported. */
 function isSupportedImageFormat(bytes: Uint8Array): boolean {
   if (bytes.length < 4) return false
@@ -1960,6 +2439,7 @@ function isSupportedImageFormat(bytes: Uint8Array): boolean {
 
 /** Result of placing one image: success or failure with reason. */
 type PlaceImageResult = { ok: true } | { ok: false; reason: string }
+type PlaceReferenceLinkResult = { ok: true } | { ok: false; reason: string }
 
 /**
  * Place a single image into the Uploads column body frame.
@@ -2011,8 +2491,85 @@ async function placeImageInUploads(
   }
 }
 
+async function placeReferenceLinkInUploads(
+  uploadsBody: FrameNode,
+  referenceLink: { url: string; label?: string }
+): Promise<PlaceReferenceLinkResult> {
+  const normalizedUrl = normalizeReferenceUrl(referenceLink.url || '')
+  if (!normalizedUrl) {
+    return { ok: false, reason: 'Empty URL' }
+  }
+
+  try {
+    await figma.loadFontAsync(TEMPLATE_FONT as FontName)
+    await figma.loadFontAsync(TEMPLATE_FONT_BOLD as FontName)
+
+    const block = makeBlockFrame()
+    block.name = 'Reference Link'
+    try { block.setPluginData('heimdallReferenceUrl', normalizedUrl) } catch (_) {}
+
+    const label = (referenceLink.label || '').trim()
+    if (label && label !== normalizedUrl) {
+      const labelText = makeTextNode('Reference Label', label, TEMPLATE_FONT_BOLD as FontName)
+      labelText.fontSize = 11 * S
+      labelText.lineHeight = { unit: 'PIXELS', value: 15 * S }
+      appendAndStretch(block, labelText)
+    }
+
+    const urlText = makeTextNode('Reference URL', normalizedUrl, TEMPLATE_FONT as FontName)
+    urlText.fontSize = 11 * S
+    urlText.lineHeight = { unit: 'PIXELS', value: 15 * S }
+    applyTextColor(urlText, 0.1, 0.38, 0.73)
+    try { (urlText as any).textDecoration = 'UNDERLINE' } catch (_) {}
+    try { (urlText as any).setRangeHyperlink?.(0, normalizedUrl.length, { type: 'URL', value: normalizedUrl }) } catch (_) {}
+    appendAndStretch(block, urlText)
+
+    uploadsBody.appendChild(block)
+    try { (block as any).layoutAlign = 'STRETCH' } catch (_) {}
+    return { ok: true }
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : 'Unknown error'
+    console.error('Failed to place reference URL:', normalizedUrl, e)
+    return { ok: false, reason }
+  }
+}
+
 /** Result of importing images into a page: count placed and per-image failures. */
 export type ImportImagesResult = { placed: number; failures: Array<{ name: string; reason: string }> }
+export type ImportReferenceLinksResult = { placed: number; failures: Array<{ url: string; reason: string }> }
+
+async function importReferenceLinksToPage(
+  pageId: string,
+  referenceLinks: Array<{ url: string; label?: string; source: string }>
+): Promise<ImportReferenceLinksResult> {
+  const failures: Array<{ url: string; reason: string }> = []
+  const page = await figma.getNodeByIdAsync(pageId)
+  if (!page || page.type !== 'PAGE') {
+    console.warn('importReferenceLinksToPage: page not found or not a PAGE', pageId)
+    return { placed: 0, failures }
+  }
+
+  const uploadsBody = await resolveUploadsBody(page as PageNode)
+  alignUploadsBodyToPage(page as PageNode, uploadsBody)
+  clearUploadsPlaceholders(uploadsBody)
+
+  let placed = 0
+  const existingUrls = collectExistingReferenceUrls(uploadsBody)
+  for (const link of referenceLinks) {
+    const normalizedUrl = normalizeReferenceUrl(link.url || '')
+    if (!normalizedUrl || existingUrls.has(normalizedUrl)) {
+      continue
+    }
+    const result = await placeReferenceLinkInUploads(uploadsBody, link)
+    if (result.ok) {
+      placed++
+      existingUrls.add(normalizedUrl)
+    } else {
+      failures.push({ url: normalizedUrl, reason: result.reason })
+    }
+  }
+  return { placed, failures }
+}
 
 /**
  * Import images into a page's Uploads column.
@@ -2030,67 +2587,9 @@ async function importImagesToPage(
     return { placed: 0, failures }
   }
 
-  let uploadsBody = findUploadsBody(page as PageNode)
-  if (!uploadsBody) {
-    await new Promise((r) => setTimeout(r, 500))
-    uploadsBody = findUploadsBody(page as PageNode)
-  }
-  if (!uploadsBody) {
-    uploadsBody = createFallbackDocImagesTarget(page as PageNode)
-  }
-
-  const nameBriefing = (page as PageNode).children.find((c) => c.type === 'FRAME' && (c as FrameNode).name === 'Name Briefing') as FrameNode | undefined
-  if (nameBriefing) {
-    const gap = 24 * S
-    // Align References to the Columns row top (not Name Briefing top) so it
-    // stays level with Briefing/Copy/Design and doesn't drift upward on import.
-    const columnsRow = nameBriefing.children.find(
-      (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Columns'
-    ) as FrameNode | undefined
-    const anchorY = columnsRow
-      ? nameBriefing.y + columnsRow.y
-      : nameBriefing.y
-
-    const wrapper = uploadsBody.parent
-    if (wrapper && wrapper.type === 'FRAME' && wrapper !== page) {
-      const wf = wrapper as FrameNode
-      wf.x = nameBriefing.x - wf.width - gap
-      wf.y = anchorY
-    } else {
-      uploadsBody.x = nameBriefing.x - uploadsBody.width - gap
-      uploadsBody.y = anchorY
-    }
-  }
-
-  const PLACEHOLDER_PATTERNS = ['frontify', 'images from monday', 'uploads placeholder', 'references placeholder']
-  for (let i = uploadsBody.children.length - 1; i >= 0; i--) {
-    const child = uploadsBody.children[i]
-    if (child.type === 'TEXT') {
-      const text = (child as TextNode).characters.toLowerCase()
-      if (PLACEHOLDER_PATTERNS.some((p) => text.includes(p))) {
-        child.remove()
-      }
-    } else if (child.type === 'FRAME') {
-      const block = child as FrameNode
-      let hasOnlyPlaceholder = true
-      for (let j = block.children.length - 1; j >= 0; j--) {
-        const nested = block.children[j]
-        if (nested.type === 'TEXT') {
-          const text = (nested as TextNode).characters.toLowerCase()
-          if (PLACEHOLDER_PATTERNS.some((p) => text.includes(p))) {
-            nested.remove()
-          } else {
-            hasOnlyPlaceholder = false
-          }
-        } else {
-          hasOnlyPlaceholder = false
-        }
-      }
-      if (hasOnlyPlaceholder && block.children.length === 0) {
-        block.remove()
-      }
-    }
-  }
+  const uploadsBody = await resolveUploadsBody(page as PageNode)
+  alignUploadsBodyToPage(page as PageNode, uploadsBody)
+  clearUploadsPlaceholders(uploadsBody)
 
   let placed = 0
   const existingImageNames = new Set<string>()
@@ -2359,6 +2858,10 @@ async function processJobs(jobs: QueuedJob[]): Promise<Array<{ idempotencyKey: s
         })
       }
 
+      if (job.referenceLinks && job.referenceLinks.length > 0) {
+        await importReferenceLinksToPage(targetPage.id, job.referenceLinks)
+      }
+
       var contentScore = scorePageContent(contentRoot)
       var contentEmpty = !contentScore.briefingSet && contentScore.variantsPopulated === 0
 
@@ -2427,7 +2930,7 @@ var uiHtml = '<html><head><style>'
   + '</style></head><body>'
   + '<div class="tabs"><button class="tab active" id="tab-sync">Sync Briefings</button><button class="tab" id="tab-comments">Export Comments</button></div>'
   + '<h3>Heimdall Sync</h3>'
-  + '<div class="row"><span class="label">API base</span><input id="api-base" placeholder="http://localhost:3846" /><button class="secondary" id="save-api">Save</button></div>'
+  + '<div class="row"><span class="label">API base</span><input id="api-base" placeholder="https://heimdall-tensalir.vercel.app" /><button class="secondary" id="save-api">Save</button></div>'
   + '<div id="sync-panel">'
   + '  <div id="batch-select-wrap" style="display:none;"><span class="label">Batch</span><select id="batch-select"></select><button class="secondary" id="batch-apply">Apply</button></div>'
   + '  <p id="batch-label" style="margin:4px 0;font-size:12px;font-weight:600;"></p>'
@@ -2445,7 +2948,7 @@ var uiHtml = '<html><head><style>'
   + '  var reason = ev && ev.reason ? (ev.reason.message || String(ev.reason)) : "unknown";'
   + '  parent.postMessage({ pluginMessage: { type: "ui-script-rejection", reason: String(reason) } }, "*");'
   + '});'
-  + 'var DEFAULT_HEIMDALL_API = "http://localhost:3846";'
+  + 'var DEFAULT_HEIMDALL_API = "https://heimdall-tensalir.vercel.app";'
   + 'var HEIMDALL_API = DEFAULT_HEIMDALL_API;'
   + 'var fileKey = "";'
   + 'var fileName = "";'
@@ -2468,7 +2971,16 @@ var uiHtml = '<html><head><style>'
   + '  var input = document.getElementById("api-base");'
   + '  if (input) input.value = HEIMDALL_API;'
   + '}'
+  + 'var PLUGIN_TOKEN = "";'
+  + 'function setPluginToken(t) { PLUGIN_TOKEN = (t || "").trim(); }'
+  + 'function authHeaders(extra) {'
+  + '  var h = extra || {};'
+  + '  if (PLUGIN_TOKEN) h["X-Heimdall-Plugin-Token"] = PLUGIN_TOKEN;'
+  + '  return h;'
+  + '}'
   + 'function requestJson(url, options) {'
+  + '  options = options || {};'
+  + '  options.headers = authHeaders(options.headers || {});'
   + '  return fetch(url, options).then(function(r) {'
   + '    var status = r.status;'
   + '    var contentType = (r.headers.get("content-type") || "").toLowerCase();'
@@ -2745,13 +3257,13 @@ var uiHtml = '<html><head><style>'
   + '    var r = results[i];'
   + '    if (r.error) {'
   + '      failed.push(r.experimentPageName);'
-  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/fail", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: r.error}) }).catch(function(){}));'
+  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/fail", { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: r.error}) }).catch(function(){}));'
   + '    } else if (r.contentEmpty) {'
   + '      failed.push(r.experimentPageName + " (empty)");'
-  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/fail", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: "content_empty"}) }).catch(function(){}));'
+  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/fail", { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: "content_empty"}) }).catch(function(){}));'
   + '    } else {'
   + '      if (r.outcome === "updated") updated++; else done++;'
-  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/complete", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({idempotencyKey: r.idempotencyKey, figmaPageId: r.pageId, figmaFileUrl: r.fileUrl, outcome: r.outcome || "created"}) }).catch(function(){}));'
+  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/complete", { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, figmaPageId: r.pageId, figmaFileUrl: r.fileUrl, outcome: r.outcome || "created"}) }).catch(function(){}));'
   + '    }'
   + '  }'
   + '  Promise.all(promises).then(function() {'
@@ -2829,6 +3341,7 @@ var uiHtml = '<html><head><style>'
   + '    }'
   + '  }'
   + '  if (d.type === "api-base") setApiBase(d.apiBase || DEFAULT_HEIMDALL_API);'
+  + '  if (d.type === "plugin-token") { setPluginToken(d.token || ""); var ti = document.getElementById("plugin-token"); if (ti) ti.value = d.token || ""; }'
   + '  if (d.type === "create-template-done") {'
   + '    var el = document.getElementById("msg");'
   + '    el.textContent = d.error ? "Template error: " + d.error : "Template created. Place the \'Custom Labels - Status Tracker\' widget in each column header (Briefing, Copy, Design).";'
@@ -2878,6 +3391,7 @@ var uiHtml = '<html><head><style>'
   + '  }'
   + '};'
   + 'parent.postMessage({ pluginMessage: { type: "get-api-base" } }, "*");'
+  + 'parent.postMessage({ pluginMessage: { type: "get-plugin-token" } }, "*");'
   + '</script></body></html>'
 
 function serializePageSnapshot(page: PageNode): Record<string, unknown> {
@@ -2891,9 +3405,9 @@ function serializePageSnapshot(page: PageNode): Record<string, unknown> {
       out.characters = ((node as TextNode).characters ?? '').substring(0, 500)
     }
     if (depth < 4) {
-      const withChildren = node as { children?: readonly BaseNode[] }
-      if (withChildren.children) {
-        out.children = Array.from(withChildren.children).map(c => serializeNode(c, depth + 1))
+      const children = getTraversableChildren(node)
+      if (children) {
+        out.children = Array.from(children).map(c => serializeNode(c, depth + 1))
       }
     }
     return out
@@ -2910,6 +3424,11 @@ function serializePageSnapshot(page: PageNode): Record<string, unknown> {
   }
 }
 
+async function getPluginToken(): Promise<string> {
+  const saved = await figma.clientStorage.getAsync('heimdallPluginToken')
+  return typeof saved === 'string' ? saved.trim() : ''
+}
+
 async function capturePreWriteSnapshot(
   apiBase: string,
   page: PageNode,
@@ -2918,16 +3437,21 @@ async function capturePreWriteSnapshot(
   mondayBoardId?: string,
 ): Promise<void> {
   try {
+    const figmaFileKey = figma.fileKey || ''
+    if (!figmaFileKey) return
     const snapshot = serializePageSnapshot(page)
     const itemId = mondayItemId || page.getPluginData('heimdallMondayItemId') || page.name
     const boardId = mondayBoardId || page.getPluginData('heimdallBoardId') || ''
+    const pluginToken = await getPluginToken()
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (pluginToken) headers['X-Heimdall-Plugin-Token'] = pluginToken
     await fetch(apiBase + '/api/plugin/capture-version', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         mondayItemId: itemId,
         mondayBoardId: boardId,
-        figmaFileKey: figma.fileKey || '',
+        figmaFileKey,
         figmaPageId: page.id,
         figmaPageName: page.name,
         capturePhase: 'pre_write',
@@ -2941,6 +3465,22 @@ async function capturePreWriteSnapshot(
 
 export function runSyncBriefings() {
   figma.showUI(uiHtml, { width: 460, height: 580 })
+  if (!debugSelectionListenerBound) {
+    debugSelectionListenerBound = true
+    figma.on('selectionchange', () => {
+      if (debugSelectionLogCount >= 6) return
+      debugSelectionLogCount++
+      // #region agent log
+      postDebugLog(
+        'syncBriefings.ts:selectionchange',
+        'selection changed',
+        getSelectionDebugData(),
+        'H1',
+        'selection-probe',
+      )
+      // #endregion
+    })
+  }
 
   figma.ui.onmessage = async function (msg: {
     type: string;
@@ -3019,21 +3559,31 @@ export function runSyncBriefings() {
     }
     if (msg.type === 'get-api-base') {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      const apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
       figma.ui.postMessage({ type: 'api-base', apiBase })
     }
     if (msg.type === 'save-api-base') {
       const raw = msg.apiBase ?? ''
-      const apiBase = raw.trim().replace(/\/$/, '') || 'http://localhost:3846'
+      const apiBase = raw.trim().replace(/\/$/, '') || 'https://heimdall-tensalir.vercel.app'
       await figma.clientStorage.setAsync('heimdallApiBase', apiBase)
       figma.ui.postMessage({ type: 'api-base', apiBase })
+    }
+    if (msg.type === 'get-plugin-token') {
+      const saved = await figma.clientStorage.getAsync('heimdallPluginToken')
+      const token = typeof saved === 'string' && saved.trim() ? saved.trim() : ''
+      figma.ui.postMessage({ type: 'plugin-token', token })
+    }
+    if (msg.type === 'save-plugin-token') {
+      const token = ((msg as any).token ?? '').trim()
+      await figma.clientStorage.setAsync('heimdallPluginToken', token)
+      figma.ui.postMessage({ type: 'plugin-token', token })
     }
     if (msg.type === 'get-file-key') {
       figma.ui.postMessage({ type: 'file-key', fileKey: figma.fileKey || '' })
     }
     if (msg.type === 'create-template') {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
       const templatePage = findTemplatePage()
       if (templatePage) {
         await capturePreWriteSnapshot(_apiBase, templatePage, 'template_create')
@@ -3043,7 +3593,7 @@ export function runSyncBriefings() {
     }
     if (msg.type === 'migrate-widgets') {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
       for (const page of figma.root.children) {
         if (page.type === 'PAGE' && page.getPluginData('heimdallMondayItemId')) {
           await capturePreWriteSnapshot(_apiBase, page as PageNode, 'widget_migrate')
@@ -3060,7 +3610,7 @@ export function runSyncBriefings() {
     }
     if (msg.type === 'fix-layouts') {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
       for (const page of figma.root.children) {
         if (page.type === 'PAGE' && page.getPluginData('heimdallMondayItemId')) {
           await capturePreWriteSnapshot(_apiBase, page as PageNode, 'layout_fix')
@@ -3076,7 +3626,7 @@ export function runSyncBriefings() {
     }
     if (msg.type === 'process-jobs' && msg.jobs) {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
       for (const job of msg.jobs) {
         for (const page of figma.root.children) {
           if (page.type === 'PAGE') {
@@ -3152,7 +3702,7 @@ export function runSyncBriefings() {
 
     if (msg.type === 'images-fetched' && msg.images) {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'http://localhost:3846'
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
       const capturedPageIds = new Set<string>()
       for (const imgData of msg.images) {
         if (imgData.pageId && !capturedPageIds.has(imgData.pageId)) {

@@ -92,8 +92,10 @@ const envSchema = z.object({
   SHEETS_PASSWORD: z.string().min(1).optional(),
   /** Briefing Assistant local dev password. */
   BRIEFING_LOCAL_PASSWORD: z.string().min(1).optional(),
-  /** Shared secret for machine-to-machine API auth (plugin, jobs, cron). */
+  /** Shared secret for machine-to-machine API auth (jobs, cron). */
   HEIMDALL_MACHINE_SECRET: z.string().min(1).optional(),
+  /** Separate secret for Figma plugin auth. Revocable independently from machine secret. */
+  HEIMDALL_PLUGIN_SECRET: z.string().min(1).optional(),
   /** CSV of email domains allowed for privileged access (admin/ops/forecast/feedback). Defaults to thoughtform.co,loopearplugs.com. */
   HEIMDALL_ALLOWED_EMAIL_DOMAINS: z.string().optional(),
   /** Monday briefing board ID for sprint integration. */

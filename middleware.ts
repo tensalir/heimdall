@@ -25,7 +25,7 @@ import { classifyApiRoute } from '@/lib/route-auth'
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Heimdall-Secret',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Heimdall-Secret, X-Heimdall-Plugin-Token',
 }
 
 const PRIVILEGED_EMAIL_DOMAINS = (process.env.HEIMDALL_ALLOWED_EMAIL_DOMAINS || 'thoughtform.co,loopearplugs.com')
@@ -101,8 +101,10 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
   }
 
   if (policy === 'machine') {
-    const secret = process.env.HEIMDALL_MACHINE_SECRET
-    if (!secret) {
+    const machineSecret = process.env.HEIMDALL_MACHINE_SECRET
+    const pluginSecret = process.env.HEIMDALL_PLUGIN_SECRET
+
+    if (!machineSecret && !pluginSecret) {
       if (process.env.NODE_ENV === 'production') {
         return addCors(NextResponse.json(
           { error: 'Machine authentication not configured' },
@@ -111,8 +113,14 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
       }
       return addCors(NextResponse.next())
     }
-    const provided = request.headers.get('x-heimdall-secret')
-    if (!provided || provided !== secret) {
+
+    const providedMachine = request.headers.get('x-heimdall-secret')
+    const providedPlugin = request.headers.get('x-heimdall-plugin-token')
+
+    const machineMatch = machineSecret && providedMachine === machineSecret
+    const pluginMatch = pluginSecret && providedPlugin === pluginSecret
+
+    if (!machineMatch && !pluginMatch) {
       return addCors(NextResponse.json(
         { error: 'Machine authentication required' },
         { status: 403, headers: CORS_HEADERS },
