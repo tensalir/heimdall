@@ -41,6 +41,7 @@ export async function GET(
       type: (row.source_type as string).replace('_', '-'),
       title: row.title,
       preview: row.preview ?? row.body_text ?? '',
+      body_text: row.body_text ?? null,
       thumbnail_url: row.thumbnail_url,
       data: row.raw_data ?? {},
     },

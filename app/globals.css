@@ -78,4 +78,9 @@
   .scrollbar-subtle:focus-within::-webkit-scrollbar-thumb {
     background-color: hsl(var(--muted-foreground) / 0.35);
   }
+
+  /** Progressive enhancement: native auto-sized text fields in supporting browsers */
+  .field-sizing-content {
+    field-sizing: content;
+  }
 }

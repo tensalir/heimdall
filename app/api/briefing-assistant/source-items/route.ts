@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
 
   let query = db
     .from('briefing_source_items')
-    .select('id, source_type, title, preview, thumbnail_url, raw_data, created_at')
+    .select('id, source_type, title, preview, body_text, thumbnail_url, raw_data, created_at')
     .order('created_at', { ascending: false })
     .limit(limit)
 
@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
     type: (row.source_type as string).replace('_', '-') as string,
     title: row.title,
     preview: row.preview ?? '',
+    body_text: row.body_text ?? null,
     thumbnail_url: row.thumbnail_url,
     data: row.raw_data ?? {},
   }))
