@@ -10,7 +10,7 @@
  *   4. User can copy to clipboard (CSV) or download
  */
 
-import { DEFAULT_HEIMDALL_API } from '../constants'
+import { DEFAULT_HEIMDALL_API, DEFAULT_VERCEL_BYPASS } from '../constants'
 
 const commentsUiHtml = `<html><head><style>
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -98,8 +98,8 @@ parent.postMessage({ pluginMessage: { type: "get-file-key" } }, "*");
 
 var DEFAULT_HEIMDALL_API = ${JSON.stringify(DEFAULT_HEIMDALL_API)};
 var HEIMDALL_API = DEFAULT_HEIMDALL_API;
-var VERCEL_BYPASS = "";
-function setVercelBypass(v) { VERCEL_BYPASS = (v || "").trim(); }
+var VERCEL_BYPASS = ${JSON.stringify(DEFAULT_VERCEL_BYPASS)};
+function setVercelBypass(v) { VERCEL_BYPASS = (v || "").trim() || ${JSON.stringify(DEFAULT_VERCEL_BYPASS)}; }
 function stampUrl(url) {
   if (!VERCEL_BYPASS) return url;
   var sep = url.indexOf("?") >= 0 ? "&" : "?";
@@ -356,7 +356,7 @@ export function runExportComments() {
     }
     if (msg.type === 'get-vercel-bypass') {
       const saved = await figma.clientStorage.getAsync('heimdallVercelBypass')
-      const secret = typeof saved === 'string' ? saved.trim() : ''
+      const secret = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_VERCEL_BYPASS
       figma.ui.postMessage({ type: 'vercel-bypass', secret })
     }
     if (msg.type === 'get-file-key') {

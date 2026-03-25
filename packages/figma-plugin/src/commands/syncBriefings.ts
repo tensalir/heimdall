@@ -58,7 +58,7 @@
  * These appear in Figma's dev console (Plugins → Development → Open console).
  * ═══════════════════════════════════════════════════════════════════
  */
-import { DEFAULT_HEIMDALL_API } from '../constants'
+import { DEFAULT_HEIMDALL_API, DEFAULT_PLUGIN_TOKEN, DEFAULT_VERCEL_BYPASS } from '../constants'
 import { runExportComments } from './exportComments'
 
 const TEMPLATE_PAGE_NAMES = ['Briefing Template to Duplicate', 'Briefing Template', 'Template']
@@ -2981,10 +2981,16 @@ var uiHtml = '<html><head><style>'
   + '  var input = document.getElementById("api-base");'
   + '  if (input) input.value = HEIMDALL_API;'
   + '}'
-  + 'var PLUGIN_TOKEN = "";'
-  + 'function setPluginToken(t) { PLUGIN_TOKEN = (t || "").trim(); }'
-  + 'var VERCEL_BYPASS = "";'
-  + 'function setVercelBypass(v) { VERCEL_BYPASS = (v || "").trim(); var el = document.getElementById("vercel-bypass"); if (el) el.value = VERCEL_BYPASS; }'
+  + 'var DEFAULT_PLUGIN_TOKEN = '
+  + JSON.stringify(DEFAULT_PLUGIN_TOKEN)
+  + ';'
+  + 'var DEFAULT_VERCEL_BYPASS = '
+  + JSON.stringify(DEFAULT_VERCEL_BYPASS)
+  + ';'
+  + 'var PLUGIN_TOKEN = DEFAULT_PLUGIN_TOKEN;'
+  + 'function setPluginToken(t) { PLUGIN_TOKEN = (t || "").trim() || DEFAULT_PLUGIN_TOKEN; var el = document.getElementById("plugin-token"); if (el && PLUGIN_TOKEN) el.value = PLUGIN_TOKEN; }'
+  + 'var VERCEL_BYPASS = DEFAULT_VERCEL_BYPASS;'
+  + 'function setVercelBypass(v) { VERCEL_BYPASS = (v || "").trim() || DEFAULT_VERCEL_BYPASS; var el = document.getElementById("vercel-bypass"); if (el) el.value = VERCEL_BYPASS; }'
   + 'function stampUrl(url) {'
   + '  if (!VERCEL_BYPASS) return url;'
   + '  var sep = url.indexOf("?") >= 0 ? "&" : "?";'
@@ -3482,12 +3488,12 @@ function serializePageSnapshot(page: PageNode): Record<string, unknown> {
 
 async function getPluginToken(): Promise<string> {
   const saved = await figma.clientStorage.getAsync('heimdallPluginToken')
-  return typeof saved === 'string' ? saved.trim() : ''
+  return typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_PLUGIN_TOKEN
 }
 
 async function getVercelBypass(): Promise<string> {
   const saved = await figma.clientStorage.getAsync('heimdallVercelBypass')
-  return typeof saved === 'string' ? saved.trim() : ''
+  return typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_VERCEL_BYPASS
 }
 
 function stampUrlMain(url: string, bypass: string): string {
@@ -3664,7 +3670,7 @@ export function runSyncBriefings() {
     }
     if (msg.type === 'get-plugin-token') {
       const saved = await figma.clientStorage.getAsync('heimdallPluginToken')
-      const token = typeof saved === 'string' && saved.trim() ? saved.trim() : ''
+      const token = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_PLUGIN_TOKEN
       figma.ui.postMessage({ type: 'plugin-token', token })
     }
     if (msg.type === 'save-plugin-token') {
@@ -3674,7 +3680,7 @@ export function runSyncBriefings() {
     }
     if (msg.type === 'get-vercel-bypass') {
       const saved = await figma.clientStorage.getAsync('heimdallVercelBypass')
-      const secret = typeof saved === 'string' ? saved.trim() : ''
+      const secret = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_VERCEL_BYPASS
       figma.ui.postMessage({ type: 'vercel-bypass', secret })
     }
     if (msg.type === 'save-vercel-bypass') {
