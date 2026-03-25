@@ -404,7 +404,10 @@ function hasRenderableMediaFill(fills: readonly Paint[] | null): boolean {
 }
 
 /**
- * Pick the layer to clone for Heimdall's preview surface: prefer video/image fills, else Media Target rect in an asset frame.
+ * Pick the layer to clone for Heimdall's preview surface: prefer video/image fills,
+ * then asset-frame media targets, then the first previewable media found in the
+ * selected subtree. This lets users click parent containers like Variation, Assets,
+ * or Name Briefing without drilling down to the leaf video layer.
  */
 function resolveMediaNodeForPreview(first: SceneNode | null): SceneNode | null {
   if (!first) return null
@@ -425,42 +428,88 @@ function resolveMediaNodeForPreview(first: SceneNode | null): SceneNode | null {
     }
     const videoRect = findFrameVideoRect(frame)
     if (videoRect) return videoRect
-    if (mediaTarget) return mediaTarget
     return null
   }
 
-  const direct = tryDirect(first)
-  if (direct) return direct
-
-  // One-level lookup only (avoid deep INSTANCE traversal deadlocks per plugin sentinel).
-  if (first.type === 'INSTANCE') {
+  const fromInstance = (instance: InstanceNode): SceneNode | null => {
     try {
-      const inst = first as InstanceNode
-      for (const c of inst.children) {
+      for (const c of instance.children) {
         if (c.type === 'RECTANGLE' && c.name === 'Media Target') {
           const mtFills = getRectangleFills(c as RectangleNode)
           if (hasRenderableMediaFill(mtFills)) return c as SceneNode
         }
       }
-      for (const c of inst.children) {
+      for (const c of instance.children) {
+        if (tryDirect(c as SceneNode)) return c as SceneNode
+      }
+      for (const c of instance.children) {
         if (c.type === 'RECTANGLE' && c.name === 'Media Target') {
           return c as SceneNode
         }
       }
     } catch (_) {}
+    return null
   }
 
-  if (first.type === 'FRAME') {
-    const frame = first as FrameNode
-    if (getAssetFrameKey(frame)) {
-      const picked = fromAssetFrame(frame)
+  const tryNode = (node: BaseNode): SceneNode | null => {
+    if ('parent' in (node as { parent?: BaseNode | null })) {
+      const direct = tryDirect(node as SceneNode)
+      if (direct) return direct
+    }
+    if (node.type === 'INSTANCE') {
+      const picked = fromInstance(node as InstanceNode)
       if (picked) return picked
     }
+    if (node.type === 'FRAME') {
+      const frame = node as FrameNode
+      if (getAssetFrameKey(frame)) {
+        const picked = fromAssetFrame(frame)
+        if (picked) return picked
+      }
+    }
+    if (node.type === 'RECTANGLE' && node.name === 'Media Target') {
+      return node as SceneNode
+    }
+    return null
   }
+
+  const direct = tryNode(first)
+  if (direct) return direct
 
   const assetFrame = findAssetFrameAncestor(first)
   if (assetFrame) {
     const picked = fromAssetFrame(assetFrame)
+    if (picked) return picked
+  }
+
+  // Walk the selected subtree breadth-first, but still skip deep instance/component
+  // internals to avoid the traversal deadlocks called out in the sentinel above.
+  const queue: BaseNode[] = []
+  if (first.type === 'INSTANCE') {
+    for (const child of first.children) queue.push(child)
+  } else {
+    const children = getTraversableChildren(first)
+    if (children) {
+      for (const child of children) queue.push(child)
+    }
+  }
+
+  let visited = 0
+  while (queue.length > 0 && visited < 240) {
+    const node = queue.shift()!
+    visited++
+    const picked = tryNode(node)
+    if (picked) return picked
+    if (node.type === 'INSTANCE') continue
+    const children = getTraversableChildren(node)
+    if (children) {
+      for (const child of children) queue.push(child)
+    }
+  }
+
+  if (first.type === 'INSTANCE') {
+    // One-level lookup only (avoid deep INSTANCE traversal deadlocks per plugin sentinel).
+    const picked = fromInstance(first as InstanceNode)
     if (picked) return picked
   }
 
@@ -507,7 +556,7 @@ function previewSelectedAssetToSurface(): { error?: string; ok?: boolean } {
   if (selection.length === 0) {
     return {
       error:
-        'Select a layer with a video/image fill, a Media Target, or an asset frame (e.g. *-9x16) first.',
+        'Select a layer with a video/image fill, a Media Target, an asset frame (e.g. *-9x16), or a parent design container like Assets / Variation first.',
     }
   }
 
@@ -516,7 +565,7 @@ function previewSelectedAssetToSurface(): { error?: string; ok?: boolean } {
   if (!media) {
     return {
       error:
-        'Could not find a video/image layer to preview. Select Media Target, an asset ratio frame, or a shape with a video/image fill.',
+        'Could not find a video/image layer to preview. Try selecting Media Target, an asset ratio frame, or a parent design container like Assets / Variation.',
     }
   }
 
@@ -3116,9 +3165,14 @@ var uiHtml = '<html><head><style>'
   + '.outlined:hover{background:rgba(13,153,255,0.06);}'
   + '.btn-row{display:flex;gap:8px;margin-top:8px;}'
   + '.btn-row button{flex:1;}'
-  + '.small-row{display:flex;gap:8px;margin-top:6px;}'
-  + '.small-row button{flex:1;padding:5px 8px;font-size:10px;background:#fff;color:#555;border:1px solid #ddd;}'
-  + '.small-row button:hover{background:#f4f4f4;color:#333;}'
+  + '.tool-row{display:flex;gap:8px;margin-top:6px;}'
+  + '.tool-row button{flex:1;min-width:0;padding:6px 8px;font-size:10px;line-height:1.15;min-height:34px;background:#fff;color:#555;border:1px solid #ddd;white-space:normal;}'
+  + '.tool-row button:hover{background:#f4f4f4;color:#333;}'
+  + '.tool-row button.outlined{background:transparent;color:#0d99ff;border:1.5px solid #0d99ff;}'
+  + '.tool-row button.outlined:hover{background:rgba(13,153,255,0.06);color:#0d99ff;}'
+  + '.subtle-row{display:flex;gap:8px;margin-top:6px;}'
+  + '.subtle-row button{flex:1;padding:5px 8px;font-size:10px;background:#fff;color:#555;border:1px solid #ddd;}'
+  + '.subtle-row button:hover{background:#f4f4f4;color:#333;}'
   + '#msg{font-size:11px;color:#666;margin-top:8px;min-height:20px;}'
   + '.err{color:#f24822;}'
   + '.list{list-style:none;padding:0;margin:8px 0;max-height:220px;overflow-y:auto;}'
@@ -3158,10 +3212,10 @@ var uiHtml = '<html><head><style>'
   + '  <p id="batch-label" style="margin:4px 0;font-size:12px;font-weight:600;"></p>'
   + '  <ul id="briefings-list" class="list"></ul>'
   + '  <p id="msg" style="margin:8px 0;min-height:20px;font-size:11px;color:#666;"></p>'
-  + '  <div class="btn-row"><button id="load-briefings" class="outlined">Load Briefings</button></div>'
-  + '  <div class="btn-row"><button id="sync">Sync</button><button id="create-template" class="outlined">Create Template</button></div>'
-  + '  <div class="small-row"><button id="migrate-widgets">Migrate Status Widgets</button><button id="fix-layouts">Fix Layouts</button></div>'
-  + '  <div class="small-row"><button id="preview-diagnostics" class="outlined">Preview diagnostics</button><button id="preview-selected-asset" class="outlined">Preview selected asset</button></div>'
+  + '  <div class="btn-row"><button id="load-briefings" class="outlined">Load Briefings</button><button id="sync">Sync</button></div>'
+  + '  <div class="tool-row"><button id="create-template" class="outlined">Create Template</button><button id="migrate-widgets">Migrate Status Widgets</button><button id="fix-layouts">Fix Layouts</button></div>'
+  + '  <div class="btn-row"><button id="preview-selected-asset" class="outlined">Preview Video</button></div>'
+  + '  <div class="subtle-row"><button id="preview-diagnostics">Preview diagnostics</button></div>'
   + '</div>'
   + '<script>'
   + 'parent.postMessage({ pluginMessage: { type: "ui-boot" } }, "*");'
@@ -3338,7 +3392,7 @@ var uiHtml = '<html><head><style>'
   + 'function updateSyncBtnCount() {'
   + '  var checked = document.querySelectorAll("#briefings-list input[type=checkbox]:checked");'
   + '  var btn = document.getElementById("sync");'
-  + '  btn.textContent = checked.length > 0 ? "Sync " + checked.length + " briefing(s)" : "Sync";'
+  + '  btn.textContent = checked.length > 0 ? "Sync " + checked.length + " briefing(s)" : "Sync Briefings";'
   + '  btn.disabled = checked.length === 0;'
   + '}'
   + 'function showBriefings(data) {'
@@ -3775,7 +3829,7 @@ async function capturePreWriteSnapshot(
 }
 
 export function runSyncBriefings() {
-  figma.showUI(uiHtml, { width: 460, height: 580 })
+  figma.showUI(uiHtml, { width: 500, height: 700 })
   if (!debugSelectionListenerBound) {
     debugSelectionListenerBound = true
     figma.on('selectionchange', () => {
