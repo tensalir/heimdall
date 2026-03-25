@@ -58,6 +58,7 @@
  * These appear in Figma's dev console (Plugins → Development → Open console).
  * ═══════════════════════════════════════════════════════════════════
  */
+import { DEFAULT_HEIMDALL_API } from '../constants'
 import { runExportComments } from './exportComments'
 
 const TEMPLATE_PAGE_NAMES = ['Briefing Template to Duplicate', 'Briefing Template', 'Template']
@@ -2930,12 +2931,17 @@ var uiHtml = '<html><head><style>'
   + '</style></head><body>'
   + '<div class="tabs"><button class="tab active" id="tab-sync">Sync Briefings</button><button class="tab" id="tab-comments">Export Comments</button></div>'
   + '<h3>Heimdall Sync</h3>'
-  + '<div class="row"><span class="label">API base</span><input id="api-base" placeholder="https://heimdall-tensalir.vercel.app" /><button class="secondary" id="save-api">Save</button></div>'
+  + '<div class="row"><span class="label">API base</span><input id="api-base" placeholder='
+  + JSON.stringify(DEFAULT_HEIMDALL_API)
+  + ' /><button class="secondary" id="save-api">Save</button></div>'
+  + '<div class="row"><span class="label">Plugin token</span><input id="plugin-token" type="password" placeholder="(required)" style="font-size:9px;" /><button class="secondary" id="save-token">Save</button></div>'
+  + '<div class="row"><span class="label">Vercel bypass</span><input id="vercel-bypass" placeholder="(optional)" style="font-size:9px;" /><button class="secondary" id="save-bypass">Save</button></div>'
   + '<div id="sync-panel">'
   + '  <div id="batch-select-wrap" style="display:none;"><span class="label">Batch</span><select id="batch-select"></select><button class="secondary" id="batch-apply">Apply</button></div>'
   + '  <p id="batch-label" style="margin:4px 0;font-size:12px;font-weight:600;"></p>'
   + '  <ul id="briefings-list" class="list"></ul>'
   + '  <p id="msg" style="margin:8px 0;min-height:20px;font-size:11px;color:#666;"></p>'
+  + '  <div class="btn-row"><button id="load-briefings" class="outlined">Load Briefings</button></div>'
   + '  <div class="btn-row"><button id="sync">Sync</button><button id="create-template" class="outlined">Create Template</button></div>'
   + '  <div class="small-row"><button id="migrate-widgets">Migrate Status Widgets</button><button id="fix-layouts">Fix Layouts</button></div>'
   + '</div>'
@@ -2948,7 +2954,9 @@ var uiHtml = '<html><head><style>'
   + '  var reason = ev && ev.reason ? (ev.reason.message || String(ev.reason)) : "unknown";'
   + '  parent.postMessage({ pluginMessage: { type: "ui-script-rejection", reason: String(reason) } }, "*");'
   + '});'
-  + 'var DEFAULT_HEIMDALL_API = "https://heimdall-tensalir.vercel.app";'
+  + 'var DEFAULT_HEIMDALL_API = '
+  + JSON.stringify(DEFAULT_HEIMDALL_API)
+  + ';'
   + 'var HEIMDALL_API = DEFAULT_HEIMDALL_API;'
   + 'var fileKey = "";'
   + 'var fileName = "";'
@@ -2956,10 +2964,12 @@ var uiHtml = '<html><head><style>'
   + 'var currentBriefings = [];'
   + 'var queuedJobIds = [];'
   + 'var existingPageNames = [];'
+  + 'var existingPageSummaries = [];'
   + 'var existingPageNameSet = {};'
   + 'var existingMondayItemIdSet = {};'
   + 'var pendingResults = null;'
   + 'var pageContentStatusMap = {};'
+  + 'var pageContentStatusByNameMap = {};'
   + 'var pageScoreDebugMap = {};'
   + 'function sanitizeApiBase(raw) {'
   + '  var v = (raw || "").trim();'
@@ -2973,12 +2983,26 @@ var uiHtml = '<html><head><style>'
   + '}'
   + 'var PLUGIN_TOKEN = "";'
   + 'function setPluginToken(t) { PLUGIN_TOKEN = (t || "").trim(); }'
+  + 'var VERCEL_BYPASS = "";'
+  + 'function setVercelBypass(v) { VERCEL_BYPASS = (v || "").trim(); var el = document.getElementById("vercel-bypass"); if (el) el.value = VERCEL_BYPASS; }'
+  + 'function stampUrl(url) {'
+  + '  if (!VERCEL_BYPASS) return url;'
+  + '  var sep = url.indexOf("?") >= 0 ? "&" : "?";'
+  + '  return url + sep + "x-vercel-protection-bypass=" + encodeURIComponent(VERCEL_BYPASS);'
+  + '}'
   + 'function authHeaders(extra) {'
   + '  var h = extra || {};'
   + '  if (PLUGIN_TOKEN) h["X-Heimdall-Plugin-Token"] = PLUGIN_TOKEN;'
   + '  return h;'
   + '}'
+  + 'function hintForHttpStatus(status) {'
+  + '  if (status === 401) return " Often means Vercel Deployment Protection (or similar) is blocking unauthenticated API calls from the plugin. In Vercel: allow the deployment used as API base to serve /api/* without browser login, or point the plugin at an unprotected production URL.";'
+  + '  if (status === 403) return " Machine auth failed: save the Plugin Token in Settings (must match HEIMDALL_PLUGIN_SECRET on the server).";'
+  + '  if (status === 503) return " Server not ready: HEIMDALL_PLUGIN_SECRET or HEIMDALL_MACHINE_SECRET may be missing on Vercel.";'
+  + '  return "";'
+  + '}'
   + 'function requestJson(url, options) {'
+  + '  url = stampUrl(url);'
   + '  options = options || {};'
   + '  options.headers = authHeaders(options.headers || {});'
   + '  return fetch(url, options).then(function(r) {'
@@ -2992,12 +3016,20 @@ var uiHtml = '<html><head><style>'
   + '      }'
   + '      if (!r.ok) {'
   + '        var err = parsed && (parsed.error || parsed.reason) ? (parsed.error || parsed.reason) : ("HTTP " + status);'
+  + '        err += hintForHttpStatus(status);'
   + '        throw new Error(err + " @ " + url);'
   + '      }'
   + '      if (parsed !== null) return parsed;'
   + '      var preview = raw.slice(0, 80).replace(/\\s+/g, " ");'
-  + '      throw new Error("Expected JSON but got non-JSON response @ " + url + " (status " + status + ", content-type: " + contentType + ", body: " + preview + ")");'
+  + '      var htmlHint = /<\\s*html/i.test(raw) ? " Body looks like HTML (login or error page), not Heimdall JSON." : "";'
+  + '      throw new Error("Expected JSON but got non-JSON response @ " + url + " (status " + status + ", content-type: " + contentType + ", body: " + preview + ")" + htmlHint);'
   + '    });'
+  + '  }).catch(function(e) {'
+  + '    var msg = e && e.message ? String(e.message) : String(e);'
+  + '    if (e && e.name === "TypeError" && (/Failed to fetch|NetworkError|fetch|load failed/i.test(msg))) {'
+  + '      throw new Error("Network error reaching " + url + ". Check API base URL, Figma manifest allowedDomains, and that the host is reachable without browser-only auth. (" + msg + ")");'
+  + '    }'
+  + '    throw e;'
   + '  });'
   + '}'
   + 'document.getElementById("save-api").onclick = function() {'
@@ -3006,6 +3038,16 @@ var uiHtml = '<html><head><style>'
   + '  parent.postMessage({ pluginMessage: { type: "save-api-base", apiBase: HEIMDALL_API } }, "*");'
   + '  document.getElementById("msg").textContent = "Saved API base: " + HEIMDALL_API;'
   + '  document.getElementById("msg").className = "";'
+  + '};'
+  + 'document.getElementById("save-token").onclick = function() {'
+  + '  var input = document.getElementById("plugin-token");'
+  + '  setPluginToken(input ? input.value : "");'
+  + '  parent.postMessage({ pluginMessage: { type: "save-plugin-token", token: PLUGIN_TOKEN } }, "*");'
+  + '  document.getElementById("msg").textContent = PLUGIN_TOKEN ? "Saved plugin token." : "Cleared plugin token.";'
+  + '  document.getElementById("msg").className = "";'
+  + '};'
+  + 'document.getElementById("load-briefings").onclick = function() {'
+  + '  fetchBriefings(null);'
   + '};'
   + 'document.getElementById("tab-comments").onclick = function() {'
   + '  parent.postMessage({ pluginMessage: { type: "open-export-comments" } }, "*");'
@@ -3055,6 +3097,8 @@ var uiHtml = '<html><head><style>'
   + '  if (!hasMondayId && !hasPageName) return "new";'
   + '  if (hasMondayId && pageContentStatusMap[itemId] === "populated") return "populated";'
   + '  if (hasMondayId && pageContentStatusMap[itemId] === "empty") return "empty-import";'
+  + '  if (hasPageName && pageContentStatusByNameMap[needle] === "populated") return "populated";'
+  + '  if (hasPageName && pageContentStatusByNameMap[needle] === "empty") return "empty-import";'
   + '  return "exists";'
   + '}'
   + 'function updateSyncBtnCount() {'
@@ -3149,6 +3193,7 @@ var uiHtml = '<html><head><style>'
   + '  document.getElementById("msg").textContent = "Loading briefings...";'
   + '  document.getElementById("msg").className = "";'
   + '  var body = { fileName: fileName, fileKey: fileKey };'
+  + '  if (existingPageSummaries.length > 0) body.pages = existingPageSummaries;'
   + '  if (selectedBatch) body.batch = selectedBatch;'
   + '  requestJson(HEIMDALL_API + "/api/plugin/briefings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })'
   + '    .then(function(data) {'
@@ -3257,13 +3302,13 @@ var uiHtml = '<html><head><style>'
   + '    var r = results[i];'
   + '    if (r.error) {'
   + '      failed.push(r.experimentPageName);'
-  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/fail", { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: r.error}) }).catch(function(){}));'
+  + '      promises.push(fetch(stampUrl(HEIMDALL_API + "/api/jobs/fail"), { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: r.error}) }).catch(function(){}));'
   + '    } else if (r.contentEmpty) {'
   + '      failed.push(r.experimentPageName + " (empty)");'
-  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/fail", { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: "content_empty"}) }).catch(function(){}));'
+  + '      promises.push(fetch(stampUrl(HEIMDALL_API + "/api/jobs/fail"), { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: "content_empty"}) }).catch(function(){}));'
   + '    } else {'
   + '      if (r.outcome === "updated") updated++; else done++;'
-  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/complete", { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, figmaPageId: r.pageId, figmaFileUrl: r.fileUrl, outcome: r.outcome || "created"}) }).catch(function(){}));'
+  + '      promises.push(fetch(stampUrl(HEIMDALL_API + "/api/jobs/complete"), { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, figmaPageId: r.pageId, figmaFileUrl: r.fileUrl, outcome: r.outcome || "created"}) }).catch(function(){}));'
   + '    }'
   + '  }'
   + '  Promise.all(promises).then(function() {'
@@ -3292,7 +3337,7 @@ var uiHtml = '<html><head><style>'
   + '    }'
   + '    var img = images[i];'
   + '    el.textContent = "Fetching image " + (i + 1) + "/" + images.length + ": " + img.name;'
-  + '    var fetchUrl = img.assetId ? (HEIMDALL_API + "/api/images/proxy?assetId=" + encodeURIComponent(img.assetId)) : (HEIMDALL_API + "/api/images/proxy?url=" + encodeURIComponent(img.url || ""));'
+  + '    var fetchUrl = stampUrl(img.assetId ? (HEIMDALL_API + "/api/images/proxy?assetId=" + encodeURIComponent(img.assetId)) : (HEIMDALL_API + "/api/images/proxy?url=" + encodeURIComponent(img.url || "")));'
   + '    function doFetch(attempt) {'
   + '      fetch(fetchUrl)'
   + '        .then(function(r) {'
@@ -3319,7 +3364,9 @@ var uiHtml = '<html><head><style>'
   + '    fileKey = d.fileKey || "";'
   + '    fileName = d.fileName || "";'
   + '    existingPageNames = Array.isArray(d.existingPages) ? d.existingPages : [];'
+  + '    existingPageSummaries = Array.isArray(d.existingPageSummaries) ? d.existingPageSummaries : [];'
   + '    pageContentStatusMap = d.pageContentStatus || {};'
+  + '    pageContentStatusByNameMap = d.pageContentStatusByName || {};'
   + '    pageScoreDebugMap = d.pageScoreDebug || {};'
   + '    rebuildExistingLookupSets(Array.isArray(d.existingMondayItemIds) ? d.existingMondayItemIds : []);'
   + '    var scoreSample = Object.keys(pageScoreDebugMap).slice(0,6).map(function(id){ return { id:id, debug: pageScoreDebugMap[id] }; });'
@@ -3342,6 +3389,7 @@ var uiHtml = '<html><head><style>'
   + '  }'
   + '  if (d.type === "api-base") setApiBase(d.apiBase || DEFAULT_HEIMDALL_API);'
   + '  if (d.type === "plugin-token") { setPluginToken(d.token || ""); var ti = document.getElementById("plugin-token"); if (ti) ti.value = d.token || ""; }'
+  + '  if (d.type === "vercel-bypass") setVercelBypass(d.secret || "");'
   + '  if (d.type === "create-template-done") {'
   + '    var el = document.getElementById("msg");'
   + '    el.textContent = d.error ? "Template error: " + d.error : "Template created. Place the \'Custom Labels - Status Tracker\' widget in each column header (Briefing, Copy, Design).";'
@@ -3390,8 +3438,16 @@ var uiHtml = '<html><head><style>'
   + '    el.textContent = d.text;'
   + '  }'
   + '};'
+  + 'document.getElementById("save-bypass").onclick = function() {'
+  + '  var input = document.getElementById("vercel-bypass");'
+  + '  setVercelBypass(input ? input.value : "");'
+  + '  parent.postMessage({ pluginMessage: { type: "save-vercel-bypass", secret: VERCEL_BYPASS } }, "*");'
+  + '  document.getElementById("msg").textContent = VERCEL_BYPASS ? "Saved Vercel bypass secret." : "Cleared Vercel bypass secret.";'
+  + '  document.getElementById("msg").className = "";'
+  + '};'
   + 'parent.postMessage({ pluginMessage: { type: "get-api-base" } }, "*");'
   + 'parent.postMessage({ pluginMessage: { type: "get-plugin-token" } }, "*");'
+  + 'parent.postMessage({ pluginMessage: { type: "get-vercel-bypass" } }, "*");'
   + '</script></body></html>'
 
 function serializePageSnapshot(page: PageNode): Record<string, unknown> {
@@ -3429,6 +3485,17 @@ async function getPluginToken(): Promise<string> {
   return typeof saved === 'string' ? saved.trim() : ''
 }
 
+async function getVercelBypass(): Promise<string> {
+  const saved = await figma.clientStorage.getAsync('heimdallVercelBypass')
+  return typeof saved === 'string' ? saved.trim() : ''
+}
+
+function stampUrlMain(url: string, bypass: string): string {
+  if (!bypass) return url
+  const sep = url.includes('?') ? '&' : '?'
+  return url + sep + 'x-vercel-protection-bypass=' + encodeURIComponent(bypass)
+}
+
 async function capturePreWriteSnapshot(
   apiBase: string,
   page: PageNode,
@@ -3443,9 +3510,10 @@ async function capturePreWriteSnapshot(
     const itemId = mondayItemId || page.getPluginData('heimdallMondayItemId') || page.name
     const boardId = mondayBoardId || page.getPluginData('heimdallBoardId') || ''
     const pluginToken = await getPluginToken()
+    const bypass = await getVercelBypass()
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (pluginToken) headers['X-Heimdall-Plugin-Token'] = pluginToken
-    await fetch(apiBase + '/api/plugin/capture-version', {
+    await fetch(stampUrlMain(apiBase + '/api/plugin/capture-version', bypass), {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -3503,8 +3571,15 @@ export function runSyncBriefings() {
     }
     if (msg.type === 'ui-boot') {
       const existingPages: string[] = []
+      const existingPageSummaries: Array<{
+        pageId: string
+        pageName: string
+        mondayItemId?: string
+        contentStatus: 'populated' | 'empty'
+      }> = []
       const existingMondayItemIds: string[] = []
       const pageContentStatus: Record<string, 'populated' | 'empty'> = {}
+      const pageContentStatusByName: Record<string, 'populated' | 'empty'> = {}
       const pageScoreDebug: Record<string, unknown> = {}
       for (let i = 0; i < figma.root.children.length; i++) {
         const p = figma.root.children[i]
@@ -3512,22 +3587,18 @@ export function runSyncBriefings() {
           const page = p as PageNode
           existingPages.push(page.name)
           const mondayItemId = page.getPluginData('heimdallMondayItemId')
+          const normalizedPageName = page.name.trim().toLowerCase().replace(/\s+/g, ' ')
           if (mondayItemId) {
             existingMondayItemIds.push(mondayItemId)
-            try {
-              if (typeof (page as any).loadAsync === 'function') {
-                await (page as any).loadAsync()
-              }
-              let contentRoot: BaseNode = page
-              for (let ci = 0; ci < page.children.length; ci++) {
-                const child = page.children[ci]
-                if (child.type === 'FRAME' && (child as FrameNode).name === 'Name Briefing') {
-                  contentRoot = child
-                  break
-                }
-              }
-              const score = scorePageContent(contentRoot)
-              const status = (score.briefingSet || score.variantsPopulated > 0) ? 'populated' : 'empty'
+          }
+          try {
+            if (typeof (page as any).loadAsync === 'function') {
+              await (page as any).loadAsync()
+            }
+            const contentRoot = findPageContentRoot(page) ?? page
+            const score = scorePageContent(contentRoot)
+            const status = (score.briefingSet || score.variantsPopulated > 0) ? 'populated' : 'empty'
+            if (mondayItemId) {
               pageContentStatus[mondayItemId] = status
               pageScoreDebug[mondayItemId] = {
                 pageName: page.name,
@@ -3535,13 +3606,34 @@ export function runSyncBriefings() {
                 childCount: (contentRoot as { children?: readonly BaseNode[] }).children?.length ?? 0,
                 score,
               }
-            } catch (err) {
+            }
+            if (normalizedPageName) {
+              pageContentStatusByName[normalizedPageName] =
+                pageContentStatusByName[normalizedPageName] === 'populated' ? 'populated' : status
+            }
+            existingPageSummaries.push({
+              pageId: page.id,
+              pageName: page.name,
+              ...(mondayItemId ? { mondayItemId } : {}),
+              contentStatus: status,
+            })
+          } catch (err) {
+            if (mondayItemId) {
               pageContentStatus[mondayItemId] = 'empty'
               pageScoreDebug[mondayItemId] = {
                 pageName: page.name,
                 error: String(err),
               }
             }
+            if (normalizedPageName && pageContentStatusByName[normalizedPageName] !== 'populated') {
+              pageContentStatusByName[normalizedPageName] = 'empty'
+            }
+            existingPageSummaries.push({
+              pageId: page.id,
+              pageName: page.name,
+              ...(mondayItemId ? { mondayItemId } : {}),
+              contentStatus: 'empty',
+            })
           }
         }
       }
@@ -3550,8 +3642,10 @@ export function runSyncBriefings() {
         fileName: figma.root.name,
         fileKey: figma.fileKey || '',
         existingPages,
+        existingPageSummaries,
         existingMondayItemIds,
         pageContentStatus,
+        pageContentStatusByName,
         pageScoreDebug,
       })
     }
@@ -3559,12 +3653,12 @@ export function runSyncBriefings() {
     }
     if (msg.type === 'get-api-base') {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
+      const apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_HEIMDALL_API
       figma.ui.postMessage({ type: 'api-base', apiBase })
     }
     if (msg.type === 'save-api-base') {
       const raw = msg.apiBase ?? ''
-      const apiBase = raw.trim().replace(/\/$/, '') || 'https://heimdall-tensalir.vercel.app'
+      const apiBase = raw.trim().replace(/\/$/, '') || DEFAULT_HEIMDALL_API
       await figma.clientStorage.setAsync('heimdallApiBase', apiBase)
       figma.ui.postMessage({ type: 'api-base', apiBase })
     }
@@ -3578,12 +3672,22 @@ export function runSyncBriefings() {
       await figma.clientStorage.setAsync('heimdallPluginToken', token)
       figma.ui.postMessage({ type: 'plugin-token', token })
     }
+    if (msg.type === 'get-vercel-bypass') {
+      const saved = await figma.clientStorage.getAsync('heimdallVercelBypass')
+      const secret = typeof saved === 'string' ? saved.trim() : ''
+      figma.ui.postMessage({ type: 'vercel-bypass', secret })
+    }
+    if (msg.type === 'save-vercel-bypass') {
+      const secret = ((msg as any).secret ?? '').trim()
+      await figma.clientStorage.setAsync('heimdallVercelBypass', secret)
+      figma.ui.postMessage({ type: 'vercel-bypass', secret })
+    }
     if (msg.type === 'get-file-key') {
       figma.ui.postMessage({ type: 'file-key', fileKey: figma.fileKey || '' })
     }
     if (msg.type === 'create-template') {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_HEIMDALL_API
       const templatePage = findTemplatePage()
       if (templatePage) {
         await capturePreWriteSnapshot(_apiBase, templatePage, 'template_create')
@@ -3593,7 +3697,7 @@ export function runSyncBriefings() {
     }
     if (msg.type === 'migrate-widgets') {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_HEIMDALL_API
       for (const page of figma.root.children) {
         if (page.type === 'PAGE' && page.getPluginData('heimdallMondayItemId')) {
           await capturePreWriteSnapshot(_apiBase, page as PageNode, 'widget_migrate')
@@ -3610,7 +3714,7 @@ export function runSyncBriefings() {
     }
     if (msg.type === 'fix-layouts') {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_HEIMDALL_API
       for (const page of figma.root.children) {
         if (page.type === 'PAGE' && page.getPluginData('heimdallMondayItemId')) {
           await capturePreWriteSnapshot(_apiBase, page as PageNode, 'layout_fix')
@@ -3626,7 +3730,7 @@ export function runSyncBriefings() {
     }
     if (msg.type === 'process-jobs' && msg.jobs) {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_HEIMDALL_API
       for (const job of msg.jobs) {
         for (const page of figma.root.children) {
           if (page.type === 'PAGE') {
@@ -3702,7 +3806,7 @@ export function runSyncBriefings() {
 
     if (msg.type === 'images-fetched' && msg.images) {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
+      const _apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_HEIMDALL_API
       const capturedPageIds = new Set<string>()
       for (const imgData of msg.images) {
         if (imgData.pageId && !capturedPageIds.has(imgData.pageId)) {

@@ -149,7 +149,9 @@ If deployment fails, rollback via Vercel UI:
 
 ### Figma plugin cannot connect
 - Ensure API routes allow CORS (already configured in route handlers)
-- Verify plugin has correct API base URL
+- Verify plugin has correct API base URL (default: `https://bifrost-rose.vercel.app`, see `packages/figma-plugin/src/constants.ts`)
+- Set `HEIMDALL_PLUGIN_SECRET` on Vercel and distribute the same value as the plugin token
+- **Vercel Deployment Protection**: if enabled on the plugin’s API hostname, unauthenticated `fetch` from the plugin will get **401** or HTML error pages—allow `/api/*` for machine routes or use an unprotected production URL
 - Check browser console for CORS errors
 
 ## Production Recommendations

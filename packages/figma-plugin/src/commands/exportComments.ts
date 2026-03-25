@@ -10,6 +10,8 @@
  *   4. User can copy to clipboard (CSV) or download
  */
 
+import { DEFAULT_HEIMDALL_API } from '../constants'
+
 const commentsUiHtml = `<html><head><style>
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:Inter,-apple-system,system-ui,sans-serif;background:#1e1e1e;color:#e0e0e0;overflow:hidden;height:100vh;display:flex;flex-direction:column;}
@@ -86,7 +88,7 @@ body{font-family:Inter,-apple-system,system-ui,sans-serif;background:#1e1e1e;col
 
 <div class="footer">
   <span class="field-label">API</span>
-  <input id="api-base" class="field-input" placeholder="https://heimdall-tensalir.vercel.app" style="font-size:9px;" />
+  <input id="api-base" class="field-input" placeholder="${DEFAULT_HEIMDALL_API}" style="font-size:9px;" />
   <button class="btn btn-outline btn-sm" id="save-api">Save</button>
 </div>
 
@@ -94,8 +96,15 @@ body{font-family:Inter,-apple-system,system-ui,sans-serif;background:#1e1e1e;col
 parent.postMessage({ pluginMessage: { type: "get-api-base" } }, "*");
 parent.postMessage({ pluginMessage: { type: "get-file-key" } }, "*");
 
-var DEFAULT_HEIMDALL_API = "https://heimdall-tensalir.vercel.app";
+var DEFAULT_HEIMDALL_API = ${JSON.stringify(DEFAULT_HEIMDALL_API)};
 var HEIMDALL_API = DEFAULT_HEIMDALL_API;
+var VERCEL_BYPASS = "";
+function setVercelBypass(v) { VERCEL_BYPASS = (v || "").trim(); }
+function stampUrl(url) {
+  if (!VERCEL_BYPASS) return url;
+  var sep = url.indexOf("?") >= 0 ? "&" : "?";
+  return url + sep + "x-vercel-protection-bypass=" + encodeURIComponent(VERCEL_BYPASS);
+}
 var fileKey = "";
 var allComments = [];
 var loading = false;
@@ -137,16 +146,39 @@ document.getElementById("fetch-btn").onclick = function() {
   fetchComments();
 };
 
+function hintForHttpStatus(status) {
+  if (status === 401) return " Often Vercel Deployment Protection or login wall (plugin cannot use browser session).";
+  if (status === 403) return " Forbidden: /api/comments may require staff login; open Heimdall in a browser while signed in, or use an API path your org exposes to the plugin.";
+  if (status === 503) return " Server misconfiguration.";
+  return "";
+}
+
 function fetchComments() {
   if (!fileKey) { setStatus("No file key available.", true); return; }
   loading = true;
   setStatus("Fetching comments for " + fileKey + "...", false);
   document.getElementById("fetch-btn").disabled = true;
-  var url = HEIMDALL_API + "/api/comments?fileKey=" + encodeURIComponent(fileKey);
+  var url = stampUrl(HEIMDALL_API + "/api/comments?fileKey=" + encodeURIComponent(fileKey));
   fetch(url)
     .then(function(r) {
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      return r.json();
+      var status = r.status;
+      var ct = (r.headers.get("content-type") || "").toLowerCase();
+      return r.text().then(function(t) {
+        var raw = t || "";
+        var parsed = null;
+        if (raw) { try { parsed = JSON.parse(raw); } catch (_) { parsed = null; } }
+        if (!r.ok) {
+          var err = parsed && (parsed.error || parsed.reason) ? (parsed.error || parsed.reason) : ("HTTP " + status);
+          err += hintForHttpStatus(status);
+          throw new Error(err + " @ " + url);
+        }
+        if (parsed === null) {
+          var preview = raw.slice(0, 80).replace(/\\s+/g, " ");
+          var htmlHint = /<\\s*html/i.test(raw) ? " (HTML body — wrong host or auth page?)" : "";
+          throw new Error("Expected JSON from comments API. Got: " + preview + htmlHint);
+        }
+        return parsed;
+      });
     })
     .then(function(data) {
       loading = false;
@@ -161,7 +193,12 @@ function fetchComments() {
     .catch(function(e) {
       loading = false;
       document.getElementById("fetch-btn").disabled = false;
-      setStatus("Error: " + e.message, true);
+      var msg = e && e.message ? String(e.message) : String(e);
+      if (e && e.name === "TypeError" && (/Failed to fetch|NetworkError|fetch|load failed/i.test(msg))) {
+        setStatus("Network error: cannot reach " + url + ". Check API base and deployment protection. (" + msg + ")", true);
+        return;
+      }
+      setStatus("Error: " + msg, true);
     });
 }
 
@@ -234,7 +271,7 @@ document.getElementById("copy-btn").onclick = function() {
 
 document.getElementById("download-btn").onclick = function() {
   if (!fileKey) return;
-  var url = HEIMDALL_API + "/api/comments?fileKey=" + encodeURIComponent(fileKey) + "&format=csv";
+  var url = stampUrl(HEIMDALL_API + "/api/comments?fileKey=" + encodeURIComponent(fileKey) + "&format=csv");
   window.open(url, "_blank");
   setStatus("Download started.", false);
 };
@@ -282,8 +319,10 @@ onmessage = function(e) {
     if (fileKey) document.getElementById("open-sheet-btn").disabled = false;
   }
   if (d.type === "api-base") setApiBase(d.apiBase || DEFAULT_HEIMDALL_API);
+  if (d.type === "vercel-bypass") setVercelBypass(d.secret || "");
 };
 parent.postMessage({ pluginMessage: { type: "get-api-base" } }, "*");
+parent.postMessage({ pluginMessage: { type: "get-vercel-bypass" } }, "*");
 </script></body></html>`
 
 export function runExportComments() {
@@ -296,12 +335,12 @@ export function runExportComments() {
   }) {
     if (msg.type === 'get-api-base') {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')
-      const apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : 'https://heimdall-tensalir.vercel.app'
+      const apiBase = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_HEIMDALL_API
       figma.ui.postMessage({ type: 'api-base', apiBase })
     }
     if (msg.type === 'save-api-base') {
       const raw = msg.apiBase ?? ''
-      const apiBase = raw.trim().replace(/\/$/, '') || 'https://heimdall-tensalir.vercel.app'
+      const apiBase = raw.trim().replace(/\/$/, '') || DEFAULT_HEIMDALL_API
       await figma.clientStorage.setAsync('heimdallApiBase', apiBase)
       figma.ui.postMessage({ type: 'api-base', apiBase })
     }
@@ -314,6 +353,11 @@ export function runExportComments() {
       const token = (msg.token ?? '').trim()
       await figma.clientStorage.setAsync('heimdallPluginToken', token)
       figma.ui.postMessage({ type: 'plugin-token', token })
+    }
+    if (msg.type === 'get-vercel-bypass') {
+      const saved = await figma.clientStorage.getAsync('heimdallVercelBypass')
+      const secret = typeof saved === 'string' ? saved.trim() : ''
+      figma.ui.postMessage({ type: 'vercel-bypass', secret })
     }
     if (msg.type === 'get-file-key') {
       figma.ui.postMessage({ type: 'file-key', fileKey: figma.fileKey || '' })

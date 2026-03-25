@@ -11,7 +11,7 @@
     { "name": "Export Comments", "command": "export-comments" }
   ],
   "networkAccess": {
-    "allowedDomains": ["heimdall-tensalir.vercel.app", "*.vercel.app", "api.figma.com"],
+    "allowedDomains": ["https://bifrost-rose.vercel.app", "https://*.vercel.app", "https://api.figma.com"],
     "devAllowedDomains": ["*"],
     "reasoning": "Plugin communicates with Heimdall backend on Vercel and Figma REST API."
   }
