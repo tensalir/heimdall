@@ -3,8 +3,8 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "build": "esbuild code.ts --bundle --outfile=code.js --format=iife --target=es2017",
-    "watch": "esbuild code.ts --bundle --outfile=code.js --format=iife --target=es2017 --watch"
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch"
   },
   "devDependencies": {
     "@figma/plugin-typings": "^1.102.0",

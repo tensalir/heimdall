@@ -6,6 +6,9 @@ dist/
 .DS_Store
 figma-plugin/node_modules/
 figma-plugin/code.js.map
+
+# Plugin bundle — built from TS sources; may contain injected secrets
+packages/figma-plugin/code.js
 .cursor/
 
 # Next.js
