@@ -3,8 +3,17 @@ import { getEnv } from '@/src/config/env'
 import { readMondayBoardItems } from '@/src/services/mondayBoardReader'
 import type { MondayBoardItemRow } from '@/src/services/mondayBoardReader'
 import { parseBatchToCanonical } from '@/src/domain/routing/batchToFile'
-import { getSyncsForFile } from '@/src/services/briefingSyncStore'
+import {
+  appendImportEvent,
+  getSyncsForFile,
+  upsertSync,
+} from '@/src/services/briefingSyncStore'
 import { getProjectFiles } from '@/src/integrations/figma/restClient'
+import { updateItemPipelineStatus } from '@/src/services/opsBoardStore'
+import {
+  coerceLegacyPageSummaries,
+  matchLegacyBriefingPages,
+} from '@/src/services/briefingLegacyPageMatcher'
 
 export const dynamic = 'force-dynamic'
 
@@ -104,6 +113,10 @@ function parseFileNameToBatch(fileName: string): string | null {
   return parsed?.canonicalKey ?? null
 }
 
+function hasConcretePageId(value: { figma_page_id: string | null } | undefined): boolean {
+  return value?.figma_page_id != null && String(value.figma_page_id).trim() !== ''
+}
+
 /**
  * POST /api/plugin/briefings
  * Body: { fileName: string, fileKey: string, batch?: string }
@@ -116,6 +129,7 @@ export async function POST(request: NextRequest) {
     const fileKey = String(body.fileKey ?? '').trim()
     const syncFileRef = buildSyncFileRef(fileKey, fileName)
     const explicitBatch = body.batch ? String(body.batch).trim() : undefined
+    const legacyPages = coerceLegacyPageSummaries(body.pages)
 
     const env = getEnv()
     const statusAllowlist = parseCsvLower(env.PLUGIN_FILTER_STATUS ?? 'brief ready,approved,ready')
@@ -173,22 +187,10 @@ export async function POST(request: NextRequest) {
     }
 
     const allItems = await readMondayBoardItems(BOARD_ID)
-    const syncs = syncFileRef ? await getSyncsForFile(syncFileRef) : []
-    const syncByItemId = new Map(syncs.map((s) => [s.monday_item_id, s]))
-
-    const items: Array<{
-      id: string
-      name: string
-      batch: string
-      status: string
-      syncState: 'new' | 'synced' | 'changed'
-    }> = []
-
-    for (const row of allItems) {
+    const parsedRows = allItems.map((row) => {
       const col = rowToColumnMap(row)
       const batchRaw = getColFromRow(col, 'batch', 'batch_name')
       const parsed = batchRaw ? parseBatchToCanonical(batchRaw) : null
-      if (!parsed || parsed.canonicalKey !== batchCanonical) continue
 
       const statusVal = getColFromRow(col, 'status')
       const statusNorm = statusVal?.toLowerCase() ?? ''
@@ -211,13 +213,94 @@ export async function POST(request: NextRequest) {
         partnerAllowlist.length === 0 ||
         partnerAllowlist.some((a) => partnerNorm.includes(a) || a.includes(partnerNorm))
 
+      return {
+        row,
+        parsed,
+        statusVal,
+        statusMatch,
+        partnerMatch,
+      }
+    })
+
+    if (fileKey && legacyPages.length > 0) {
+      const existingSyncs = await getSyncsForFile(fileKey)
+      const syncedItemIds = new Set(
+        existingSyncs
+          .filter((sync) => hasConcretePageId(sync))
+          .map((sync) => sync.monday_item_id)
+      )
+      const backfillCandidates = parsedRows
+        .filter((entry) => entry.parsed && entry.statusMatch && entry.partnerMatch)
+        .map((entry) => ({
+          mondayItemId: entry.row.id,
+          mondayBoardId: BOARD_ID,
+          mondayItemName: entry.row.name,
+          batchCanonical: entry.parsed!.canonicalKey,
+        }))
+
+      const matches = matchLegacyBriefingPages(backfillCandidates, legacyPages).filter(
+        (match) => !syncedItemIds.has(match.item.mondayItemId)
+      )
+
+      if (matches.length > 0) {
+        await Promise.allSettled(
+          matches.map(async (match) => {
+            const sync = await upsertSync({
+              mondayItemId: match.item.mondayItemId,
+              mondayBoardId: match.item.mondayBoardId,
+              mondayItemName: match.item.mondayItemName,
+              batchCanonical: match.item.batchCanonical,
+              figmaFileKey: fileKey,
+              figmaPageId: match.page.pageId,
+              figmaPageName: match.page.pageName,
+            })
+            if (!sync) return
+
+            await appendImportEvent({
+              mondayItemId: match.item.mondayItemId,
+              mondayBoardId: match.item.mondayBoardId,
+              mondayItemName: match.item.mondayItemName,
+              batchCanonical: match.item.batchCanonical,
+              figmaFileKey: fileKey,
+              figmaPageId: match.page.pageId,
+              figmaPageName: match.page.pageName,
+              source: 'plugin_sync',
+              outcome: 'completed',
+              reason:
+                match.matchType === 'plugin_data'
+                  ? 'Backfilled existing populated page using Heimdall plugin data'
+                  : 'Backfilled existing populated page using exact page name match',
+            })
+
+            await updateItemPipelineStatus(match.item.mondayItemId, match.item.mondayBoardId, 'synced', {
+              figma_file_key: fileKey,
+              figma_page_id: match.page.pageId,
+              synced_at: new Date().toISOString(),
+            })
+          })
+        )
+      }
+    }
+
+    const syncs = syncFileRef ? await getSyncsForFile(syncFileRef) : []
+    const syncByItemId = new Map(syncs.map((s) => [s.monday_item_id, s]))
+
+    const items: Array<{
+      id: string
+      name: string
+      batch: string
+      status: string
+      syncState: 'new' | 'synced' | 'changed'
+    }> = []
+
+    for (const entry of parsedRows) {
+      const { row, parsed, statusVal, statusMatch, partnerMatch } = entry
+      if (!parsed || parsed.canonicalKey !== batchCanonical) continue
       if (!statusMatch || !partnerMatch) continue
 
       const existing = syncByItemId.get(row.id)
-      const hasConcretePageId =
-        existing?.figma_page_id != null && String(existing.figma_page_id).trim() !== ''
       let syncState: 'new' | 'synced' | 'changed' = 'new'
-      if (existing && hasConcretePageId) {
+      if (existing && hasConcretePageId(existing)) {
         syncState = 'synced'
         // TODO: compare monday_snapshot for "changed" when versioning is implemented
       }

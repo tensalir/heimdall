@@ -54,6 +54,7 @@ export async function createOrQueueFigmaPage(
     nodeMapping?: Array<{ nodeName: string; value: string }>
     frameRenames?: Array<{ oldName: string; newName: string }>
     images?: Array<{ url: string; name: string; source: string; assetId?: string }>
+    referenceLinks?: Array<{ url: string; label?: string; source: string }>
     figmaFileKeyOverride?: string
   }
 ): Promise<CreateOrQueueResult> {
@@ -123,6 +124,13 @@ export async function createOrQueueFigmaPage(
     if (key) seenKeys.add(key)
     return true
   })
+  const seenReferenceUrls = new Set<string>()
+  const dedupReferenceLinks = (options.referenceLinks ?? []).filter((ref) => {
+    const key = (ref.url || '').trim()
+    if (!key || seenReferenceUrls.has(key)) return false
+    seenReferenceUrls.add(key)
+    return true
+  })
 
   const job = await enqueuePendingSyncJob({
     idempotencyKey,
@@ -136,6 +144,7 @@ export async function createOrQueueFigmaPage(
     nodeMapping: options.nodeMapping,
     frameRenames: options.frameRenames,
     images: dedupImages.length > 0 ? dedupImages : undefined,
+    referenceLinks: dedupReferenceLinks.length > 0 ? dedupReferenceLinks : undefined,
   })
 
   logger.info('queue', 'Job enqueued', {

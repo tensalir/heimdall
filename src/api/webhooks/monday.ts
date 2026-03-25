@@ -14,7 +14,12 @@ import { createOrQueueFigmaPage } from '../../orchestration/createOrQueueFigmaPa
 import { resolveFigmaTarget } from '../../orchestration/resolveFigmaTarget.js'
 import { getTemplateNodeTree } from '../../integrations/figma/templateCache.js'
 import { computeNodeMapping } from '../../agents/mappingAgent.js'
-import { getDocContent, getDocIdFromColumnValue, getDocImages } from '../../integrations/monday/docReader.js'
+import {
+  getDocContent,
+  getDocIdFromColumnValue,
+  getDocImages,
+  getDocReferenceLinks,
+} from '../../integrations/monday/docReader.js'
 import { columnMap, getCol } from '../../integrations/monday/client.js'
 import { linkFrontifyAsset, isAssetsColumnEmpty } from '../../services/frontifyAssetLinker.js'
 import { getBoardByMondayId, updateItemPipelineStatus, getItemByMondayId } from '../../services/opsBoardStore.js'
@@ -218,11 +223,20 @@ export async function handleMondayWebhook(body: MondayWebhookPayload): Promise<{
   const briefRaw = getCol(col, 'brief', 'briefing', 'doc')
   const docId = getDocIdFromColumnValue(briefRaw ?? null)
   let docImages: Awaited<ReturnType<typeof getDocImages>> = []
+  let docReferenceLinks: Awaited<ReturnType<typeof getDocReferenceLinks>> = []
   if (docId) {
     try {
       docImages = await getDocImages(docId)
     } catch (err) {
       logger.error('webhook', 'Failed to fetch doc images', err as Error, { docId, mondayItemId: itemId })
+    }
+    try {
+      docReferenceLinks = await getDocReferenceLinks(docId)
+    } catch (err) {
+      logger.error('webhook', 'Failed to fetch doc reference links', err as Error, {
+        docId,
+        mondayItemId: itemId,
+      })
     }
   }
   if (!docId) {
@@ -283,6 +297,7 @@ export async function handleMondayWebhook(body: MondayWebhookPayload): Promise<{
     statusTransitionId: timestamp,
     nodeMapping,
     frameRenames,
+    referenceLinks: docReferenceLinks.length > 0 ? docReferenceLinks : undefined,
   })
 
   logger.info('queue', 'Webhook job outcome', {
@@ -380,11 +395,20 @@ export async function queueMondayItem(
   const qBriefRaw = getCol(qCol, 'brief', 'briefing', 'doc')
   const qDocId = getDocIdFromColumnValue(qBriefRaw ?? null)
   let qDocImages: Awaited<ReturnType<typeof getDocImages>> = []
+  let qDocReferenceLinks: Awaited<ReturnType<typeof getDocReferenceLinks>> = []
   if (qDocId) {
     try {
       qDocImages = await getDocImages(qDocId)
     } catch (err) {
       logger.error('webhook', 'Manual queue: failed to fetch doc images', err as Error, { docId: qDocId, itemId })
+    }
+    try {
+      qDocReferenceLinks = await getDocReferenceLinks(qDocId)
+    } catch (err) {
+      logger.error('webhook', 'Manual queue: failed to fetch doc reference links', err as Error, {
+        docId: qDocId,
+        itemId,
+      })
     }
   }
   if (!qDocId) {
@@ -454,6 +478,7 @@ export async function queueMondayItem(
     nodeMapping,
     frameRenames,
     figmaFileKeyOverride: effectiveFigmaFileKey ?? undefined,
+    referenceLinks: qDocReferenceLinks.length > 0 ? qDocReferenceLinks : undefined,
   })
 
   return {

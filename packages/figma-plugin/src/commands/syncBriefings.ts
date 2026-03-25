@@ -357,6 +357,223 @@ function getSelectionDebugData(): Record<string, unknown> {
   }
 }
 
+/** Plugin-tagged frame used by "Preview selected asset" (top-level on page, safe for inline prototype preview). */
+const HEIMDALL_PREVIEW_SURFACE_KEY = 'heimdallPreviewSurface'
+const HEIMDALL_PREVIEW_SURFACE_VAL = 'v1'
+const PREVIEW_FRAME_NAME = 'Heimdall · Media Preview'
+
+function findTopLevelFrameOnPage(node: BaseNode | null | undefined): FrameNode | null {
+  let current: BaseNode | null = node ?? null
+  let depth = 0
+  while (current && depth < 24) {
+    const parent = current.parent
+    if (parent?.type === 'PAGE') {
+      return current.type === 'FRAME' ? (current as FrameNode) : null
+    }
+    current = parent ?? null
+    depth++
+  }
+  return null
+}
+
+function findNameBriefingAncestor(node: BaseNode | null | undefined): FrameNode | null {
+  let current: BaseNode | null = node ?? null
+  let depth = 0
+  while (current && depth < 24) {
+    if (current.type === 'FRAME' && current.name === 'Name Briefing') {
+      return current as FrameNode
+    }
+    current = current.parent ?? null
+    depth++
+  }
+  return null
+}
+
+function getFillsFromSceneNode(node: SceneNode): readonly Paint[] | null {
+  const maybe = node as SceneNode & { fills?: unknown }
+  if (!Array.isArray(maybe.fills)) return null
+  return maybe.fills as readonly Paint[]
+}
+
+function hasRenderableMediaFill(fills: readonly Paint[] | null): boolean {
+  if (!fills || fills.length === 0) return false
+  return fills.some(
+    (paint) =>
+      (paint.type === 'VIDEO' || paint.type === 'IMAGE') && (paint as { visible?: boolean }).visible !== false,
+  )
+}
+
+/**
+ * Pick the layer to clone for Heimdall's preview surface: prefer video/image fills, else Media Target rect in an asset frame.
+ */
+function resolveMediaNodeForPreview(first: SceneNode | null): SceneNode | null {
+  if (!first) return null
+
+  const tryDirect = (node: SceneNode): SceneNode | null => {
+    const fills = getFillsFromSceneNode(node)
+    if (hasRenderableMediaFill(fills)) return node
+    return null
+  }
+
+  const fromAssetFrame = (frame: FrameNode): SceneNode | null => {
+    const mediaTarget = frame.children.find(
+      (c) => c.type === 'RECTANGLE' && c.name === 'Media Target',
+    ) as RectangleNode | undefined
+    if (mediaTarget) {
+      const mtFills = getRectangleFills(mediaTarget)
+      if (hasRenderableMediaFill(mtFills)) return mediaTarget
+    }
+    const videoRect = findFrameVideoRect(frame)
+    if (videoRect) return videoRect
+    if (mediaTarget) return mediaTarget
+    return null
+  }
+
+  const direct = tryDirect(first)
+  if (direct) return direct
+
+  // One-level lookup only (avoid deep INSTANCE traversal deadlocks per plugin sentinel).
+  if (first.type === 'INSTANCE') {
+    try {
+      const inst = first as InstanceNode
+      for (const c of inst.children) {
+        if (c.type === 'RECTANGLE' && c.name === 'Media Target') {
+          const mtFills = getRectangleFills(c as RectangleNode)
+          if (hasRenderableMediaFill(mtFills)) return c as SceneNode
+        }
+      }
+      for (const c of inst.children) {
+        if (c.type === 'RECTANGLE' && c.name === 'Media Target') {
+          return c as SceneNode
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (first.type === 'FRAME') {
+    const frame = first as FrameNode
+    if (getAssetFrameKey(frame)) {
+      const picked = fromAssetFrame(frame)
+      if (picked) return picked
+    }
+  }
+
+  const assetFrame = findAssetFrameAncestor(first)
+  if (assetFrame) {
+    const picked = fromAssetFrame(assetFrame)
+    if (picked) return picked
+  }
+
+  if (first.type === 'RECTANGLE' && first.name === 'Media Target') {
+    return first
+  }
+
+  return null
+}
+
+function buildPreviewDiagnostics(): Record<string, unknown> {
+  const base = getSelectionDebugData()
+  const first = (figma.currentPage.selection[0] ?? null) as SceneNode | null
+  const top = first ? findTopLevelFrameOnPage(first) : null
+  const nameBrief = first ? findNameBriefingAncestor(first) : null
+  return {
+    ...base,
+    figmaDocsNote:
+      'Shift+Space opens Figma inline prototype preview (not selected-video-only playback). See https://help.figma.com/hc/en-us/articles/360040318013 — use Fill panel or Heimdall "Preview selected asset" for media.',
+    topLevelFrameOnPage: top
+      ? { type: top.type, name: top.name, width: Math.round(top.width), height: Math.round(top.height) }
+      : null,
+    nameBriefingAncestor: nameBrief
+      ? { type: nameBrief.type, name: nameBrief.name, width: Math.round(nameBrief.width), height: Math.round(nameBrief.height) }
+      : null,
+    resolvedPreviewSource: (() => {
+      const src = first ? resolveMediaNodeForPreview(first) : null
+      if (!src) return null
+      return {
+        type: src.type,
+        name: src.name,
+        id: src.id,
+        path: getDebugNodePath(src),
+        fills: summarizeNodeFills(src),
+        videoFillState: summarizeNodeVideoFillState(src),
+      }
+    })(),
+  }
+}
+
+function previewSelectedAssetToSurface(): { error?: string; ok?: boolean } {
+  const page = figma.currentPage
+  const selection = page.selection
+  if (selection.length === 0) {
+    return {
+      error:
+        'Select a layer with a video/image fill, a Media Target, or an asset frame (e.g. *-9x16) first.',
+    }
+  }
+
+  const first = selection[0] as SceneNode
+  const media = resolveMediaNodeForPreview(first)
+  if (!media) {
+    return {
+      error:
+        'Could not find a video/image layer to preview. Select Media Target, an asset ratio frame, or a shape with a video/image fill.',
+    }
+  }
+
+  let surface: FrameNode | null = null
+  for (const child of page.children) {
+    if (child.type !== 'FRAME') continue
+    const f = child as FrameNode
+    try {
+      if (f.getPluginData(HEIMDALL_PREVIEW_SURFACE_KEY) === HEIMDALL_PREVIEW_SURFACE_VAL) {
+        surface = f
+        break
+      }
+    } catch (_) {}
+  }
+
+  if (!surface) {
+    surface = figma.createFrame()
+    surface.name = PREVIEW_FRAME_NAME
+    try {
+      surface.setPluginData(HEIMDALL_PREVIEW_SURFACE_KEY, HEIMDALL_PREVIEW_SURFACE_VAL)
+    } catch (_) {}
+    page.appendChild(surface)
+  }
+
+  while (surface.children.length > 0) {
+    surface.children[0].remove()
+  }
+
+  surface.layoutMode = 'NONE'
+  surface.clipsContent = true
+  surface.fills = [{ type: 'SOLID', color: { r: 0.12, g: 0.12, b: 0.14 } }]
+  surface.itemSpacing = 0
+  surface.paddingTop = surface.paddingBottom = surface.paddingLeft = surface.paddingRight = 0
+
+  const clone = media.clone()
+  surface.appendChild(clone)
+  clone.x = 0
+  clone.y = 0
+
+  const w = Math.max(1, Math.round(clone.width))
+  const h = Math.max(1, Math.round(clone.height))
+  try {
+    surface.resizeWithoutConstraints(w, h)
+  } catch (_) {
+    surface.resize(w, h)
+  }
+
+  const vb = figma.viewport.bounds
+  surface.x = vb.x + vb.width + 48
+  surface.y = vb.y
+
+  page.selection = [surface]
+  figma.viewport.scrollAndZoomIntoView([surface])
+
+  return { ok: true }
+}
+
 function recordFixLayoutsFrameReport(frame: FrameNode, hadMediaTarget: boolean, addedMediaTarget: boolean): void {
   if (!debugActiveFixLayoutsRunId) return
   const framePath = getDebugNodePath(frame)
@@ -2944,6 +3161,7 @@ var uiHtml = '<html><head><style>'
   + '  <div class="btn-row"><button id="load-briefings" class="outlined">Load Briefings</button></div>'
   + '  <div class="btn-row"><button id="sync">Sync</button><button id="create-template" class="outlined">Create Template</button></div>'
   + '  <div class="small-row"><button id="migrate-widgets">Migrate Status Widgets</button><button id="fix-layouts">Fix Layouts</button></div>'
+  + '  <div class="small-row"><button id="preview-diagnostics" class="outlined">Preview diagnostics</button><button id="preview-selected-asset" class="outlined">Preview selected asset</button></div>'
   + '</div>'
   + '<script>'
   + 'parent.postMessage({ pluginMessage: { type: "ui-boot" } }, "*");'
@@ -3072,6 +3290,16 @@ var uiHtml = '<html><head><style>'
   + '  document.getElementById("msg").textContent = "Fixing layouts...";'
   + '  document.getElementById("msg").className = "";'
   + '  parent.postMessage({ pluginMessage: { type: "fix-layouts" } }, "*");'
+  + '};'
+  + 'document.getElementById("preview-diagnostics").onclick = function() {'
+  + '  document.getElementById("msg").textContent = "Reading selection…";'
+  + '  document.getElementById("msg").className = "";'
+  + '  parent.postMessage({ pluginMessage: { type: "preview-diagnostics" } }, "*");'
+  + '};'
+  + 'document.getElementById("preview-selected-asset").onclick = function() {'
+  + '  document.getElementById("msg").textContent = "Creating preview surface…";'
+  + '  document.getElementById("msg").className = "";'
+  + '  parent.postMessage({ pluginMessage: { type: "preview-selected-asset" } }, "*");'
   + '};'
   + 'function normalizeBriefingName(name) {'
   + '  return String(name || "").toLowerCase().replace(/\\s+/g, " ").trim();'
@@ -3435,6 +3663,15 @@ var uiHtml = '<html><head><style>'
   + '    if (d.error) { el.textContent = "Error: " + d.error; el.className = "err"; }'
   + '    else { el.textContent = "Fixed " + (d.pagesFixed || 0) + " page(s), skipped " + (d.pagesSkipped || 0) + "."; el.className = ""; }'
   + '  }'
+  + '  if (d.type === "preview-asset-done") {'
+  + '    var el = document.getElementById("msg");'
+  + '    el.style.whiteSpace = "pre-wrap";'
+  + '    el.style.fontSize = "11px";'
+  + '    el.style.maxHeight = "";'
+  + '    el.style.overflow = "";'
+  + '    if (d.error) { el.textContent = d.error; el.className = "err"; }'
+  + '    else { el.textContent = "Preview frame updated: \\u201cHeimdall \\u00b7 Media Preview\\u201d (top-level). Use Fill panel to scrub video, or Shift+Space for prototype preview of this frame only."; el.className = ""; }'
+  + '  }'
   + '  if (d.type === "debug-log") {'
   + '    var el = document.getElementById("msg");'
   + '    el.style.whiteSpace = "pre-wrap";'
@@ -3733,6 +3970,16 @@ export function runSyncBriefings() {
         pagesFixed: result.pagesFixed,
         pagesSkipped: result.pagesSkipped,
       })
+    }
+    if (msg.type === 'preview-diagnostics') {
+      const payload = buildPreviewDiagnostics()
+      figma.ui.postMessage({ type: 'debug-log', text: JSON.stringify(payload, null, 2) })
+      return
+    }
+    if (msg.type === 'preview-selected-asset') {
+      const result = previewSelectedAssetToSurface()
+      figma.ui.postMessage({ type: 'preview-asset-done', error: result.error, ok: result.ok })
+      return
     }
     if (msg.type === 'process-jobs' && msg.jobs) {
       const saved = await figma.clientStorage.getAsync('heimdallApiBase')

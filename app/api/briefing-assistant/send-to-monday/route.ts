@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { mondayGraphql } from '@/src/integrations/monday/client'
+import { mondayGraphql, updateMultipleColumnValues } from '@/src/integrations/monday/client'
 import { workingDocToBriefingDTO } from '@/src/domain/briefingAssistant/schema'
 import { WorkingDocStateSchema } from '@/src/domain/briefingAssistant/schema'
 import { createOrQueueFigmaPage, buildIdempotencyKey } from '@/src/orchestration/createOrQueueFigmaPage'
@@ -49,9 +49,18 @@ export async function POST(req: NextRequest) {
   const routeStart = Date.now()
 
   try {
-    const body = await req.json()
-    const boardIdFromBody = (body as { board_id?: string }).board_id?.trim()
+    const body = await req.json() as Record<string, unknown>
+    const boardIdFromBody = typeof body.board_id === 'string' ? body.board_id.trim() : ''
     const boardId = boardIdFromBody || BOARD_ID
+
+    const mondayPeopleColumnId =
+      typeof body.monday_people_column_id === 'string' ? body.monday_people_column_id.trim() : ''
+    const mondayAssigneeId =
+      typeof body.monday_assignee_id === 'string' ? body.monday_assignee_id.trim() : ''
+    const mondayStatusColumnId =
+      typeof body.monday_status_column_id === 'string' ? body.monday_status_column_id.trim() : ''
+    const mondayStatusIndex =
+      typeof body.monday_status_index === 'string' ? body.monday_status_index.trim() : ''
     if (!boardId) {
       return NextResponse.json(
         { error: 'board_id required in body or set MONDAY_BRIEFING_BOARD_ID' },
@@ -111,6 +120,25 @@ export async function POST(req: NextRequest) {
         )
       }
       itemId = newId
+    }
+
+    const columnPatch: Record<string, unknown> = {}
+    if (mondayStatusColumnId && mondayStatusIndex !== '') {
+      const idx = Number(mondayStatusIndex)
+      if (!Number.isNaN(idx)) {
+        columnPatch[mondayStatusColumnId] = { index: idx }
+      }
+    }
+    if (mondayPeopleColumnId && mondayAssigneeId) {
+      const uid = Number(mondayAssigneeId)
+      if (!Number.isNaN(uid)) {
+        columnPatch[mondayPeopleColumnId] = {
+          personsAndTeams: [{ id: uid, kind: 'person' }],
+        }
+      }
+    }
+    if (Object.keys(columnPatch).length > 0) {
+      await updateMultipleColumnValues(boardId, itemId, columnPatch)
     }
 
     if (DOC_COLUMN_ID) {

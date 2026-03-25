@@ -23,6 +23,8 @@ export interface PendingSyncJob {
   frameRenames?: Array<{ oldName: string; newName: string }>
   /** Image attachments from Monday file columns / briefing doc; plugin fetches & imports into Figma */
   images?: Array<{ url: string; name: string; source: string; assetId?: string }>
+  /** URL references from the Monday doc Reference section; plugin renders them as text in Figma */
+  referenceLinks?: Array<{ url: string; label?: string; source: string }>
   state: PendingSyncJobState
   createdAt: string
   updatedAt: string

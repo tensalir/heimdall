@@ -48,26 +48,37 @@ export async function POST(req: NextRequest) {
       resolution: '1K',
     })
 
+    let rowId: string | null = null
+    let createdAt = new Date().toISOString()
     if (db) {
-      await db.from('briefing_generated_assets').insert({
-        source_item_id: source_item_id ?? null,
-        prompt,
-        image_url: result.imageUrl,
-        status: result.status,
-        model,
-        briefing_sections,
-        vesper_generation_id: result.id,
-        error: result.error ?? null,
-      })
+      const { data: inserted, error: insertErr } = await db
+        .from('briefing_generated_assets')
+        .insert({
+          source_item_id: source_item_id ?? null,
+          prompt,
+          image_url: result.imageUrl,
+          status: result.status,
+          model,
+          briefing_sections,
+          vesper_generation_id: result.id,
+          error: result.error ?? null,
+        })
+        .select('id, created_at')
+        .single()
+      if (!insertErr && inserted) {
+        rowId = inserted.id as string
+        createdAt = (inserted.created_at as string) ?? createdAt
+      }
     }
 
     return NextResponse.json({
       asset: {
-        id: result.id,
+        id: rowId ?? result.id,
         prompt,
         image_url: result.imageUrl,
         status: result.status,
         model,
+        created_at: createdAt,
       },
     })
   } catch (e) {

@@ -65,10 +65,12 @@ Each design variation (A through D) contains an **Assets** row with three aspect
 - `NAME-EXP-4x5` (1080 x 1350)
 - `NAME-EXP-1x1` (1080 x 1080)
 
-Inside each of these outer frames, there is a **Media Target** rectangle node. This is the intended selection layer for placing visual assets (images, video posters) and using Figma's native preview (`Shift+Space`).
+Inside each of these outer frames, there is a **Media Target** rectangle node. This is the intended selection layer for placing visual assets (images, video fills, video posters).
 
 - The outer `NAME-EXP-*` frame is the structural slot used by Heimdall for mapping, renaming, and layout.
-- The inner `Media Target` is the leaf node designers should select when placing content or previewing.
+- The inner `Media Target` is the leaf node designers should select when placing content.
+- **Previewing video:** In Figma, video is a **fill** on a shape. Use the **Fill** section in the right sidebar to play/scrub the selected layer. **`Shift+Space` is not “play this video”** — it opens Figma’s **inline prototype preview** for the file/page, which often feels like “the whole page” when your layout lives under a large frame (e.g. `Name Briefing`). See Figma’s docs: [Play your prototypes](https://help.figma.com/hc/en-us/articles/360040318013) and [Use videos in prototypes](https://help.figma.com/hc/en-us/articles/8878274530455-Use-videos-in-prototypes).
+- **Heimdall plugin:** Open the Heimdall plugin and use **Preview diagnostics** (read-only JSON: selection, fills, flow hints) or **Preview selected asset** to clone the chosen media into a **top-level** frame named `Heimdall · Media Preview` so you can scrub video in the Fill panel or use prototype preview on that smaller surface without copying layers by hand.
 - **Fix Layouts** will automatically backfill a `Media Target` into any existing asset frame that is missing one, without removing existing content.
 
 ## Long text (overflow)

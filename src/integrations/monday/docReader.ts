@@ -9,6 +9,12 @@ import type { MondayImageAttachment } from './client.js'
 
 type JsonObject = Record<string, unknown>
 
+export interface MondayDocReferenceLink {
+  url: string
+  label?: string
+  source: 'doc_reference'
+}
+
 function parseJsonObject(value: unknown): JsonObject | null {
   if (!value || typeof value !== 'string') return null
   try {
@@ -106,6 +112,70 @@ interface DocBlock {
   type?: string
   parent_block_id?: string | null
   content?: unknown
+}
+
+const DOC_URL_KEYS = new Set([
+  'href',
+  'link',
+  'rawurl',
+  'raw_url',
+  'url',
+  'publicurl',
+  'public_url',
+])
+
+function normalizeExtractedUrl(url: string): string {
+  return url.trim().replace(/[)>.,;]+$/g, '')
+}
+
+function extractUrlsFromUnknown(raw: unknown, urls: Set<string>, depth = 0): void {
+  const MAX_DEPTH = 8
+  if (depth > MAX_DEPTH || raw == null) return
+
+  if (typeof raw === 'string') {
+    const parsed = parseJsonObject(raw)
+    if (parsed) {
+      extractUrlsFromUnknown(parsed, urls, depth + 1)
+    }
+    const matches = raw.match(/https?:\/\/[^\s<>"'`]+/gi) ?? []
+    for (const match of matches) {
+      const normalized = normalizeExtractedUrl(match)
+      if (normalized) urls.add(normalized)
+    }
+    return
+  }
+
+  if (Array.isArray(raw)) {
+    for (const item of raw) extractUrlsFromUnknown(item, urls, depth + 1)
+    return
+  }
+
+  if (typeof raw !== 'object') return
+
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string' && DOC_URL_KEYS.has(key.toLowerCase())) {
+      const normalized = normalizeExtractedUrl(value)
+      if (/^https?:\/\//i.test(normalized)) urls.add(normalized)
+    }
+    extractUrlsFromUnknown(value, urls, depth + 1)
+  }
+}
+
+function isHeadingTextBlock(block: DocBlock): boolean {
+  const { text, isBoldOnly } = blockToText(block.content)
+  const trimmed = text.trim()
+  const blockType = String(block.type ?? '').toLowerCase()
+  if (!trimmed) return false
+  return (
+    blockType === 'small title' ||
+    blockType === 'medium title' ||
+    (blockType === 'normal text' && isBoldOnly && trimmed.length < 80)
+  )
+}
+
+function isReferenceHeading(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/[:\s]+/g, ' ').trim()
+  return normalized === 'reference' || normalized === 'references'
 }
 
 function collectDescendantText(
@@ -399,6 +469,115 @@ export async function getDocImages(docId: string): Promise<MondayImageAttachment
     return images
   } catch (err) {
     console.error('[docReader] getDocImages failed for docId', docId, err instanceof Error ? err.message : err)
+    return []
+  }
+}
+
+/**
+ * Extract user-added links from the "Reference" section of a Monday Doc.
+ * Ignores URLs outside that section and ignores image/file block URLs since
+ * those are already handled by getDocImages().
+ */
+export async function getDocReferenceLinks(docId: string): Promise<MondayDocReferenceLink[]> {
+  if (!docId.trim()) return []
+  const id = docId.trim().replace(/^doc_/i, '')
+  if (!id) return []
+
+  try {
+    const objectId = Number(id)
+    if (!Number.isFinite(objectId)) return []
+
+    const allBlocks: DocBlock[] = []
+    let page = 1
+    const limit = 100
+    while (true) {
+      const data = await mondayGraphql<{
+        docs?: Array<{
+          id: string
+          blocks?: DocBlock[]
+        }>
+      }>(
+        `query ($objectIds: [ID!]!, $limit: Int!, $page: Int!) {
+          docs(object_ids: $objectIds) {
+            id
+            blocks(limit: $limit, page: $page) {
+              id
+              type
+              parent_block_id
+              content
+            }
+          }
+        }`,
+        { objectIds: [objectId], limit, page }
+      )
+      const doc = data?.docs?.[0]
+      const blocks = doc?.blocks ?? []
+      if (!blocks.length) break
+      allBlocks.push(...blocks)
+      if (blocks.length < limit) break
+      page += 1
+    }
+
+    const links: MondayDocReferenceLink[] = []
+    const seenUrls = new Set<string>()
+    let inReferenceSection = false
+    let pendingLabel: string | undefined
+
+    for (const block of allBlocks) {
+      const blockType = String(block.type ?? '').toLowerCase()
+      const trimmed = normalizeCellText(blockToText(block.content).text)
+
+      if (isHeadingTextBlock(block)) {
+        if (isReferenceHeading(trimmed)) {
+          inReferenceSection = true
+          pendingLabel = undefined
+        } else if (inReferenceSection) {
+          inReferenceSection = false
+          pendingLabel = undefined
+        }
+        continue
+      }
+
+      if (!inReferenceSection) continue
+      if (blockType === 'image' || blockType === 'file') continue
+
+      const blockUrls = new Set<string>()
+      extractUrlsFromUnknown(block.content, blockUrls)
+
+      if (blockUrls.size === 0) {
+        if (trimmed && !isPureStyleJsonText(trimmed)) {
+          pendingLabel = trimmed.length <= 180 ? trimmed : `${trimmed.slice(0, 177)}...`
+        }
+        continue
+      }
+
+      const normalizedText = normalizeExtractedUrl(trimmed)
+      const labelFromBlock =
+        trimmed && !blockUrls.has(normalizedText) && !/^https?:\/\//i.test(trimmed)
+          ? trimmed
+          : undefined
+      const label = labelFromBlock ?? pendingLabel
+
+      for (const url of blockUrls) {
+        if (seenUrls.has(url)) continue
+        seenUrls.add(url)
+        links.push({
+          url,
+          ...(label && label !== url ? { label } : {}),
+          source: 'doc_reference',
+        })
+      }
+
+      pendingLabel = undefined
+    }
+
+    return links
+  } catch (err) {
+    console.error(
+      '[docReader] getDocReferenceLinks failed for docId',
+      docId,
+      err instanceof Error ? err.message : err
+    )
     return []
   }
 }
