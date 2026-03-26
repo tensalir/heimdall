@@ -7,7 +7,8 @@
  *   /feedback/*           → Supabase session (same as admin)
  *   /briefing-assistant/* → Supabase session preferred; BRIEFING_LOCAL_PASSWORD fallback for localhost dev
  *   /sheets/*             → Cookie-based auth with SHEETS_PASSWORD
- *   /api/*                → Classified by route policy (user / machine / webhook / public)
+ *   /document-chat/*      → Supabase session + privileged domain (same as admin)
+ *   /api/*                → Classified by route policy (user / machine / webhook / public / gpt_actions)
  *   /auth/*               → No auth (callback handler)
  *   /                     → No auth (landing redirect)
  *
@@ -21,11 +22,13 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { classifyApiRoute } from '@/lib/route-auth'
+import { timingSafeEqualSecret } from '@/lib/crypto-compare'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Heimdall-Secret, X-Heimdall-Plugin-Token',
+  'Access-Control-Allow-Headers':
+    'Content-Type, Authorization, X-Heimdall-Secret, X-Heimdall-Plugin-Token, X-Heimdall-Gpt-Actions-Secret',
 }
 
 const PRIVILEGED_EMAIL_DOMAINS = (process.env.HEIMDALL_ALLOWED_EMAIL_DOMAINS || 'thoughtform.co,loopearplugs.com')
@@ -117,8 +120,10 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
     const providedMachine = request.headers.get('x-heimdall-secret')
     const providedPlugin = request.headers.get('x-heimdall-plugin-token')
 
-    const machineMatch = machineSecret && providedMachine === machineSecret
-    const pluginMatch = pluginSecret && providedPlugin === pluginSecret
+    const machineMatch =
+      !!machineSecret && (await timingSafeEqualSecret(machineSecret, providedMachine ?? ''))
+    const pluginMatch =
+      !!pluginSecret && (await timingSafeEqualSecret(pluginSecret, providedPlugin ?? ''))
 
     if (!machineMatch && !pluginMatch) {
       return addCors(NextResponse.json(
@@ -129,10 +134,36 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
     return addCors(NextResponse.next())
   }
 
+  if (policy === 'gpt_actions') {
+    const secret = process.env.HEIMDALL_GPT_ACTIONS_SECRET?.trim()
+    if (!secret) {
+      if (process.env.NODE_ENV === 'production') {
+        return addCors(NextResponse.json(
+          { error: 'GPT Actions authentication not configured' },
+          { status: 503, headers: CORS_HEADERS },
+        ))
+      }
+      return addCors(NextResponse.next())
+    }
+    const authz = request.headers.get('authorization')
+    const bearer = authz?.toLowerCase().startsWith('bearer ') ? authz.slice(7).trim() : ''
+    const provided =
+      request.headers.get('x-heimdall-gpt-actions-secret')?.trim() ||
+      bearer ||
+      ''
+    if (!(await timingSafeEqualSecret(secret, provided))) {
+      return addCors(NextResponse.json(
+        { error: 'GPT Actions authentication required' },
+        { status: 403, headers: CORS_HEADERS },
+      ))
+    }
+    return addCors(NextResponse.next())
+  }
+
   if (policy === 'dual') {
     const machineSecret = process.env.HEIMDALL_MACHINE_SECRET
     const provided = request.headers.get('x-heimdall-secret')
-    if (machineSecret && provided === machineSecret) {
+    if (machineSecret && (await timingSafeEqualSecret(machineSecret, provided ?? ''))) {
       return addCors(NextResponse.next())
     }
   }
@@ -339,8 +370,8 @@ export async function middleware(request: NextRequest) {
     return handleApi(request)
   }
 
-  // 4. Admin routes: Supabase session
-  if (pathname.startsWith('/admin')) {
+  // 4. Admin + Document Chat: Supabase session + privileged domain
+  if (pathname.startsWith('/admin') || pathname.startsWith('/document-chat')) {
     return handleAdminAuth(request)
   }
 
@@ -370,6 +401,8 @@ export const config = {
     '/',
     '/login',
     '/admin/:path*',
+    '/document-chat',
+    '/document-chat/:path*',
     '/sheets/:path*',
     '/briefing-assistant',
     '/briefing-assistant/:path*',

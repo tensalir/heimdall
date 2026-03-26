@@ -55,4 +55,13 @@ describe('classifyApiRoute', () => {
   it('defaults unknown routes to user', () => {
     expect(classifyApiRoute('/api/unknown/path')).toBe('user')
   })
+
+  it('classifies GPT Actions OpenAPI as public', () => {
+    expect(classifyApiRoute('/api/gpt-actions/openapi')).toBe('public')
+  })
+
+  it('classifies GPT Actions operations as gpt_actions', () => {
+    expect(classifyApiRoute('/api/gpt-actions/search')).toBe('gpt_actions')
+    expect(classifyApiRoute('/api/gpt-actions/answer')).toBe('gpt_actions')
+  })
 })

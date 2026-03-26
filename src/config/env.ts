@@ -96,6 +96,14 @@ const envSchema = z.object({
   HEIMDALL_MACHINE_SECRET: z.string().min(1).optional(),
   /** Separate secret for Figma plugin auth. Revocable independently from machine secret. */
   HEIMDALL_PLUGIN_SECRET: z.string().min(1).optional(),
+  /** Secret for Custom GPT Actions hitting /api/gpt-actions/* (header or Bearer). */
+  HEIMDALL_GPT_ACTIONS_SECRET: z.string().min(1).optional(),
+  /** LlamaCloud API key for LlamaParse (document chat). Also accepts LLAMA_PARSE_API_KEY in SDK. */
+  LLAMA_CLOUD_API_KEY: z.string().min(1).optional(),
+  /** LlamaParse tier: fast | cost_effective | agentic | agentic_plus (default cost_effective). */
+  LLAMA_PARSE_TIER: z.enum(['fast', 'cost_effective', 'agentic', 'agentic_plus']).optional(),
+  /** LlamaParse tier version (default latest). Pin e.g. 2026-03-04 in production. */
+  LLAMA_PARSE_VERSION: z.string().optional(),
   /** CSV of email domains allowed for privileged access (admin/ops/forecast/feedback). Defaults to thoughtform.co,loopearplugs.com. */
   HEIMDALL_ALLOWED_EMAIL_DOMAINS: z.string().optional(),
   /** Monday briefing board ID for sprint integration. */

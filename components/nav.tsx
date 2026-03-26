@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { Network, Settings, Puzzle, MessageSquare, LayoutGrid, ScrollText, LogOut, TrendingUp, Kanban, Inbox } from 'lucide-react'
+import { Network, Settings, Puzzle, MessageSquare, LayoutGrid, ScrollText, LogOut, TrendingUp, Kanban, Inbox, BookOpen } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-auth'
 
 interface NavItem {
@@ -40,6 +40,7 @@ const sections: NavSection[] = [
       { name: 'Heimdall Plugin', href: '/admin/plugin', icon: Puzzle },
       { name: 'Feedback Summarizer', href: '/sheets', icon: MessageSquare },
       { name: 'Mimir', href: '/briefing-assistant', icon: LayoutGrid, external: true },
+      { name: 'Loop Document Chat', href: '/document-chat', icon: BookOpen },
       { name: 'Forecast', href: '/forecast', icon: TrendingUp, external: true },
     ],
   },

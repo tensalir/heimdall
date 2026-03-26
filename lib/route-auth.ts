@@ -8,7 +8,7 @@
 import { NextResponse } from 'next/server.js'
 import { createSupabaseRouteClient } from './supabase-auth.js'
 
-export type RoutePolicy = 'public' | 'user' | 'machine' | 'webhook' | 'dual'
+export type RoutePolicy = 'public' | 'user' | 'machine' | 'webhook' | 'dual' | 'gpt_actions'
 
 const PRIVILEGED_EMAIL_DOMAINS = (process.env.HEIMDALL_ALLOWED_EMAIL_DOMAINS || 'thoughtform.co,loopearplugs.com')
   .split(',')
@@ -91,14 +91,21 @@ const PUBLIC_PREFIXES = [
   '/api/images/proxy',
 ]
 
+/** OpenAPI schema for Custom GPT Actions (no secret; operations still require GPT secret). */
+const GPT_ACTIONS_OPENAPI_PATH = '/api/gpt-actions/openapi'
+
+const GPT_ACTIONS_PREFIXES = ['/api/gpt-actions/']
+
 /**
  * Classify an API route pathname into a policy group.
  * Single source of truth — consumed by middleware.ts and tests.
  */
 export function classifyApiRoute(pathname: string): RoutePolicy {
+  if (pathname === GPT_ACTIONS_OPENAPI_PATH) return 'public'
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return 'public'
   if (WEBHOOK_PREFIXES.some((p) => pathname.startsWith(p))) return 'webhook'
   if (MACHINE_PREFIXES.some((p) => pathname.startsWith(p))) return 'machine'
   if (DUAL_AUTH_PREFIXES.some((p) => pathname.startsWith(p))) return 'dual'
+  if (GPT_ACTIONS_PREFIXES.some((p) => pathname.startsWith(p))) return 'gpt_actions'
   return 'user'
 }

@@ -14,6 +14,7 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  BookOpen,
 } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-auth'
 import { useUserRole } from '@/lib/roles'
@@ -52,6 +53,7 @@ const ADMIN_SECTIONS: NavSection[] = [
       { name: 'Heimdall Plugin', href: '/admin/plugin', icon: Puzzle },
       { name: 'Feedback Summarizer', href: '/sheets', icon: MessageSquare },
       { name: 'Mimir', href: '/briefing-assistant', icon: LayoutGrid },
+      { name: 'Loop Document Chat', href: '/document-chat', icon: BookOpen },
     ],
   },
   {
@@ -68,6 +70,7 @@ const USER_SECTIONS: NavSection[] = [
     items: [
       { name: 'Feedback Summarizer', href: '/sheets', icon: MessageSquare },
       { name: 'Mimir', href: '/briefing-assistant', icon: LayoutGrid },
+      { name: 'Loop Document Chat', href: '/document-chat', icon: BookOpen },
     ],
   },
 ]
