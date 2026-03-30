@@ -15,12 +15,30 @@ Heimdall can host **corpora** of uploaded documents (Supabase Storage + pgvector
    - **`LLAMA_PARSE_TIER`** (optional, default `cost_effective`) — LlamaParse parsing tier
    - **`LLAMA_PARSE_VERSION`** (optional, default `latest`) — parser version string for the API
 
+## Foundation checklist (verify before first ingest)
+
+1. **Migrations applied** on the linked Supabase project: `029_document_chat.sql`, `030_document_chat_kg.sql` (run `supabase db push --linked` or apply via CI).
+2. **Storage bucket** `document-chat` exists (created by migration 029); no public read policies required for GPT Actions (retrieval uses service role on the server).
+3. **Vercel / hosting env** includes at minimum: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `VOYAGE_API_KEY`, `HEIMDALL_GPT_ACTIONS_SECRET`.
+4. **Privileged login** works for `/document-chat` (Supabase user email domain in `HEIMDALL_ALLOWED_EMAIL_DOMAINS`).
+5. **Smoke test**: `GET https://<deployment>/api/gpt-actions/openapi` returns JSON; `POST /api/gpt-actions/search` with the secret returns JSON (may be empty until documents are ingested).
+
 ## Operator UI
 
 - **Heimdall → Loop Document Chat** (`/document-chat`): privileged-domain users create a **collection** (slug + name), upload files (txt, md, csv, json, pdf, docx, pptx/ppt, xlsx/xls), and see processing status.
 - **Collection stats** (after 030): document, chunk, entity, and relation counts.
 - **Per document**: expand row for Markdown preview (when stored), KG counts for that file, **re-process** (re-parse + re-embed + KG), **delete** (chunks, relations, storage; orphan entities pruned).
 - Originals land in the private bucket **`document-chat`**.
+
+### Bulk ingest from a local folder (SharePoint export)
+
+For many files at once (e.g. `.docx` briefings saved from SharePoint), use the same ingest pipeline as the UI:
+
+```bash
+npm run ingest:document-chat -- --dir "C:/path/to/briefings-folder" --slug loop-briefings --name "Loop context briefings"
+```
+
+Requires `SUPABASE_*`, `VOYAGE_API_KEY` in `.env` / `.env.local`. Creates the collection if the slug does not exist. Unsupported extensions in the folder are skipped.
 
 ### Ingest pipeline (summary)
 
@@ -60,15 +78,63 @@ X-Heimdall-Gpt-Actions-Secret: <secret>
 
 When **`include_graph`** is `true`, the response includes a **`graph`** array: 1-hop neighborhood around entities whose names match the query (via `search_document_chat_graph` RPC). Omit or set `false` for vector-only results.
 
+Set **`include_metrics`: `true`** in the JSON body to receive a **`metrics`** object (milliseconds): `embed_query_ms`, `match_chunks_rpc_ms`, optional `search_graph_rpc_ms`, and `wall_total_ms` (end-to-end server time for the handler).
+
 ### Example: answer
 
-Uses retrieval + Claude; returns `answer` and `citations`.
+Uses retrieval + Claude; returns `answer` and `citations`. Optional **`include_metrics`** adds `embed_query_ms`, `match_chunks_rpc_ms`, **`anthropic_ms`**, and `wall_total_ms`.
 
-## Custom GPT instructions (starter)
+## Custom GPT instructions (search-first, lower latency)
 
-- Only answer from tool results; if search returns no relevant chunks, say the corpus does not contain the answer.
-- Always cite filenames / `[#n]` references when stating facts from context.
-- Prefer `searchDocuments` for exploration; use `answerFromDocuments` when the user wants a synthesized reply.
+Configure Actions with the OpenAPI URL above and **API key** = `HEIMDALL_GPT_ACTIONS_SECRET`.
+
+**Default behavior (fast path)**
+
+1. For almost every user question, call **`searchDocuments`** first with the user’s question as `query` and your corpus **`collection_slug`** (e.g. `loop-briefings`).
+2. Answer **in ChatGPT** using only the returned `results[].excerpt` text. Cite **filenames** (and chunk indices if helpful). Do not invent content not present in excerpts.
+3. If excerpts are insufficient, run **`searchDocuments`** again with a **rephrased** query or narrower terms before giving up.
+4. Omit **`include_graph`** unless the user explicitly needs relationship-style context (graph adds a second DB round-trip).
+
+**When to use `answerFromDocuments`**
+
+- Only when synthesis is clearly needed **and** you already have good chunks from search, or the user explicitly asks for the server-synthesized answer. This tool calls **Anthropic on the server** in addition to ChatGPT, so it is **slower** and should not be the default.
+
+**Model choice in ChatGPT**
+
+- Prefer a **non–extended-thinking** model for this GPT if end-to-end latency matters; “thinking” time is independent of SharePoint/Heimdall and shows up as user-visible delay.
+
+## Latency benchmark (compare paths)
+
+Use the same `query` and `collection_slug` for each call. Measure with `curl -w "\n%{time_total}s\n"` or your HTTP client.
+
+1. **Heimdall search only** (retrieval + Voyage embed + pgvector; fastest backend path):
+
+```bash
+curl -sS -X POST "https://<deployment>/api/gpt-actions/search" \
+  -H "Content-Type: application/json" \
+  -H "X-Heimdall-Gpt-Actions-Secret: <secret>" \
+  -d '{"query":"your question","collection_slug":"loop-briefings","include_metrics":true}'
+```
+
+2. **Heimdall search + graph** (adds `search_graph_rpc_ms` in metrics when `include_graph` is true):
+
+```bash
+curl -sS -X POST "https://<deployment>/api/gpt-actions/search" \
+  -H "Content-Type: application/json" \
+  -H "X-Heimdall-Gpt-Actions-Secret: <secret>" \
+  -d '{"query":"your question","collection_slug":"loop-briefings","include_graph":true,"include_metrics":true}'
+```
+
+3. **Heimdall answer** (retrieval + **server** Claude; compare `anthropic_ms` vs search-only):
+
+```bash
+curl -sS -X POST "https://<deployment>/api/gpt-actions/answer" \
+  -H "Content-Type: application/json" \
+  -H "X-Heimdall-Gpt-Actions-Secret: <secret>" \
+  -d '{"query":"your question","collection_slug":"loop-briefings","include_metrics":true}'
+```
+
+4. **SharePoint-based Custom GPT** (existing): use the same prompts and observe total time in the ChatGPT UI; slowness there is often **Graph search + file materialization** (see OpenAI’s SharePoint Actions cookbook), not Heimdall.
 
 ## Validation checklist
 

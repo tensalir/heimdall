@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import Anthropic from '@anthropic-ai/sdk'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
-import { matchDocumentChatChunks } from '@/lib/document-chat/retrieval'
+import { matchDocumentChatChunks, type DocumentChatRetrievalTimings } from '@/lib/document-chat/retrieval'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,6 +11,8 @@ const bodySchema = z.object({
   collection_slug: z.string().min(1).max(200).optional(),
   collection_id: z.string().uuid().optional(),
   match_count: z.number().int().min(1).max(20).optional(),
+  /** When true, response includes `metrics` with retrieval + Anthropic latency (ms). */
+  include_metrics: z.boolean().optional(),
 })
 
 /**
@@ -52,21 +54,31 @@ export async function POST(request: Request) {
     )
   }
 
-  const matches = await matchDocumentChatChunks({
-    query: parsed.query,
-    collectionId: parsed.collection_id ?? null,
-    collectionSlug: parsed.collection_slug ?? null,
-    matchCount: parsed.match_count ?? 10,
-    similarityThreshold: 0.2,
-  })
+  const timings: DocumentChatRetrievalTimings | undefined = parsed.include_metrics ? {} : undefined
+  const tWall0 = parsed.include_metrics ? Date.now() : 0
+
+  const matches = await matchDocumentChatChunks(
+    {
+      query: parsed.query,
+      collectionId: parsed.collection_id ?? null,
+      collectionSlug: parsed.collection_slug ?? null,
+      matchCount: parsed.match_count ?? 10,
+      similarityThreshold: 0.2,
+    },
+    timings,
+  )
 
   if (matches.length === 0) {
-    return NextResponse.json({
+    const empty: Record<string, unknown> = {
       answer:
         'No relevant passages were found in the uploaded document corpus for this question. Try rephrasing or confirm documents are ingested and indexed.',
       citations: [],
       retrieval_count: 0,
-    })
+    }
+    if (parsed.include_metrics && timings) {
+      empty.metrics = { ...timings, anthropic_ms: 0, wall_total_ms: Date.now() - tWall0 }
+    }
+    return NextResponse.json(empty)
   }
 
   const contextBlocks = matches.map((m, i) => {
@@ -83,6 +95,7 @@ Keep answers concise unless the user asks for detail.`
 
   const client = new Anthropic({ apiKey })
   let text = ''
+  const tLlm0 = parsed.include_metrics ? Date.now() : 0
   try {
     const msg = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -96,8 +109,9 @@ Keep answers concise unless the user asks for detail.`
     const msg = e instanceof Error ? e.message : String(e)
     return NextResponse.json({ error: `LLM error: ${msg}` }, { status: 502 })
   }
+  const anthropicMs = parsed.include_metrics ? Date.now() - tLlm0 : 0
 
-  return NextResponse.json({
+  const out: Record<string, unknown> = {
     answer: text,
     retrieval_count: matches.length,
     citations: matches.map((m, i) => ({
@@ -107,5 +121,14 @@ Keep answers concise unless the user asks for detail.`
       chunk_id: m.id,
       similarity: m.similarity,
     })),
-  })
+  }
+  if (parsed.include_metrics && timings) {
+    out.metrics = {
+      ...timings,
+      anthropic_ms: anthropicMs,
+      wall_total_ms: Date.now() - tWall0,
+    }
+  }
+
+  return NextResponse.json(out)
 }

@@ -9,7 +9,7 @@ export function buildDocumentChatOpenApiJson(baseUrl: string): Record<string, un
     info: {
       title: 'Heimdall Loop Document Chat',
       description:
-        'Search and answer over Loop document corpora ingested via Heimdall Document Chat. Requires HEIMDALL_GPT_ACTIONS_SECRET as API key.',
+        'Search and answer over Loop document corpora ingested via Heimdall Document Chat. Requires HEIMDALL_GPT_ACTIONS_SECRET as API key. For lowest latency in Custom GPT, prefer **searchDocuments** and answer in the ChatGPT model from returned excerpts; **answerFromDocuments** adds a second LLM hop (Anthropic) on the server. Optional **include_metrics** (boolean) on requests returns server timing breakdown for benchmarks.',
       version: '1.0.0',
     },
     servers: [{ url: origin }],
@@ -17,7 +17,7 @@ export function buildDocumentChatOpenApiJson(baseUrl: string): Record<string, un
       '/api/gpt-actions/search': {
         post: {
           operationId: 'searchDocuments',
-          summary: 'Semantic search over uploaded documents',
+          summary: 'Semantic search over uploaded documents (preferred for speed)',
           requestBody: {
             required: true,
             content: {
@@ -37,6 +37,11 @@ export function buildDocumentChatOpenApiJson(baseUrl: string): Record<string, un
                     include_graph: {
                       type: 'boolean',
                       description: 'If true, include 1-hop knowledge-graph neighbors matching the query',
+                    },
+                    include_metrics: {
+                      type: 'boolean',
+                      description:
+                        'If true, response includes metrics (embed_query_ms, match_chunks_rpc_ms, search_graph_rpc_ms when include_graph, wall_total_ms)',
                     },
                   },
                 },
@@ -62,7 +67,7 @@ export function buildDocumentChatOpenApiJson(baseUrl: string): Record<string, un
       '/api/gpt-actions/answer': {
         post: {
           operationId: 'answerFromDocuments',
-          summary: 'Retrieve relevant chunks then synthesize an answer (Claude)',
+          summary: 'Retrieve chunks then synthesize via server-side Claude (slower; use for benchmarks or when ChatGPT synthesis is insufficient)',
           requestBody: {
             required: true,
             content: {
@@ -75,6 +80,11 @@ export function buildDocumentChatOpenApiJson(baseUrl: string): Record<string, un
                     collection_slug: { type: 'string' },
                     collection_id: { type: 'string', format: 'uuid' },
                     match_count: { type: 'integer', minimum: 1, maximum: 20, default: 10 },
+                    include_metrics: {
+                      type: 'boolean',
+                      description:
+                        'If true, response includes metrics (embed_query_ms, match_chunks_rpc_ms, anthropic_ms, wall_total_ms)',
+                    },
                   },
                 },
               },

@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
-import { matchDocumentChatChunks, searchDocumentChatGraph } from '@/lib/document-chat/retrieval'
+import {
+  matchDocumentChatChunks,
+  searchDocumentChatGraph,
+  type DocumentChatRetrievalTimings,
+} from '@/lib/document-chat/retrieval'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,6 +16,8 @@ const bodySchema = z.object({
   match_count: z.number().int().min(1).max(25).optional(),
   similarity_threshold: z.number().min(0).max(1).optional(),
   include_graph: z.boolean().optional(),
+  /** When true, response includes `metrics` with server-side latency breakdown (ms). */
+  include_metrics: z.boolean().optional(),
 })
 
 /**
@@ -45,24 +51,33 @@ export async function POST(request: Request) {
     )
   }
 
+  const timings: DocumentChatRetrievalTimings | undefined = parsed.include_metrics ? {} : undefined
+  const tWall0 = parsed.include_metrics ? Date.now() : 0
+
   const [matches, graphRows] = await Promise.all([
-    matchDocumentChatChunks({
-      query: parsed.query,
-      collectionId: parsed.collection_id ?? null,
-      collectionSlug: parsed.collection_slug ?? null,
-      matchCount: parsed.match_count,
-      similarityThreshold: parsed.similarity_threshold,
-    }),
+    matchDocumentChatChunks(
+      {
+        query: parsed.query,
+        collectionId: parsed.collection_id ?? null,
+        collectionSlug: parsed.collection_slug ?? null,
+        matchCount: parsed.match_count,
+        similarityThreshold: parsed.similarity_threshold,
+      },
+      timings,
+    ),
     parsed.include_graph
-      ? searchDocumentChatGraph({
-          query: parsed.query,
-          collectionId: parsed.collection_id ?? null,
-          collectionSlug: parsed.collection_slug ?? null,
-        })
+      ? searchDocumentChatGraph(
+          {
+            query: parsed.query,
+            collectionId: parsed.collection_id ?? null,
+            collectionSlug: parsed.collection_slug ?? null,
+          },
+          timings,
+        )
       : Promise.resolve([]),
   ])
 
-  return NextResponse.json({
+  const payload: Record<string, unknown> = {
     query: parsed.query,
     count: matches.length,
     results: matches.map((m) => ({
@@ -86,5 +101,14 @@ export async function POST(request: Request) {
             evidence_chunk_id: g.evidence_chunk_id,
           }))
         : undefined,
-  })
+  }
+
+  if (parsed.include_metrics && timings) {
+    payload.metrics = {
+      ...timings,
+      wall_total_ms: Date.now() - tWall0,
+    }
+  }
+
+  return NextResponse.json(payload)
 }

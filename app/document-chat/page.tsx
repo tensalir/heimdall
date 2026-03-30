@@ -289,7 +289,9 @@ export default function DocumentChatPage() {
           <code className="text-xs bg-muted px-1 rounded">include_graph</code>
           {' · '}
           <code className="text-xs bg-muted px-1 rounded">/api/gpt-actions/answer</code>
-          ). See <code className="text-xs bg-muted px-1 rounded">docs/document-chat-gpt-actions.md</code>.
+          ). Bulk folder ingest:{' '}
+          <code className="text-xs bg-muted px-1 rounded">npm run ingest:document-chat</code> — see{' '}
+          <code className="text-xs bg-muted px-1 rounded">docs/document-chat-gpt-actions.md</code>.
         </p>
       </div>
 

@@ -22,12 +22,25 @@ export interface MatchDocumentChatParams {
   collectionSlug?: string | null
 }
 
-export async function matchDocumentChatChunks(params: MatchDocumentChatParams): Promise<DocumentChatMatch[]> {
+/** Populated when passed from GPT Actions / benchmarks for latency breakdown (ms). */
+export interface DocumentChatRetrievalTimings {
+  embed_query_ms?: number
+  match_chunks_rpc_ms?: number
+  search_graph_rpc_ms?: number
+}
+
+export async function matchDocumentChatChunks(
+  params: MatchDocumentChatParams,
+  timings?: DocumentChatRetrievalTimings,
+): Promise<DocumentChatMatch[]> {
   const supabase = getSupabase()
   if (!supabase) return []
+  const tEmbed = Date.now()
   const embedding = await embedQuery(params.query)
+  if (timings) timings.embed_query_ms = Date.now() - tEmbed
   if (!embedding) return []
 
+  const tRpc = Date.now()
   const { data, error } = await supabase.rpc('match_document_chat_chunks', {
     query_embedding: embedding,
     match_count: params.matchCount ?? 12,
@@ -35,6 +48,7 @@ export async function matchDocumentChatChunks(params: MatchDocumentChatParams): 
     filter_collection_id: params.collectionId ?? null,
     filter_collection_slug: params.collectionSlug ?? null,
   })
+  if (timings) timings.match_chunks_rpc_ms = Date.now() - tRpc
   if (error) return []
   return (data ?? []) as DocumentChatMatch[]
 }
@@ -55,17 +69,21 @@ export interface DocumentChatGraphRow {
   evidence_chunk_id: string | null
 }
 
-export async function searchDocumentChatGraph(params: {
-  query: string
-  collectionId?: string | null
-  collectionSlug?: string | null
-  maxEntities?: number
-  maxRelations?: number
-}): Promise<DocumentChatGraphRow[]> {
+export async function searchDocumentChatGraph(
+  params: {
+    query: string
+    collectionId?: string | null
+    collectionSlug?: string | null
+    maxEntities?: number
+    maxRelations?: number
+  },
+  timings?: DocumentChatRetrievalTimings,
+): Promise<DocumentChatGraphRow[]> {
   const supabase = getSupabase()
   if (!supabase) return []
   if (!params.collectionId && !params.collectionSlug) return []
 
+  const tRpc = Date.now()
   const { data, error } = await supabase.rpc('search_document_chat_graph', {
     search_query: params.query,
     filter_collection_id: params.collectionId ?? null,
@@ -73,6 +91,7 @@ export async function searchDocumentChatGraph(params: {
     max_entities: params.maxEntities ?? 12,
     max_relations: params.maxRelations ?? 40,
   })
+  if (timings) timings.search_graph_rpc_ms = Date.now() - tRpc
   if (error) return []
   return (data ?? []) as DocumentChatGraphRow[]
 }
