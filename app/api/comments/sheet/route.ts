@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/route-auth'
+import { requireUserOrSheetsCookie } from '@/lib/route-auth'
 import {
   getFile,
   getFileComments,
@@ -352,7 +352,7 @@ async function fullFigmaFetch(fileKey: string) {
 // ── Route Handler ────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const auth = await requireUser(req)
+  const auth = await requireUserOrSheetsCookie(req)
   if (auth.error) return auth.error
   const fileKey = new URL(req.url).searchParams.get('fileKey')
   if (!fileKey) {

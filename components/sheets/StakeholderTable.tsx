@@ -1,21 +1,29 @@
 'use client'
 
+import { useMemo } from 'react'
 import { ChevronRight, Layers, ClipboardList, CheckCircle, Send } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ExperimentRow } from '@/components/feedback/ExperimentRow'
 import type { FeedbackExperimentRow } from '@/app/api/feedback/route'
+import { useResizableColumns, type ColumnDef } from '@/lib/hooks/use-resizable-columns'
 
-const COL_WIDTHS = ['14%', '12%', '6%', '14%', '14%', '14%', '14%', '12%'] as const
-const COLUMNS = [
-  'Experiment',
-  'Brief link',
-  'Urgent',
-  'Strategy',
-  'Design',
-  'Copy',
-  'Summary',
-  'Actions',
+const STAKEHOLDER_COLUMN_DEFS: ColumnDef[] = [
+  { key: 'experiment', defaultWidth: 160, minWidth: 80, maxWidth: 400 },
+  { key: 'brief', defaultWidth: 130, minWidth: 60, maxWidth: 300 },
+  { key: 'urgent', defaultWidth: 70, minWidth: 40, maxWidth: 120 },
+  { key: 'strategy', defaultWidth: 160, minWidth: 80, maxWidth: 500 },
+  { key: 'design', defaultWidth: 160, minWidth: 80, maxWidth: 500 },
+  { key: 'copy', defaultWidth: 160, minWidth: 80, maxWidth: 500 },
+  { key: 'summary', defaultWidth: 160, minWidth: 80, maxWidth: 500 },
+  { key: 'actions', defaultWidth: 130, minWidth: 80, maxWidth: 250 },
+]
+
+const COLUMN_LABELS = [
+  'Experiment', 'Brief link', 'Urgent', 'Strategy', 'Design', 'Copy', 'Summary', 'Actions',
 ] as const
+
+const COLUMN_KEYS = STAKEHOLDER_COLUMN_DEFS.map((c) => c.key)
+const STORAGE_KEY = 'heimdall:stakeholder-col-widths'
 
 interface StakeholderTableProps {
   byAgency: Record<string, FeedbackExperimentRow[]>
@@ -34,6 +42,16 @@ export function StakeholderTable({
   onEntrySaved,
   onSummaryGenerated,
 }: StakeholderTableProps) {
+  const { widths, getHandleProps, isResizing } = useResizableColumns(STAKEHOLDER_COLUMN_DEFS, STORAGE_KEY)
+
+  const colgroup = useMemo(() => (
+    <colgroup>
+      {COLUMN_KEYS.map((key) => (
+        <col key={key} style={{ width: widths[key] }} />
+      ))}
+    </colgroup>
+  ), [widths])
+
   if (orderedAgencies.length === 0) {
     return (
       <div className="flex flex-col flex-1 min-h-0 items-center justify-center text-muted-foreground/40">
@@ -43,27 +61,25 @@ export function StakeholderTable({
     )
   }
 
+  const tableMinWidth = STAKEHOLDER_COLUMN_DEFS.reduce((s, c) => s + (c.minWidth ?? 60), 0)
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {/* Sticky column headers — match CommentTable */}
       <div className="flex-shrink-0 pt-4">
-        <table className="w-full border-collapse table-fixed">
-          <colgroup>
-            {COL_WIDTHS.map((w, i) => (
-              <col key={i} style={{ width: w }} />
-            ))}
-          </colgroup>
+        <table className={cn('w-full border-collapse table-fixed', isResizing && 'select-none')} style={{ minWidth: tableMinWidth }}>
+          {colgroup}
           <thead>
             <tr className="border-y border-border">
-              {COLUMNS.map((label, i) => (
+              {COLUMN_LABELS.map((label, i) => (
                 <th
                   key={label}
                   className={cn(
-                    'px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground',
-                    i < COLUMNS.length - 1 && 'border-r border-border/50'
+                    'relative px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground',
+                    i < COLUMN_LABELS.length - 1 && 'border-r border-border/50'
                   )}
                 >
                   {label}
+                  <div {...getHandleProps(COLUMN_KEYS[i])} />
                 </th>
               ))}
             </tr>
@@ -71,14 +87,9 @@ export function StakeholderTable({
         </table>
       </div>
 
-      {/* Scrollable body */}
       <div className="flex-1 overflow-auto">
-        <table className="w-full border-collapse table-fixed">
-          <colgroup>
-            {COL_WIDTHS.map((w, i) => (
-              <col key={i} style={{ width: w }} />
-            ))}
-          </colgroup>
+        <table className={cn('w-full border-collapse table-fixed', isResizing && 'select-none')} style={{ minWidth: tableMinWidth }}>
+          {colgroup}
           <tbody>
             {orderedAgencies.map((agency) => (
               <AgencyGroup
@@ -120,7 +131,6 @@ function AgencyGroup({
 
   return (
     <>
-      {/* Agency header row — like LayerGroup */}
       <tr
         onClick={onSelect}
         className={cn(

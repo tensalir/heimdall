@@ -1,7 +1,9 @@
 'use client'
 
+import { useMemo } from 'react'
 import { CheckCircle, AlertCircle, MessageSquare, ChevronRight, Layers } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useResizableColumns, type ColumnDef } from '@/lib/hooks/use-resizable-columns'
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -52,6 +54,20 @@ function formatRelativeTime(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
+// ── Column definitions ───────────────────────────────────────────
+
+const COMMENT_COLUMN_DEFS: ColumnDef[] = [
+  { key: 'layer', defaultWidth: 220, minWidth: 100, maxWidth: 500 },
+  { key: 'author', defaultWidth: 140, minWidth: 80, maxWidth: 300 },
+  { key: 'comment', defaultWidth: 440, minWidth: 150, maxWidth: 900 },
+  { key: 'time', defaultWidth: 100, minWidth: 60, maxWidth: 200 },
+  { key: 'status', defaultWidth: 100, minWidth: 60, maxWidth: 200 },
+]
+
+const COLUMN_LABELS = ['Layer', 'Author', 'Comment', 'Time', 'Status'] as const
+const COLUMN_KEYS = ['layer', 'author', 'comment', 'time', 'status'] as const
+const STORAGE_KEY = 'heimdall:comment-col-widths'
+
 // ── CommentTable ─────────────────────────────────────────────────
 
 export function CommentTable({
@@ -59,6 +75,16 @@ export function CommentTable({
   selectedLayerNodeId,
   onSelectLayer,
 }: CommentTableProps) {
+  const { widths, getHandleProps, isResizing } = useResizableColumns(COMMENT_COLUMN_DEFS, STORAGE_KEY)
+
+  const colgroup = useMemo(() => (
+    <colgroup>
+      {COLUMN_KEYS.map((key) => (
+        <col key={key} style={{ width: widths[key] }} />
+      ))}
+    </colgroup>
+  ), [widths])
+
   if (layers.length === 0) {
     return (
       <div className="flex flex-col flex-1 min-h-0 items-center justify-center text-muted-foreground/40">
@@ -68,35 +94,28 @@ export function CommentTable({
     )
   }
 
+  const tableMinWidth = COMMENT_COLUMN_DEFS.reduce((s, c) => s + (c.minWidth ?? 60), 0)
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Column headers */}
       <div className="flex-shrink-0 pt-4">
-        <table className="w-full border-collapse table-fixed">
-          <colgroup>
-            <col style={{ width: '22%' }} />
-            <col style={{ width: '14%' }} />
-            <col style={{ width: '44%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '10%' }} />
-          </colgroup>
+        <table className={cn('w-full border-collapse table-fixed', isResizing && 'select-none')} style={{ minWidth: tableMinWidth }}>
+          {colgroup}
           <thead>
             <tr className="border-y border-border">
-              <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border-r border-border/50">
-                Layer
-              </th>
-              <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border-r border-border/50">
-                Author
-              </th>
-              <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border-r border-border/50">
-                Comment
-              </th>
-              <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border-r border-border/50">
-                Time
-              </th>
-              <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Status
-              </th>
+              {COLUMN_LABELS.map((label, i) => (
+                <th
+                  key={label}
+                  className={cn(
+                    'relative px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground',
+                    i < COLUMN_LABELS.length - 1 && 'border-r border-border/50'
+                  )}
+                >
+                  {label}
+                  <div {...getHandleProps(COLUMN_KEYS[i])} />
+                </th>
+              ))}
             </tr>
           </thead>
         </table>
@@ -104,14 +123,8 @@ export function CommentTable({
 
       {/* Scrollable body */}
       <div className="flex-1 overflow-auto">
-        <table className="w-full border-collapse table-fixed">
-          <colgroup>
-            <col style={{ width: '22%' }} />
-            <col style={{ width: '14%' }} />
-            <col style={{ width: '44%' }} />
-            <col style={{ width: '10%' }} />
-            <col style={{ width: '10%' }} />
-          </colgroup>
+        <table className={cn('w-full border-collapse table-fixed', isResizing && 'select-none')} style={{ minWidth: tableMinWidth }}>
+          {colgroup}
           <tbody>
             {layers.map((layer) => (
               <LayerGroup
@@ -142,7 +155,6 @@ function LayerGroup({ layer, isSelected, onSelect }: LayerGroupProps) {
 
   return (
     <>
-      {/* Layer header row */}
       <tr
         onClick={onSelect}
         className={cn(
@@ -186,7 +198,6 @@ function LayerGroup({ layer, isSelected, onSelect }: LayerGroupProps) {
         </td>
       </tr>
 
-      {/* Comment rows */}
       {layer.comments.map((comment) => (
         <CommentRow key={comment.id} comment={comment} />
       ))}
@@ -204,17 +215,15 @@ function CommentRow({ comment }: { comment: EnrichedComment }) {
       'group border-b border-border/20 hover:bg-muted/10 transition-colors',
       isReply && 'bg-muted/5'
     )}>
-      {/* Layer column: comment number or reply indicator */}
       <td className="px-3 py-2 text-xs text-muted-foreground/30 border-r border-border/20 align-top">
         {isReply && (
-          <span className="inline-block ml-4 text-muted-foreground/20">↳ reply</span>
+          <span className="inline-block ml-4 text-muted-foreground/20">&larr; reply</span>
         )}
         {!isReply && comment.orderNumber && (
           <span className="font-mono text-muted-foreground/40">#{comment.orderNumber}</span>
         )}
       </td>
 
-      {/* Author */}
       <td className="px-3 py-2 border-r border-border/20 align-top">
         <div className="flex items-center gap-1.5 min-w-0">
           {comment.authorAvatar && (
@@ -231,21 +240,18 @@ function CommentRow({ comment }: { comment: EnrichedComment }) {
         </div>
       </td>
 
-      {/* Comment message */}
       <td className="px-3 py-2 border-r border-border/20 align-top">
         <span className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap block">
           {comment.message}
         </span>
       </td>
 
-      {/* Time */}
       <td className="px-3 py-2 border-r border-border/20 align-top">
         <span className="text-[11px] text-muted-foreground/50 whitespace-nowrap" title={comment.createdAt}>
           {formatRelativeTime(comment.createdAt)}
         </span>
       </td>
 
-      {/* Status */}
       <td className="px-3 py-2 align-top">
         {comment.status === 'resolved' ? (
           <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400/70 font-medium">

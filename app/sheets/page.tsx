@@ -12,6 +12,7 @@ import {
 import Link from 'next/link'
 import { Nav } from '@/components/nav'
 import { cn } from '@/lib/utils'
+import { useIsPrivileged } from '@/lib/roles'
 
 const PERFORMANCE_ADS_PROJECT_ID = '387033831'
 const PERFORMANCE_ADS_PROJECT_NAME = 'Performance Ads'
@@ -214,9 +215,11 @@ function SheetsOverviewContent() {
 /* -------------------------------------------------------------------------- */
 
 function SheetsOverviewPage() {
+  const isPrivileged = useIsPrivileged()
+
   return (
     <div className="flex min-h-screen">
-      <Nav />
+      {isPrivileged && <Nav />}
       <main className="flex-1 overflow-y-auto p-4 lg:p-6">
         <div className="mx-auto max-w-7xl">
           <SheetsOverviewContent />

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { requireUser } from '@/lib/route-auth'
+import { requireUser, requireUserOrSheetsCookie } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
@@ -36,7 +36,7 @@ export interface FeedbackExperimentRow {
  * Returns rounds list if no round_id; otherwise experiments + entries for that round, grouped by agency.
  */
 export async function GET(request: Request) {
-  const auth = await requireUser(request)
+  const auth = await requireUserOrSheetsCookie(request)
   if (auth.error) return auth.error
   const db = getSupabase()
   if (!db) {

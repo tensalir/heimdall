@@ -200,6 +200,9 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
+    if (isSheetsReadApi(pathname) && hasValidSheetsCookie(request)) {
+      return addCors(NextResponse.next())
+    }
     return addCors(NextResponse.json(
       { error: 'Authentication required' },
       { status: 401, headers: CORS_HEADERS },
@@ -258,29 +261,48 @@ async function handleAdminAuth(request: NextRequest): Promise<NextResponse> {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Sheets cookie auth                                                */
+/*  Sheets cookie helpers (shared by page + API auth)                 */
 /* ------------------------------------------------------------------ */
 
 const SHEETS_COOKIE_NAME = 'heimdall-sheets-token'
+
+const SHEETS_READ_API_PREFIXES = [
+  '/api/comments/sheet',
+  '/api/comments/summarize',
+  '/api/comments/thumbnail',
+  '/api/figma/projects/',
+  '/api/feedback',
+]
+
+function isSheetsReadApi(pathname: string): boolean {
+  return SHEETS_READ_API_PREFIXES.some((p) => pathname.startsWith(p))
+}
+
+function hasValidSheetsCookie(request: NextRequest): boolean {
+  const sheetsPassword = process.env.SHEETS_PASSWORD
+  if (!sheetsPassword) return false
+  const token = request.cookies.get(SHEETS_COOKIE_NAME)?.value
+  if (!token) return false
+  try {
+    const decoded = Buffer.from(token, 'base64').toString('ascii')
+    return decoded === sheetsPassword
+  } catch {
+    return false
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Sheets page auth                                                  */
+/* ------------------------------------------------------------------ */
 
 function handleSheetsAuth(request: NextRequest): NextResponse | null {
   const sheetsPassword = process.env.SHEETS_PASSWORD
   if (!sheetsPassword) return null
 
   const { pathname } = request.nextUrl
-
   if (pathname === '/sheets/login') return null
 
-  const token = request.cookies.get(SHEETS_COOKIE_NAME)?.value
-
-  if (token) {
-    try {
-      const decoded = Buffer.from(token, 'base64').toString('ascii')
-      if (decoded === sheetsPassword) return null
-    } catch {
-      // Invalid token, redirect to login
-    }
-  }
+  if (hasValidSheetsCookie(request)) return null
 
   const url = request.nextUrl.clone()
   url.pathname = '/sheets/login'

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { SheetTabs } from './SheetTabs'
 import { Button } from '@/components/ui/button'
 import {
   RefreshCw,
@@ -14,6 +15,7 @@ import {
   CheckCircle,
   Send,
   ChevronDown,
+  Plus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useFeedbackData, getOrderedAgencies } from '@/components/feedback/useFeedbackData'
@@ -33,14 +35,12 @@ interface StakeholderSheetProps {
   onSelectRound: (id: string) => void
   onSync: () => Promise<void>
   onImportExcel: (file: File, roundId: string | null) => Promise<void>
+  onCreateRound?: () => Promise<void>
+  onDeleteRound?: (id: string) => Promise<void>
   syncing: boolean
   importing: boolean
   importError: string | null
   refreshTrigger: number
-}
-
-function shortenRoundName(name: string): string {
-  return name.length > 40 ? name.slice(0, 37) + '...' : name
 }
 
 export function StakeholderSheet({
@@ -49,6 +49,8 @@ export function StakeholderSheet({
   onSelectRound,
   onSync,
   onImportExcel,
+  onCreateRound,
+  onDeleteRound,
   syncing,
   importing,
   importError,
@@ -56,7 +58,7 @@ export function StakeholderSheet({
 }: StakeholderSheetProps) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const tabBarRef = useRef<HTMLDivElement>(null)
+
 
   const [previewPanelOpen, setPreviewPanelOpen] = useState(true)
   const [roundDropdownOpen, setRoundDropdownOpen] = useState(false)
@@ -127,8 +129,14 @@ export function StakeholderSheet({
             <p className="text-sm text-muted-foreground mb-6">
               Import your Excel consolidation file to create rounds (one per worksheet), or sync from Monday.
             </p>
-            <div className="flex gap-3 justify-center">
-              <Button onClick={() => fileInputRef.current?.click()} disabled={importing}>
+            <div className="flex gap-3 justify-center flex-wrap">
+              {onCreateRound && (
+                <Button onClick={onCreateRound}>
+                  <Plus className="h-4 w-4" />
+                  <span className="ml-2">New Sheet</span>
+                </Button>
+              )}
+              <Button variant={onCreateRound ? 'outline' : 'default'} onClick={() => fileInputRef.current?.click()} disabled={importing}>
                 {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileUp className="h-4 w-4" />}
                 <span className="ml-2">Import from Excel</span>
               </Button>
@@ -236,39 +244,17 @@ export function StakeholderSheet({
             />
           )}
 
-          {/* Bottom tab bar (rounds) — always visible when we have rounds */}
-          {tabItems.length > 0 && (
-            <div className="flex-shrink-0 border-t border-border bg-card/40">
-              <div
-                ref={tabBarRef}
-                className="flex overflow-x-auto scrollbar-thin px-2 gap-0"
-              >
-                {tabItems.map((tab) => {
-                  const isActive = tab.id === selectedRoundId
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => switchTab(tab.id)}
-                      className={cn(
-                        'flex-shrink-0 px-4 py-2 text-xs font-medium transition-all',
-                        'border-t-2 whitespace-nowrap',
-                        'hover:text-foreground hover:bg-muted/30',
-                        isActive
-                          ? 'border-primary text-foreground'
-                          : 'border-transparent text-muted-foreground'
-                      )}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <span className="truncate max-w-[200px]">
-                          {shortenRoundName(tab.label)}
-                        </span>
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+          <SheetTabs
+            tabs={tabItems}
+            activeId={selectedRoundId}
+            onSelect={switchTab}
+            onAdd={onCreateRound}
+            onDelete={onDeleteRound ? (id, label) => {
+              if (window.confirm(`Delete "${label}"? All experiments and feedback in this sheet will be permanently removed.`)) {
+                onDeleteRound(id)
+              }
+            } : undefined}
+          />
 
           {/* Footer — match CommentSheet */}
           <footer className="flex-shrink-0 border-t border-border/50 px-5 py-2 bg-card/20">

@@ -96,6 +96,38 @@ function StakeholderPageContent() {
     [fetchRounds]
   )
 
+  const handleCreateRound = useCallback(async () => {
+    try {
+      const res = await fetch('/api/feedback/rounds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const data = await res.json()
+      if (res.ok && data.id) {
+        await fetchRounds()
+        setSelectedRoundId(data.id)
+      }
+    } catch {
+      // silently fail
+    }
+  }, [fetchRounds])
+
+  const handleDeleteRound = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/feedback/rounds/${id}`, { method: 'DELETE' })
+      if (res.ok) {
+        const remaining = rounds.filter((r) => r.id !== id)
+        setRounds(remaining)
+        if (selectedRoundId === id) {
+          setSelectedRoundId(remaining[0]?.id ?? null)
+        }
+      }
+    } catch {
+      // silently fail
+    }
+  }, [rounds, selectedRoundId])
+
   if (loadingRounds) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -111,6 +143,8 @@ function StakeholderPageContent() {
       onSelectRound={handleSelectRound}
       onSync={handleSync}
       onImportExcel={handleImportExcel}
+      onCreateRound={handleCreateRound}
+      onDeleteRound={handleDeleteRound}
       syncing={syncing}
       importing={importing}
       importError={importError}

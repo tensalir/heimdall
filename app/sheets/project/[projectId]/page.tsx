@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Loader2, ArrowLeft, FileText } from 'lucide-react'
 import { Nav } from '@/components/nav'
+import { useIsPrivileged } from '@/lib/roles'
 
 interface FigmaFile {
   key: string
@@ -134,15 +135,31 @@ function ProjectFilesContent() {
   )
 }
 
-export default function ProjectFilesPage() {
+function ProjectFilesPageInner() {
+  const isPrivileged = useIsPrivileged()
+
   return (
     <div className="flex min-h-screen">
-      <Nav />
+      {isPrivileged && <Nav />}
       <main className="flex-1 overflow-y-auto p-4 lg:p-6">
         <div className="mx-auto max-w-7xl">
           <ProjectFilesContent />
         </div>
       </main>
     </div>
+  )
+}
+
+export default function ProjectFilesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="h-full flex items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <ProjectFilesPageInner />
+    </Suspense>
   )
 }

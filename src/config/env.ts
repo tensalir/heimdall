@@ -106,6 +106,8 @@ const envSchema = z.object({
   LLAMA_PARSE_VERSION: z.string().optional(),
   /** CSV of email domains allowed for privileged access (admin/ops/forecast/feedback). Defaults to thoughtform.co,loopearplugs.com. */
   HEIMDALL_ALLOWED_EMAIL_DOMAINS: z.string().optional(),
+  /** Client-side mirror of HEIMDALL_ALLOWED_EMAIL_DOMAINS for sidebar gating. Non-secret. */
+  NEXT_PUBLIC_HEIMDALL_ALLOWED_EMAIL_DOMAINS: z.string().optional(),
   /** Monday briefing board ID for sprint integration. */
   MONDAY_BRIEFING_BOARD_ID: z.string().optional(),
   /** Monday briefing doc column ID. */

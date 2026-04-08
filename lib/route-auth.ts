@@ -49,6 +49,37 @@ export async function requireUser(request: Request) {
   return { user, supabase }
 }
 
+const SHEETS_COOKIE_NAME = 'heimdall-sheets-token'
+
+/**
+ * Accept either a Supabase session OR a valid sheets-password cookie.
+ * Use for read-only API routes that shared/password-only viewers need.
+ * Returns { user, supabase } when a Supabase session is present, or
+ * { user: null, supabase: null } when only the sheets cookie is valid.
+ */
+export async function requireUserOrSheetsCookie(request: Request) {
+  const result = await requireUser(request)
+  if (!result.error) return result
+
+  const sheetsPassword = process.env.SHEETS_PASSWORD
+  if (sheetsPassword) {
+    const cookieHeader = request.headers.get('cookie') ?? ''
+    const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${SHEETS_COOKIE_NAME}=([^;]+)`))
+    if (match?.[1]) {
+      try {
+        const decoded = Buffer.from(decodeURIComponent(match[1]), 'base64').toString('ascii')
+        if (decoded === sheetsPassword) {
+          return { user: null, supabase: null }
+        }
+      } catch {
+        // invalid token — fall through to error
+      }
+    }
+  }
+
+  return result
+}
+
 /**
  * Require a user from a privileged email domain (staff only).
  * Use for admin/ops/forecast/feedback API routes.

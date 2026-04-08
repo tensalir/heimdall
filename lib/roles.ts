@@ -6,6 +6,20 @@ import { createSupabaseBrowserClient } from './supabase-auth.js'
 export type UserRole = 'admin' | 'user'
 
 const STORAGE_KEY = 'heimdall:user-role'
+const PRIVILEGED_STORAGE_KEY = 'heimdall:is-privileged'
+
+const PRIVILEGED_EMAIL_DOMAINS = (
+  process.env.NEXT_PUBLIC_HEIMDALL_ALLOWED_EMAIL_DOMAINS || 'thoughtform.co,loopearplugs.com'
+)
+  .split(',')
+  .map((d) => d.trim().toLowerCase())
+  .filter(Boolean)
+
+function checkPrivilegedEmail(email: string | undefined): boolean {
+  if (!email) return false
+  const domain = email.split('@')[1]?.toLowerCase()
+  return PRIVILEGED_EMAIL_DOMAINS.includes(domain)
+}
 
 /**
  * Reads role from Supabase user_metadata.role.
@@ -51,4 +65,40 @@ export function useUserRole(): UserRole {
   }, [])
 
   return role
+}
+
+/**
+ * Returns true when the current Supabase user's email domain is in the
+ * privileged allow-list (mirrors middleware isPrivilegedUser check).
+ * Falls back to false for cookie-only sheet auth (no Supabase session).
+ */
+export function useIsPrivileged(): boolean {
+  const [privileged, setPrivileged] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      return localStorage.getItem(PRIVILEGED_STORAGE_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  useEffect(() => {
+    const supabase = createSupabaseBrowserClient()
+    if (!supabase) {
+      setPrivileged(false)
+      return
+    }
+    supabase.auth.getUser().then(({ data: { user }, error }) => {
+      if (error || !user) {
+        setPrivileged(false)
+        try { localStorage.removeItem(PRIVILEGED_STORAGE_KEY) } catch { /* ignore */ }
+        return
+      }
+      const result = checkPrivilegedEmail(user.email)
+      setPrivileged(result)
+      try { localStorage.setItem(PRIVILEGED_STORAGE_KEY, String(result)) } catch { /* ignore */ }
+    })
+  }, [])
+
+  return privileged
 }
