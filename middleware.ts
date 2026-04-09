@@ -21,6 +21,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
+import { resolveCorsOrigin } from '@/lib/cors'
 import { classifyApiRoute } from '@/lib/route-auth'
 import { timingSafeEqualSecret } from '@/lib/crypto-compare'
 
@@ -30,11 +31,7 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
   .filter(Boolean)
 
 function resolveOrigin(request: NextRequest): string {
-  const origin = request.headers.get('origin') ?? ''
-  if (ALLOWED_ORIGINS.length > 0 && ALLOWED_ORIGINS.includes(origin)) return origin
-  if (/^https:\/\/.*\.vercel\.app$/.test(origin)) return origin
-  if (origin && origin === request.nextUrl.origin) return origin
-  return ''
+  return resolveCorsOrigin(request.headers.get('origin'), request.nextUrl.origin, ALLOWED_ORIGINS)
 }
 
 function corsHeaders(request: NextRequest): Record<string, string> {
