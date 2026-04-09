@@ -345,7 +345,7 @@ export function BriefingDocModal({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-3xl max-h-[92vh] flex flex-col gap-0 p-0 overflow-hidden">
+      <DialogContent className="sm:max-w-4xl max-h-[92vh] flex flex-col gap-0 p-0 overflow-hidden">
         <DialogHeader className="flex-shrink-0 px-6 pt-5 pb-3 border-b border-border/50">
           <div className="flex items-start justify-between gap-3 pr-6">
             <div className="min-w-0 flex-1">
