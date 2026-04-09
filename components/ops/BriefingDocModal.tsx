@@ -51,6 +51,15 @@ interface BriefingDocModalProps {
 
 type Tab = 'briefing' | 'feedback'
 
+// ── In-memory cache ─────────────────────────────────────────────────────────
+
+const briefingCache = new Map<string, DocResponse>()
+const feedbackCache = new Map<string, FeedbackDocResponse>()
+
+function cacheKey(itemId: string, boardId: string | null) {
+  return `${boardId ?? ''}:${itemId}`
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function parseDocSections(markdown: string): DocSection[] {
@@ -154,12 +163,10 @@ export function BriefingDocModal({
 }: BriefingDocModalProps) {
   const [activeTab, setActiveTab] = useState<Tab>('briefing')
 
-  // Briefing tab state
   const [briefLoading, setBriefLoading] = useState(false)
   const [briefError, setBriefError] = useState<string | null>(null)
   const [briefData, setBriefData] = useState<DocResponse | null>(null)
 
-  // Feedback tab state
   const [fbLoading, setFbLoading] = useState(false)
   const [fbError, setFbError] = useState<string | null>(null)
   const [fbData, setFbData] = useState<FeedbackDocResponse | null>(null)
@@ -168,34 +175,50 @@ export function BriefingDocModal({
   const [syncing, setSyncing] = useState(false)
   const [syncDone, setSyncDone] = useState(false)
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fbFetchedRef = useRef<string | null>(null)
 
-  // Fetch briefing doc
   const fetchBriefing = useCallback(async () => {
     if (!mondayItemId) return
-    setBriefLoading(true)
+    const key = cacheKey(mondayItemId, mondayBoardId)
+
+    const cached = briefingCache.get(key)
+    if (cached) {
+      setBriefData(cached)
+    }
+
+    setBriefLoading(!cached)
     setBriefError(null)
-    setBriefData(null)
     try {
       const params = new URLSearchParams({ item_id: mondayItemId })
       if (mondayBoardId) params.set('board_id', mondayBoardId)
       const res = await fetch(`/api/ops/monday-doc?${params}`)
       const json = await res.json()
       if (!res.ok) {
-        setBriefError(json.error ?? `Failed (${res.status})`)
+        if (!cached) setBriefError(json.error ?? `Failed (${res.status})`)
         return
       }
+      briefingCache.set(key, json)
       setBriefData(json)
     } catch {
-      setBriefError('Network error — could not reach server')
+      if (!cached) setBriefError('Network error — could not reach server')
     } finally {
       setBriefLoading(false)
     }
   }, [mondayItemId, mondayBoardId])
 
-  // Fetch feedback doc
   const fetchFeedback = useCallback(async () => {
     if (!mondayItemId) return
-    setFbLoading(true)
+    const key = cacheKey(mondayItemId, mondayBoardId)
+
+    const cached = feedbackCache.get(key)
+    if (cached) {
+      setFbData(cached)
+      const draft = cached.review?.summary_draft ?? cached.review?.generated_summary ?? ''
+      setSummaryDraft(draft)
+      setSyncDone(cached.review?.synced_to_monday ?? false)
+    }
+
+    setFbLoading(!cached)
     setFbError(null)
     try {
       const params = new URLSearchParams({ item_id: mondayItemId })
@@ -203,30 +226,42 @@ export function BriefingDocModal({
       const res = await fetch(`/api/ops/feedback-doc?${params}`)
       const json = await res.json()
       if (!res.ok) {
-        setFbError(json.error ?? `Failed (${res.status})`)
+        if (!cached) setFbError(json.error ?? `Failed (${res.status})`)
         return
       }
+      feedbackCache.set(key, json)
       setFbData(json)
       const draft = json.review?.summary_draft ?? json.review?.generated_summary ?? ''
       setSummaryDraft(draft)
       setSyncDone(json.review?.synced_to_monday ?? false)
     } catch {
-      setFbError('Network error — could not reach server')
+      if (!cached) setFbError('Network error — could not reach server')
     } finally {
       setFbLoading(false)
     }
   }, [mondayItemId, mondayBoardId])
 
+  // On open: immediately fetch briefing; defer feedback until tab clicked
   useEffect(() => {
     if (open && mondayItemId) {
-      fetchBriefing()
-      fetchFeedback()
       setActiveTab('briefing')
       setSyncDone(false)
+      fbFetchedRef.current = null
+      fetchBriefing()
     }
-  }, [open, mondayItemId, fetchBriefing, fetchFeedback])
+  }, [open, mondayItemId, fetchBriefing])
 
-  // Autosave draft on blur/close
+  // Lazy-load feedback on first tab switch
+  useEffect(() => {
+    if (activeTab === 'feedback' && mondayItemId) {
+      const key = cacheKey(mondayItemId, mondayBoardId)
+      if (fbFetchedRef.current !== key) {
+        fbFetchedRef.current = key
+        fetchFeedback()
+      }
+    }
+  }, [activeTab, mondayItemId, mondayBoardId, fetchFeedback])
+
   const saveDraft = useCallback(async (draft: string) => {
     if (!mondayItemId || !mondayBoardId) return
     await fetch('/api/ops/feedback-draft', {
@@ -249,7 +284,6 @@ export function BriefingDocModal({
     onOpenChange(nextOpen)
   }
 
-  // Generate summary
   const handleGenerateSummary = async () => {
     if (!mondayItemId || !mondayBoardId) return
     setSummarizing(true)
@@ -271,7 +305,6 @@ export function BriefingDocModal({
     }
   }
 
-  // Sync to Monday
   const handleSyncToMonday = async () => {
     if (!mondayItemId || !mondayBoardId) return
     setSyncing(true)
@@ -310,11 +343,9 @@ export function BriefingDocModal({
     }
   }
 
-  const feedbackSections = fbData?.feedback_doc_content ? parseDocSections(fbData.feedback_doc_content) : []
-
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
+      <DialogContent className="sm:max-w-3xl max-h-[92vh] flex flex-col gap-0 p-0 overflow-hidden">
         <DialogHeader className="flex-shrink-0 px-6 pt-5 pb-3 border-b border-border/50">
           <div className="flex items-start justify-between gap-3 pr-6">
             <div className="min-w-0 flex-1">
@@ -356,7 +387,6 @@ export function BriefingDocModal({
             </div>
           )}
 
-          {/* Tabs */}
           <div className="flex gap-0 mt-3 -mb-3 border-b-0">
             <button
               className={cn(
@@ -397,7 +427,6 @@ export function BriefingDocModal({
               loading={fbLoading}
               error={fbError}
               data={fbData}
-              feedbackSections={feedbackSections}
               summaryDraft={summaryDraft}
               onDraftChange={handleDraftChange}
               summarizing={summarizing}
@@ -492,11 +521,118 @@ function BriefingTab({
 
 // ── Feedback Tab ────────────────────────────────────────────────────────────
 
+interface EditableRow {
+  variation: string
+  feedback: string
+}
+
+interface EditableVersion {
+  label: string
+  rows: EditableRow[]
+}
+
+function parseFeedbackTableFromSections(sections: DocSection[]): EditableVersion[] {
+  const versions: EditableVersion[] = []
+
+  for (const section of sections) {
+    if (!section.body) continue
+
+    if (section.body.includes('|') && section.body.includes('---')) {
+      const rows = section.body
+        .split('\n')
+        .filter((l) => l.trim().startsWith('|'))
+        .map((l) =>
+          l.split('|').slice(1, -1).map((c) => c.trim())
+        )
+
+      const dataRows = rows.filter(
+        (_, i) => i > 0 && !rows[i]?.every((c) => /^-+$/.test(c))
+      )
+
+      if (dataRows.length > 0) {
+        versions.push({
+          label: section.heading || `Version ${versions.length + 1}`,
+          rows: dataRows.map(r => ({
+            variation: r[0] ?? '',
+            feedback: r.slice(1).join(' ').trim(),
+          })),
+        })
+      }
+    }
+  }
+
+  return versions
+}
+
+function EditableFeedbackTable({
+  versions,
+  onChange,
+}: {
+  versions: EditableVersion[]
+  onChange: (updated: EditableVersion[]) => void
+}) {
+  const handleCellChange = (vIdx: number, rIdx: number, value: string) => {
+    const next = versions.map((v, vi) => {
+      if (vi !== vIdx) return v
+      return {
+        ...v,
+        rows: v.rows.map((r, ri) =>
+          ri === rIdx ? { ...r, feedback: value } : r
+        ),
+      }
+    })
+    onChange(next)
+  }
+
+  return (
+    <div className="space-y-4">
+      {versions.map((version, vIdx) => (
+        <div key={vIdx} className="rounded-lg border border-border/50 bg-card overflow-hidden">
+          {version.label && (
+            <div className="px-3 py-2 bg-muted/30 border-b border-border/40">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {version.label}
+              </h3>
+            </div>
+          )}
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12px] border-collapse">
+              <thead>
+                <tr>
+                  <th className="text-left px-3 py-2 font-semibold text-muted-foreground border-b border-border/60 w-16">Var</th>
+                  <th className="text-left px-3 py-2 font-semibold text-muted-foreground border-b border-border/60">Feedback</th>
+                </tr>
+              </thead>
+              <tbody>
+                {version.rows.map((row, rIdx) => (
+                  <tr key={rIdx} className="border-b border-border/30 last:border-0">
+                    <td className="px-3 py-1.5 text-foreground/70 font-medium align-top w-16">
+                      {row.variation}
+                    </td>
+                    <td className="px-1 py-1">
+                      <textarea
+                        className="w-full bg-transparent border-0 px-2 py-1 text-[12px] text-foreground/90 leading-relaxed resize-none focus:outline-none focus:ring-1 focus:ring-primary/30 rounded min-h-[28px]"
+                        value={row.feedback}
+                        rows={Math.max(1, Math.ceil(row.feedback.length / 60))}
+                        onChange={(e) => handleCellChange(vIdx, rIdx, e.target.value)}
+                        placeholder="Enter feedback..."
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function FeedbackTab({
   loading,
   error,
   data,
-  feedbackSections,
   summaryDraft,
   onDraftChange,
   summarizing,
@@ -508,7 +644,6 @@ function FeedbackTab({
   loading: boolean
   error: string | null
   data: FeedbackDocResponse | null
-  feedbackSections: DocSection[]
   summaryDraft: string
   onDraftChange: (value: string) => void
   summarizing: boolean
@@ -517,6 +652,26 @@ function FeedbackTab({
   syncDone: boolean
   onSyncToMonday: () => void
 }) {
+  const feedbackSections = data?.feedback_doc_content ? parseDocSections(data.feedback_doc_content) : []
+  const [editableVersions, setEditableVersions] = useState<EditableVersion[]>([])
+  const initializedRef = useRef(false)
+
+  useEffect(() => {
+    if (feedbackSections.length > 0 && !initializedRef.current) {
+      const parsed = parseFeedbackTableFromSections(feedbackSections)
+      if (parsed.length > 0) {
+        setEditableVersions(parsed)
+        initializedRef.current = true
+      }
+    }
+  }, [feedbackSections])
+
+  // Reset when data changes (new item)
+  useEffect(() => {
+    initializedRef.current = false
+    setEditableVersions([])
+  }, [data?.feedback_doc_id])
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-3">
@@ -550,16 +705,36 @@ function FeedbackTab({
   }
 
   const contradictionNote = data?.review?.contradiction_note
+  const hasEditableTable = editableVersions.length > 0
+  const nonTableSections = feedbackSections.filter(s => {
+    if (!s.body) return false
+    return !(s.body.includes('|') && s.body.includes('---'))
+  })
 
   return (
     <div className="space-y-5">
-      {/* Feedback doc content */}
-      {feedbackSections.length > 0 && (
+      {/* Editable feedback table */}
+      {hasEditableTable && (
         <div className="space-y-3">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Feedback Document
           </h3>
-          {feedbackSections.map((section, i) => (
+          <EditableFeedbackTable
+            versions={editableVersions}
+            onChange={setEditableVersions}
+          />
+        </div>
+      )}
+
+      {/* Non-table sections from feedback doc */}
+      {nonTableSections.length > 0 && (
+        <div className="space-y-3">
+          {!hasEditableTable && (
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Feedback Document
+            </h3>
+          )}
+          {nonTableSections.map((section, i) => (
             <div
               key={i}
               className={cn(
