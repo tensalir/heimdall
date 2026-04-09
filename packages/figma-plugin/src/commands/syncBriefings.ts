@@ -58,7 +58,7 @@
  * These appear in Figma's dev console (Plugins → Development → Open console).
  * ═══════════════════════════════════════════════════════════════════
  */
-import { DEFAULT_HEIMDALL_API, DEFAULT_PLUGIN_TOKEN, DEFAULT_VERCEL_BYPASS } from '../constants'
+import { DEFAULT_HEIMDALL_API, DEFAULT_PLUGIN_TOKEN } from '../constants'
 import { runExportComments } from './exportComments'
 
 const TEMPLATE_PAGE_NAMES = ['Briefing Template to Duplicate', 'Briefing Template', 'Template']
@@ -3206,7 +3206,6 @@ var uiHtml = '<html><head><style>'
   + JSON.stringify(DEFAULT_HEIMDALL_API)
   + ' /><button class="secondary" id="save-api">Save</button></div>'
   + '<div class="row"><span class="label">Plugin token</span><input id="plugin-token" type="password" placeholder="(required)" style="font-size:9px;" /><button class="secondary" id="save-token">Save</button></div>'
-  + '<div class="row"><span class="label">Vercel bypass</span><input id="vercel-bypass" placeholder="(optional)" style="font-size:9px;" /><button class="secondary" id="save-bypass">Save</button></div>'
   + '<div id="sync-panel">'
   + '  <div id="batch-select-wrap" style="display:none;"><span class="label">Batch</span><select id="batch-select"></select><button class="secondary" id="batch-apply">Apply</button></div>'
   + '  <p id="batch-label" style="margin:4px 0;font-size:12px;font-weight:600;"></p>'
@@ -3256,18 +3255,8 @@ var uiHtml = '<html><head><style>'
   + 'var DEFAULT_PLUGIN_TOKEN = '
   + JSON.stringify(DEFAULT_PLUGIN_TOKEN)
   + ';'
-  + 'var DEFAULT_VERCEL_BYPASS = '
-  + JSON.stringify(DEFAULT_VERCEL_BYPASS)
-  + ';'
   + 'var PLUGIN_TOKEN = DEFAULT_PLUGIN_TOKEN;'
   + 'function setPluginToken(t) { PLUGIN_TOKEN = (t || "").trim() || DEFAULT_PLUGIN_TOKEN; var el = document.getElementById("plugin-token"); if (el && PLUGIN_TOKEN) el.value = PLUGIN_TOKEN; }'
-  + 'var VERCEL_BYPASS = DEFAULT_VERCEL_BYPASS;'
-  + 'function setVercelBypass(v) { VERCEL_BYPASS = (v || "").trim() || DEFAULT_VERCEL_BYPASS; var el = document.getElementById("vercel-bypass"); if (el) el.value = VERCEL_BYPASS; }'
-  + 'function stampUrl(url) {'
-  + '  if (!VERCEL_BYPASS) return url;'
-  + '  var sep = url.indexOf("?") >= 0 ? "&" : "?";'
-  + '  return url + sep + "x-vercel-protection-bypass=" + encodeURIComponent(VERCEL_BYPASS);'
-  + '}'
   + 'function authHeaders(extra) {'
   + '  var h = extra || {};'
   + '  if (PLUGIN_TOKEN) h["X-Heimdall-Plugin-Token"] = PLUGIN_TOKEN;'
@@ -3280,7 +3269,6 @@ var uiHtml = '<html><head><style>'
   + '  return "";'
   + '}'
   + 'function requestJson(url, options) {'
-  + '  url = stampUrl(url);'
   + '  options = options || {};'
   + '  options.headers = authHeaders(options.headers || {});'
   + '  return fetch(url, options).then(function(r) {'
@@ -3590,13 +3578,13 @@ var uiHtml = '<html><head><style>'
   + '    var r = results[i];'
   + '    if (r.error) {'
   + '      failed.push(r.experimentPageName);'
-  + '      promises.push(fetch(stampUrl(HEIMDALL_API + "/api/jobs/fail"), { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: r.error}) }).catch(function(){}));'
+  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/fail", { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: r.error}) }).catch(function(){}));'
   + '    } else if (r.contentEmpty) {'
   + '      failed.push(r.experimentPageName + " (empty)");'
-  + '      promises.push(fetch(stampUrl(HEIMDALL_API + "/api/jobs/fail"), { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: "content_empty"}) }).catch(function(){}));'
+  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/fail", { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, errorCode: "content_empty"}) }).catch(function(){}));'
   + '    } else {'
   + '      if (r.outcome === "updated") updated++; else done++;'
-  + '      promises.push(fetch(stampUrl(HEIMDALL_API + "/api/jobs/complete"), { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, figmaPageId: r.pageId, figmaFileUrl: r.fileUrl, outcome: r.outcome || "created"}) }).catch(function(){}));'
+  + '      promises.push(fetch(HEIMDALL_API + "/api/jobs/complete", { method: "POST", headers: authHeaders({"Content-Type":"application/json"}), body: JSON.stringify({idempotencyKey: r.idempotencyKey, figmaPageId: r.pageId, figmaFileUrl: r.fileUrl, outcome: r.outcome || "created"}) }).catch(function(){}));'
   + '    }'
   + '  }'
   + '  Promise.all(promises).then(function() {'
@@ -3625,7 +3613,7 @@ var uiHtml = '<html><head><style>'
   + '    }'
   + '    var img = images[i];'
   + '    el.textContent = "Fetching image " + (i + 1) + "/" + images.length + ": " + img.name;'
-  + '    var fetchUrl = stampUrl(img.assetId ? (HEIMDALL_API + "/api/images/proxy?assetId=" + encodeURIComponent(img.assetId)) : (HEIMDALL_API + "/api/images/proxy?url=" + encodeURIComponent(img.url || "")));'
+  + '    var fetchUrl = img.assetId ? (HEIMDALL_API + "/api/images/proxy?assetId=" + encodeURIComponent(img.assetId)) : (HEIMDALL_API + "/api/images/proxy?url=" + encodeURIComponent(img.url || ""));'
   + '    function doFetch(attempt) {'
   + '      fetch(fetchUrl)'
   + '        .then(function(r) {'
@@ -3677,7 +3665,6 @@ var uiHtml = '<html><head><style>'
   + '  }'
   + '  if (d.type === "api-base") setApiBase(d.apiBase || DEFAULT_HEIMDALL_API);'
   + '  if (d.type === "plugin-token") { setPluginToken(d.token || ""); var ti = document.getElementById("plugin-token"); if (ti) ti.value = d.token || ""; }'
-  + '  if (d.type === "vercel-bypass") setVercelBypass(d.secret || "");'
   + '  if (d.type === "create-template-done") {'
   + '    var el = document.getElementById("msg");'
   + '    el.textContent = d.error ? "Template error: " + d.error : "Template created. Place the \'Custom Labels - Status Tracker\' widget in each column header (Briefing, Copy, Design).";'
@@ -3735,16 +3722,8 @@ var uiHtml = '<html><head><style>'
   + '    el.textContent = d.text;'
   + '  }'
   + '};'
-  + 'document.getElementById("save-bypass").onclick = function() {'
-  + '  var input = document.getElementById("vercel-bypass");'
-  + '  setVercelBypass(input ? input.value : "");'
-  + '  parent.postMessage({ pluginMessage: { type: "save-vercel-bypass", secret: VERCEL_BYPASS } }, "*");'
-  + '  document.getElementById("msg").textContent = VERCEL_BYPASS ? "Saved Vercel bypass secret." : "Cleared Vercel bypass secret.";'
-  + '  document.getElementById("msg").className = "";'
-  + '};'
   + 'parent.postMessage({ pluginMessage: { type: "get-api-base" } }, "*");'
   + 'parent.postMessage({ pluginMessage: { type: "get-plugin-token" } }, "*");'
-  + 'parent.postMessage({ pluginMessage: { type: "get-vercel-bypass" } }, "*");'
   + '</script></body></html>'
 
 function serializePageSnapshot(page: PageNode): Record<string, unknown> {
@@ -3782,17 +3761,6 @@ async function getPluginToken(): Promise<string> {
   return typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_PLUGIN_TOKEN
 }
 
-async function getVercelBypass(): Promise<string> {
-  const saved = await figma.clientStorage.getAsync('heimdallVercelBypass')
-  return typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_VERCEL_BYPASS
-}
-
-function stampUrlMain(url: string, bypass: string): string {
-  if (!bypass) return url
-  const sep = url.includes('?') ? '&' : '?'
-  return url + sep + 'x-vercel-protection-bypass=' + encodeURIComponent(bypass)
-}
-
 async function capturePreWriteSnapshot(
   apiBase: string,
   page: PageNode,
@@ -3807,10 +3775,9 @@ async function capturePreWriteSnapshot(
     const itemId = mondayItemId || page.getPluginData('heimdallMondayItemId') || page.name
     const boardId = mondayBoardId || page.getPluginData('heimdallBoardId') || ''
     const pluginToken = await getPluginToken()
-    const bypass = await getVercelBypass()
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (pluginToken) headers['X-Heimdall-Plugin-Token'] = pluginToken
-    await fetch(stampUrlMain(apiBase + '/api/plugin/capture-version', bypass), {
+    await fetch(apiBase + '/api/plugin/capture-version', {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -3968,16 +3935,6 @@ export function runSyncBriefings() {
       const token = ((msg as any).token ?? '').trim()
       await figma.clientStorage.setAsync('heimdallPluginToken', token)
       figma.ui.postMessage({ type: 'plugin-token', token })
-    }
-    if (msg.type === 'get-vercel-bypass') {
-      const saved = await figma.clientStorage.getAsync('heimdallVercelBypass')
-      const secret = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_VERCEL_BYPASS
-      figma.ui.postMessage({ type: 'vercel-bypass', secret })
-    }
-    if (msg.type === 'save-vercel-bypass') {
-      const secret = ((msg as any).secret ?? '').trim()
-      await figma.clientStorage.setAsync('heimdallVercelBypass', secret)
-      figma.ui.postMessage({ type: 'vercel-bypass', secret })
     }
     if (msg.type === 'get-file-key') {
       figma.ui.postMessage({ type: 'file-key', fileKey: figma.fileKey || '' })

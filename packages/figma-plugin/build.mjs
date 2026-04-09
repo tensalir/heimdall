@@ -11,7 +11,6 @@ config({ path: resolve(__dirname, '../../.env') })
 
 const define = {
   __PLUGIN_TOKEN__: JSON.stringify(process.env.HEIMDALL_PLUGIN_SECRET || ''),
-  __VERCEL_BYPASS__: JSON.stringify(process.env.VERCEL_AUTOMATION_BYPASS_SECRET || ''),
 }
 
 const opts = {

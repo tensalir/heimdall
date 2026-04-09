@@ -12,11 +12,3 @@ export const DEFAULT_HEIMDALL_API =
 declare const __PLUGIN_TOKEN__: string
 export const DEFAULT_PLUGIN_TOKEN: string =
   typeof __PLUGIN_TOKEN__ !== 'undefined' ? __PLUGIN_TOKEN__ : ''
-
-/**
- * Default Vercel Deployment Protection bypass secret.
- * Injected at build time via esbuild --define. Empty string if not set.
- */
-declare const __VERCEL_BYPASS__: string
-export const DEFAULT_VERCEL_BYPASS: string =
-  typeof __VERCEL_BYPASS__ !== 'undefined' ? __VERCEL_BYPASS__ : ''

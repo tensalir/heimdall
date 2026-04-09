@@ -10,7 +10,7 @@
  *   4. User can copy to clipboard (CSV) or download
  */
 
-import { DEFAULT_HEIMDALL_API, DEFAULT_VERCEL_BYPASS } from '../constants'
+import { DEFAULT_HEIMDALL_API } from '../constants'
 
 const commentsUiHtml = `<html><head><style>
 *{box-sizing:border-box;margin:0;padding:0;}
@@ -98,13 +98,6 @@ parent.postMessage({ pluginMessage: { type: "get-file-key" } }, "*");
 
 var DEFAULT_HEIMDALL_API = ${JSON.stringify(DEFAULT_HEIMDALL_API)};
 var HEIMDALL_API = DEFAULT_HEIMDALL_API;
-var VERCEL_BYPASS = ${JSON.stringify(DEFAULT_VERCEL_BYPASS)};
-function setVercelBypass(v) { VERCEL_BYPASS = (v || "").trim() || ${JSON.stringify(DEFAULT_VERCEL_BYPASS)}; }
-function stampUrl(url) {
-  if (!VERCEL_BYPASS) return url;
-  var sep = url.indexOf("?") >= 0 ? "&" : "?";
-  return url + sep + "x-vercel-protection-bypass=" + encodeURIComponent(VERCEL_BYPASS);
-}
 var fileKey = "";
 var allComments = [];
 var loading = false;
@@ -158,7 +151,7 @@ function fetchComments() {
   loading = true;
   setStatus("Fetching comments for " + fileKey + "...", false);
   document.getElementById("fetch-btn").disabled = true;
-  var url = stampUrl(HEIMDALL_API + "/api/comments?fileKey=" + encodeURIComponent(fileKey));
+  var url = HEIMDALL_API + "/api/comments?fileKey=" + encodeURIComponent(fileKey);
   fetch(url)
     .then(function(r) {
       var status = r.status;
@@ -271,7 +264,7 @@ document.getElementById("copy-btn").onclick = function() {
 
 document.getElementById("download-btn").onclick = function() {
   if (!fileKey) return;
-  var url = stampUrl(HEIMDALL_API + "/api/comments?fileKey=" + encodeURIComponent(fileKey) + "&format=csv");
+  var url = HEIMDALL_API + "/api/comments?fileKey=" + encodeURIComponent(fileKey) + "&format=csv";
   window.open(url, "_blank");
   setStatus("Download started.", false);
 };
@@ -319,10 +312,8 @@ onmessage = function(e) {
     if (fileKey) document.getElementById("open-sheet-btn").disabled = false;
   }
   if (d.type === "api-base") setApiBase(d.apiBase || DEFAULT_HEIMDALL_API);
-  if (d.type === "vercel-bypass") setVercelBypass(d.secret || "");
 };
 parent.postMessage({ pluginMessage: { type: "get-api-base" } }, "*");
-parent.postMessage({ pluginMessage: { type: "get-vercel-bypass" } }, "*");
 </script></body></html>`
 
 export function runExportComments() {
@@ -353,11 +344,6 @@ export function runExportComments() {
       const token = (msg.token ?? '').trim()
       await figma.clientStorage.setAsync('heimdallPluginToken', token)
       figma.ui.postMessage({ type: 'plugin-token', token })
-    }
-    if (msg.type === 'get-vercel-bypass') {
-      const saved = await figma.clientStorage.getAsync('heimdallVercelBypass')
-      const secret = typeof saved === 'string' && saved.trim() ? saved.trim() : DEFAULT_VERCEL_BYPASS
-      figma.ui.postMessage({ type: 'vercel-bypass', secret })
     }
     if (msg.type === 'get-file-key') {
       figma.ui.postMessage({ type: 'file-key', fileKey: figma.fileKey || '' })
