@@ -6,6 +6,9 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: false,
   },
   serverExternalPackages: ['pdf-parse', 'mammoth'],
+  outputFileTracingIncludes: {
+    '/api/briefing-assistant/generate-briefing': ['./skills/**/*'],
+  },
   async headers() {
     return [
       {

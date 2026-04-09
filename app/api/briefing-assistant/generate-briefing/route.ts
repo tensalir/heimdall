@@ -15,10 +15,12 @@ const SECTION_KEYS = [
   'why',
   'audience',
   'product',
+  'formats',
   'visual',
   'copyInfo',
   'test',
   'variants',
+  'note',
 ] as const
 
 /**

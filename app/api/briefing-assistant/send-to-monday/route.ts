@@ -16,10 +16,12 @@ function buildBriefingDocMarkdown(sections: {
   why?: string
   audience?: string
   product?: string
+  formats?: string
   visual?: string
   copyInfo?: string
   test?: string
   variants?: string
+  note?: string
 }): string {
   const parts: string[] = []
   const entries: [string, string | undefined][] = [
@@ -27,10 +29,12 @@ function buildBriefingDocMarkdown(sections: {
     ['Why', sections.why],
     ['Audience', sections.audience],
     ['Product', sections.product],
+    ['Formats', sections.formats],
+    ['Variants', sections.variants],
+    ['Note', sections.note],
     ['Visual', sections.visual],
     ['Copy info', sections.copyInfo],
-    ['Test', sections.test],
-    ['Variants', sections.variants],
+    ['Testing', sections.test],
   ]
   for (const [title, value] of entries) {
     if (value?.trim()) {

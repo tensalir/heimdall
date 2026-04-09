@@ -14,17 +14,22 @@ export type ApprovalStatus =
   | 'synced_to_monday'
   | 'queued'
 
-/** Working-doc sections that mirror Monday briefing doc structure (used by mapping agent). */
+/** Working-doc sections mirroring the Monday briefing doc structure. */
 export interface WorkingDocSections {
   idea?: string
   why?: string
   audience?: string
+  /** Concise product name/slug (e.g. "Experience 2", "Switch McLaren"). */
   product?: string
+  /** Checked format options as JSON array or newline-separated list. */
+  formats?: string
   visual?: string
   copyInfo?: string
   test?: string
   /** Variant rows A–D: type label + "Input visual + copy direction" + "Script" */
   variants?: string
+  /** Free-form note or pending items. */
+  note?: string
 }
 
 /** How the assignment was created. */
@@ -135,10 +140,12 @@ export const WorkingDocSectionsSchema = z.object({
   why: z.string().optional(),
   audience: z.string().optional(),
   product: z.string().optional(),
+  formats: z.string().optional(),
   visual: z.string().optional(),
   copyInfo: z.string().optional(),
   test: z.string().optional(),
   variants: z.string().optional(),
+  note: z.string().optional(),
 })
 
 export const BriefingAssignmentSchema = z.object({
