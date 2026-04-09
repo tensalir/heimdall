@@ -13,6 +13,10 @@ describe('resolveCorsOrigin', () => {
     expect(resolveCorsOrigin('https://figma.com', 'https://bifrost-rose.vercel.app')).toBe('https://figma.com')
   })
 
+  it('allows null origins for desktop plugin webviews', () => {
+    expect(resolveCorsOrigin('null', 'https://bifrost-rose.vercel.app')).toBe('null')
+  })
+
   it('allows vercel app origins', () => {
     expect(resolveCorsOrigin('https://preview-123.vercel.app', 'https://bifrost-rose.vercel.app')).toBe('https://preview-123.vercel.app')
   })

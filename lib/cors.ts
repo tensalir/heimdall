@@ -9,6 +9,8 @@ export function resolveCorsOrigin(
   const normalizedOrigin = String(origin ?? '').trim()
   if (!normalizedOrigin) return ''
 
+  // Desktop/webview plugin environments may send a literal null origin.
+  if (normalizedOrigin === 'null') return 'null'
   if (allowedOrigins.includes(normalizedOrigin)) return normalizedOrigin
   if (FIGMA_ORIGIN_RE.test(normalizedOrigin)) return normalizedOrigin
   if (VERCEL_APP_ORIGIN_RE.test(normalizedOrigin)) return normalizedOrigin
