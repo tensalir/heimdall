@@ -110,9 +110,9 @@ export default function OpsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Briefing Pipeline</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Briefing Workflow</h1>
           <p className="text-muted-foreground">
-            Monday boards, sync status, and Figma routing
+            Monday boards, briefing sync, and feedback review
           </p>
         </div>
         <div className="flex items-center gap-2">

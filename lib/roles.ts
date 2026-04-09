@@ -7,6 +7,14 @@ export type UserRole = 'admin' | 'user'
 
 const STORAGE_KEY = 'heimdall:user-role'
 const PRIVILEGED_STORAGE_KEY = 'heimdall:is-privileged'
+const FEEDBACK_REVIEWER_KEY = 'heimdall:is-feedback-reviewer'
+
+const FEEDBACK_REVIEWERS = (
+  process.env.NEXT_PUBLIC_HEIMDALL_FEEDBACK_REVIEWERS || ''
+)
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean)
 
 const PRIVILEGED_EMAIL_DOMAINS = (
   process.env.NEXT_PUBLIC_HEIMDALL_ALLOWED_EMAIL_DOMAINS || 'thoughtform.co,loopearplugs.com'
@@ -101,4 +109,42 @@ export function useIsPrivileged(): boolean {
   }, [])
 
   return privileged
+}
+
+/**
+ * Returns true when the current user is on the feedback-reviewer allowlist.
+ * Falls back to privileged-domain check when the allowlist is empty.
+ */
+export function useIsFeedbackReviewer(): boolean {
+  const [allowed, setAllowed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      return localStorage.getItem(FEEDBACK_REVIEWER_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  useEffect(() => {
+    const supabase = createSupabaseBrowserClient()
+    if (!supabase) {
+      setAllowed(false)
+      return
+    }
+    supabase.auth.getUser().then(({ data: { user }, error }) => {
+      if (error || !user) {
+        setAllowed(false)
+        try { localStorage.removeItem(FEEDBACK_REVIEWER_KEY) } catch {}
+        return
+      }
+      const email = user.email?.toLowerCase() ?? ''
+      const result = FEEDBACK_REVIEWERS.length > 0
+        ? FEEDBACK_REVIEWERS.includes(email)
+        : checkPrivilegedEmail(user.email)
+      setAllowed(result)
+      try { localStorage.setItem(FEEDBACK_REVIEWER_KEY, String(result)) } catch {}
+    })
+  }, [])
+
+  return allowed
 }

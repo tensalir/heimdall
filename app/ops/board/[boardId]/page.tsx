@@ -11,8 +11,13 @@ import {
   LanePill,
   SyncBadge,
   getKanbanLane,
+  getFeedbackLane,
+  FeedbackLanePill,
+  FEEDBACK_WORKFLOW_LANES,
   type PipelineStatus,
   type KanbanLane,
+  type FeedbackLane,
+  type BoardMode,
 } from '@/components/ops/StatusPill'
 import { PipelineProgress } from '@/components/ops/PipelineProgress'
 import {
@@ -27,10 +32,13 @@ import {
   ChevronDown,
   ChevronRight,
   Check,
+  ArrowLeftRight,
+  MessageSquare,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { BriefingDocModal } from '@/components/ops/BriefingDocModal'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { useIsFeedbackReviewer } from '@/lib/roles'
 
 interface OpsBoard {
   id: string
@@ -66,7 +74,9 @@ interface OpsBoardItem {
 
 type ViewMode = 'kanban' | 'table'
 
-const WORKFLOW_LANES: KanbanLane[] = ['upcoming', 'ready_for_figma', 'imported', 'exported']
+const SYNC_WORKFLOW_LANES: KanbanLane[] = ['upcoming', 'ready_for_figma', 'imported', 'exported']
+
+const RELEVANT_PARTNERS = ['Studio', 'Content Creation']
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -81,11 +91,25 @@ function batchLabel(key: string): string {
 
 export default function BoardDetailPage() {
   const { boardId } = useParams<{ boardId: string }>()
+  const isFeedbackReviewer = useIsFeedbackReviewer()
+
   const [board, setBoard] = useState<OpsBoard | null>(null)
   const [items, setItems] = useState<OpsBoardItem[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('kanban')
+
+  const modeStorageKey = `heimdall:ops:board-mode:${boardId}`
+  const [boardMode, _setBoardMode] = useState<BoardMode>(() => {
+    if (typeof window === 'undefined') return 'sync'
+    const stored = localStorage.getItem(modeStorageKey)
+    return stored === 'feedback' ? 'feedback' : 'sync'
+  })
+  const setBoardMode = useCallback((m: BoardMode) => {
+    _setBoardMode(m)
+    try { localStorage.setItem(modeStorageKey, m) } catch {}
+  }, [modeStorageKey])
+
   const batchStorageKey = `heimdall:ops:last-batch:${boardId}`
   const [filterBatch, _setFilterBatch] = useState<string | 'all'>(() => {
     if (typeof window === 'undefined') return 'all'
@@ -120,15 +144,19 @@ export default function BoardDetailPage() {
     return () => clearInterval(t)
   }, [fetchData])
 
-  const RELEVANT_PARTNERS = ['Studio', 'Content Creation']
-
   useEffect(() => {
     if (filtersInitialized || !board || items.length === 0) return
 
-    const defaults = board.default_creative_partners?.length
-      ? board.default_creative_partners
-      : RELEVANT_PARTNERS
-    setFilterPartners(new Set(defaults))
+    if (boardMode === 'feedback') {
+      const agencies = [...new Set(items.map(i => i.creative_partner).filter(Boolean))] as string[]
+      const external = agencies.filter(cp => !RELEVANT_PARTNERS.includes(cp))
+      setFilterPartners(new Set(external.length > 0 ? external : agencies))
+    } else {
+      const defaults = board.default_creative_partners?.length
+        ? board.default_creative_partners
+        : RELEVANT_PARTNERS
+      setFilterPartners(new Set(defaults))
+    }
 
     const batchValues = [...new Set(items.map(i => i.batch_canonical).filter(Boolean))] as string[]
     if (batchValues.length > 0) {
@@ -140,7 +168,7 @@ export default function BoardDetailPage() {
     }
 
     setFiltersInitialized(true)
-  }, [board, items, filtersInitialized])
+  }, [board, items, filtersInitialized, boardMode])
 
   const handleSync = async () => {
     setSyncing(true)
@@ -203,10 +231,35 @@ export default function BoardDetailPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {/* Mode toggle */}
+            {isFeedbackReviewer && (
+              <div className="flex rounded-md border border-input overflow-hidden mr-1">
+                <button
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors',
+                    boardMode === 'sync' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'
+                  )}
+                  onClick={() => setBoardMode('sync')}
+                >
+                  <ArrowLeftRight className="h-3 w-3" />
+                  Briefing Sync
+                </button>
+                <button
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-l border-input',
+                    boardMode === 'feedback' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent text-muted-foreground'
+                  )}
+                  onClick={() => setBoardMode('feedback')}
+                >
+                  <MessageSquare className="h-3 w-3" />
+                  Feedback
+                </button>
+              </div>
+            )}
             <Button variant="outline" size="icon" onClick={handleSync} disabled={syncing}>
               <RefreshCw className={cn('h-4 w-4', syncing && 'animate-spin')} />
             </Button>
-            {readyForFigmaCount > 0 && (
+            {boardMode === 'sync' && readyForFigmaCount > 0 && (
               <Button size="sm" className="gap-1.5" onClick={handleQueueEligible}>
                 <Play className="h-3.5 w-3.5" />
                 Queue {readyForFigmaCount} Ready
@@ -216,8 +269,8 @@ export default function BoardDetailPage() {
         </div>
       </div>
 
-      {/* Progress bar */}
-      {board && (
+      {/* Progress bar (sync mode only) */}
+      {boardMode === 'sync' && board && (
         <PipelineProgress className="shrink-0"
           total={filteredItems.length}
           synced={filteredItems.filter(i => i.pipeline_status === 'synced').length}
@@ -244,83 +297,13 @@ export default function BoardDetailPage() {
               ))}
             </select>
           </div>
-          {/* Creative partner filter */}
-          {creativePartners.length > 0 && (() => {
-            const primaryPartners = creativePartners.filter(cp => RELEVANT_PARTNERS.includes(cp))
-            const agencyPartners = creativePartners.filter(cp => !RELEVANT_PARTNERS.includes(cp))
-            const activeAgencyCount = agencyPartners.filter(cp => filterPartners.has(cp)).length
-            return (
-              <div className="flex items-center gap-1.5">
-                <Users className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <div className="flex items-center gap-1">
-                  {primaryPartners.map(cp => {
-                    const active = filterPartners.has(cp)
-                    return (
-                      <button
-                        key={cp}
-                        onClick={() => setFilterPartners(prev => {
-                          const next = new Set(prev)
-                          if (next.has(cp)) next.delete(cp)
-                          else next.add(cp)
-                          return next
-                        })}
-                        className={cn(
-                          'h-6 rounded-md px-2 text-[11px] font-medium transition-colors border',
-                          active
-                            ? 'bg-primary/15 text-primary border-primary/30'
-                            : 'bg-transparent text-muted-foreground border-transparent hover:bg-muted/50'
-                        )}
-                      >
-                        {cp}
-                      </button>
-                    )
-                  })}
-                  {agencyPartners.length > 0 && (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <button
-                          className={cn(
-                            'h-6 rounded-md px-2 text-[11px] font-medium transition-colors border inline-flex items-center gap-1',
-                            activeAgencyCount > 0
-                              ? 'bg-primary/15 text-primary border-primary/30'
-                              : 'bg-transparent text-muted-foreground border-transparent hover:bg-muted/50'
-                          )}
-                        >
-                          Agencies{activeAgencyCount > 0 ? ` (${activeAgencyCount})` : ''}
-                          <ChevronDown className="h-3 w-3" />
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-44 p-1" align="end" sideOffset={4}>
-                        {agencyPartners.map(cp => {
-                          const active = filterPartners.has(cp)
-                          return (
-                            <button
-                              key={cp}
-                              onClick={() => setFilterPartners(prev => {
-                                const next = new Set(prev)
-                                if (next.has(cp)) next.delete(cp)
-                                else next.add(cp)
-                                return next
-                              })}
-                              className="flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-xs hover:bg-muted/50 transition-colors"
-                            >
-                              <div className={cn(
-                                'h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0',
-                                active ? 'bg-primary border-primary' : 'border-input'
-                              )}>
-                                {active && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
-                              </div>
-                              <span className={active ? 'text-foreground' : 'text-muted-foreground'}>{cp}</span>
-                            </button>
-                          )
-                        })}
-                      </PopoverContent>
-                    </Popover>
-                  )}
-                </div>
-              </div>
-            )
-          })()}
+          {/* Agency / partner filter — promoted to dropdown in feedback mode */}
+          <AgencyFilter
+            creativePartners={creativePartners}
+            filterPartners={filterPartners}
+            setFilterPartners={setFilterPartners}
+            boardMode={boardMode}
+          />
           {filterBatch !== 'all' && (
             <button
               className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2"
@@ -349,16 +332,24 @@ export default function BoardDetailPage() {
 
       {/* Content */}
       <div className="flex-1 min-h-0">
-        {viewMode === 'kanban' ? (
-          <KanbanView
-            items={filteredItems}
-            showOther={showOtherLane}
-            onToggleOther={() => setShowOtherLane(!showOtherLane)}
-            onQueueReady={handleQueueEligible}
-            onItemClick={setSelectedItem}
-          />
+        {boardMode === 'sync' ? (
+          viewMode === 'kanban' ? (
+            <SyncKanbanView
+              items={filteredItems}
+              showOther={showOtherLane}
+              onToggleOther={() => setShowOtherLane(!showOtherLane)}
+              onQueueReady={handleQueueEligible}
+              onItemClick={setSelectedItem}
+            />
+          ) : (
+            <SyncTableView items={filteredItems} onItemClick={setSelectedItem} />
+          )
         ) : (
-          <TableView items={filteredItems} onItemClick={setSelectedItem} />
+          viewMode === 'kanban' ? (
+            <FeedbackKanbanView items={filteredItems} onItemClick={setSelectedItem} showOther={showOtherLane} onToggleOther={() => setShowOtherLane(!showOtherLane)} />
+          ) : (
+            <FeedbackTableView items={filteredItems} onItemClick={setSelectedItem} />
+          )
         )}
       </div>
 
@@ -373,117 +364,121 @@ export default function BoardDetailPage() {
   )
 }
 
-// ── Kanban ──────────────────────────────────────────────────────────────────
+// ── Agency Filter ───────────────────────────────────────────────────────────
 
-const LANE_PAGE_SIZE = 15
-
-function KanbanLaneColumn({
-  lane,
-  items,
-  onItemClick,
-  headerAction,
+function AgencyFilter({
+  creativePartners,
+  filterPartners,
+  setFilterPartners,
+  boardMode,
 }: {
-  lane: KanbanLane
-  items: OpsBoardItem[]
-  onItemClick: (item: OpsBoardItem) => void
-  headerAction?: React.ReactNode
+  creativePartners: string[]
+  filterPartners: Set<string>
+  setFilterPartners: React.Dispatch<React.SetStateAction<Set<string>>>
+  boardMode: BoardMode
 }) {
-  const [visibleCount, setVisibleCount] = useState(LANE_PAGE_SIZE)
-  const visible = items.slice(0, visibleCount)
-  const remaining = items.length - visibleCount
+  if (creativePartners.length === 0) return null
+
+  const toggle = (cp: string) => setFilterPartners(prev => {
+    const next = new Set(prev)
+    if (next.has(cp)) next.delete(cp)
+    else next.add(cp)
+    return next
+  })
+
+  if (boardMode === 'feedback') {
+    return (
+      <div className="flex items-center gap-1.5">
+        <Users className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <select
+          className="h-7 rounded-md border border-input bg-background px-2 text-xs min-w-[140px]"
+          value={filterPartners.size === creativePartners.length || filterPartners.size === 0 ? '__all__' : [...filterPartners][0] ?? '__all__'}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === '__all__') {
+              setFilterPartners(new Set(creativePartners))
+            } else {
+              setFilterPartners(new Set([v]))
+            }
+          }}
+        >
+          <option value="__all__">All agencies ({creativePartners.length})</option>
+          {creativePartners.map(cp => (
+            <option key={cp} value={cp}>{cp}</option>
+          ))}
+        </select>
+      </div>
+    )
+  }
+
+  const primaryPartners = creativePartners.filter(cp => RELEVANT_PARTNERS.includes(cp))
+  const agencyPartners = creativePartners.filter(cp => !RELEVANT_PARTNERS.includes(cp))
+  const activeAgencyCount = agencyPartners.filter(cp => filterPartners.has(cp)).length
 
   return (
-    <div className="flex flex-col min-h-0">
-      <div className="flex items-center justify-between px-1 shrink-0 mb-2">
-        <LanePill lane={lane} count={items.length} />
-        {headerAction}
-      </div>
-      <div className="flex-1 min-h-[120px] overflow-y-auto scrollbar-subtle rounded-lg bg-muted/40 p-2 space-y-2 max-h-[calc(100vh-280px)]">
-        {items.length === 0 ? (
-          <p className="py-6 text-center text-[11px] text-muted-foreground/50">Empty</p>
-        ) : (
-          <>
-            {visible.map(item => (
-              <KanbanCard key={item.id} item={item} onClick={() => onItemClick(item)} />
-            ))}
-            {remaining > 0 && (
+    <div className="flex items-center gap-1.5">
+      <Users className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+      <div className="flex items-center gap-1">
+        {primaryPartners.map(cp => {
+          const active = filterPartners.has(cp)
+          return (
+            <button
+              key={cp}
+              onClick={() => toggle(cp)}
+              className={cn(
+                'h-6 rounded-md px-2 text-[11px] font-medium transition-colors border',
+                active
+                  ? 'bg-primary/15 text-primary border-primary/30'
+                  : 'bg-transparent text-muted-foreground border-transparent hover:bg-muted/50'
+              )}
+            >
+              {cp}
+            </button>
+          )
+        })}
+        {agencyPartners.length > 0 && (
+          <Popover>
+            <PopoverTrigger asChild>
               <button
-                className="w-full rounded-md border border-dashed border-border py-2 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
-                onClick={() => setVisibleCount(c => c + LANE_PAGE_SIZE)}
+                className={cn(
+                  'h-6 rounded-md px-2 text-[11px] font-medium transition-colors border inline-flex items-center gap-1',
+                  activeAgencyCount > 0
+                    ? 'bg-primary/15 text-primary border-primary/30'
+                    : 'bg-transparent text-muted-foreground border-transparent hover:bg-muted/50'
+                )}
               >
-                Load more ({remaining} remaining)
+                Agencies{activeAgencyCount > 0 ? ` (${activeAgencyCount})` : ''}
+                <ChevronDown className="h-3 w-3" />
               </button>
-            )}
-          </>
+            </PopoverTrigger>
+            <PopoverContent className="w-44 p-1" align="end" sideOffset={4}>
+              {agencyPartners.map(cp => {
+                const active = filterPartners.has(cp)
+                return (
+                  <button
+                    key={cp}
+                    onClick={() => toggle(cp)}
+                    className="flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-xs hover:bg-muted/50 transition-colors"
+                  >
+                    <div className={cn(
+                      'h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0',
+                      active ? 'bg-primary border-primary' : 'border-input'
+                    )}>
+                      {active && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                    </div>
+                    <span className={active ? 'text-foreground' : 'text-muted-foreground'}>{cp}</span>
+                  </button>
+                )
+              })}
+            </PopoverContent>
+          </Popover>
         )}
       </div>
     </div>
   )
 }
 
-function KanbanView({
-  items,
-  showOther,
-  onToggleOther,
-  onQueueReady,
-  onItemClick,
-}: {
-  items: OpsBoardItem[]
-  showOther: boolean
-  onToggleOther: () => void
-  onQueueReady: () => void
-  onItemClick: (item: OpsBoardItem) => void
-}) {
-  const laneItems = useMemo(() => {
-    const map: Record<KanbanLane, OpsBoardItem[]> = {
-      upcoming: [], ready_for_figma: [], imported: [], exported: [], other: [],
-    }
-    for (const item of items) {
-      const lane = getKanbanLane(item.monday_status, item.pipeline_status)
-      map[lane].push(item)
-    }
-    return map
-  }, [items])
-
-  return (
-    <div className="flex flex-col gap-4 flex-1 min-h-0">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 items-start flex-1 min-h-0">
-        {WORKFLOW_LANES.map(lane => (
-          <KanbanLaneColumn
-            key={lane}
-            lane={lane}
-            items={laneItems[lane]}
-            onItemClick={onItemClick}
-            headerAction={
-              lane === 'ready_for_figma' && laneItems[lane].length > 0 ? (
-                <Button variant="ghost" size="sm" className="h-6 gap-1 text-[10px] px-1.5" onClick={onQueueReady}>
-                  <Play className="h-2.5 w-2.5" /> Queue All
-                </Button>
-              ) : undefined
-            }
-          />
-        ))}
-      </div>
-
-      {laneItems.other.length > 0 && (
-        <div className="space-y-2 shrink-0">
-          <button
-            className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground hover:text-foreground"
-            onClick={onToggleOther}
-          >
-            {showOther ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            Other statuses ({laneItems.other.length})
-          </button>
-          {showOther && (
-            <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-              {laneItems.other.map(item => <KanbanCard key={item.id} item={item} onClick={() => onItemClick(item)} />)}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
+// ── Shared card ─────────────────────────────────────────────────────────────
 
 function KanbanCard({ item, onClick }: { item: OpsBoardItem; onClick?: () => void }) {
   return (
@@ -548,9 +543,219 @@ function KanbanCard({ item, onClick }: { item: OpsBoardItem; onClick?: () => voi
   )
 }
 
-// ── Table ───────────────────────────────────────────────────────────────────
+// ── Sync Kanban ─────────────────────────────────────────────────────────────
 
-function TableView({ items, onItemClick }: { items: OpsBoardItem[]; onItemClick: (item: OpsBoardItem) => void }) {
+const LANE_PAGE_SIZE = 15
+
+function SyncLaneColumn({
+  lane,
+  items,
+  onItemClick,
+  headerAction,
+}: {
+  lane: KanbanLane
+  items: OpsBoardItem[]
+  onItemClick: (item: OpsBoardItem) => void
+  headerAction?: React.ReactNode
+}) {
+  const [visibleCount, setVisibleCount] = useState(LANE_PAGE_SIZE)
+  const visible = items.slice(0, visibleCount)
+  const remaining = items.length - visibleCount
+
+  return (
+    <div className="flex flex-col min-h-0">
+      <div className="flex items-center justify-between px-1 shrink-0 mb-2">
+        <LanePill lane={lane} count={items.length} />
+        {headerAction}
+      </div>
+      <div className="flex-1 min-h-[120px] overflow-y-auto scrollbar-subtle rounded-lg bg-muted/40 p-2 space-y-2 max-h-[calc(100vh-280px)]">
+        {items.length === 0 ? (
+          <p className="py-6 text-center text-[11px] text-muted-foreground/50">Empty</p>
+        ) : (
+          <>
+            {visible.map(item => (
+              <KanbanCard key={item.id} item={item} onClick={() => onItemClick(item)} />
+            ))}
+            {remaining > 0 && (
+              <button
+                className="w-full rounded-md border border-dashed border-border py-2 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                onClick={() => setVisibleCount(c => c + LANE_PAGE_SIZE)}
+              >
+                Load more ({remaining} remaining)
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SyncKanbanView({
+  items,
+  showOther,
+  onToggleOther,
+  onQueueReady,
+  onItemClick,
+}: {
+  items: OpsBoardItem[]
+  showOther: boolean
+  onToggleOther: () => void
+  onQueueReady: () => void
+  onItemClick: (item: OpsBoardItem) => void
+}) {
+  const laneItems = useMemo(() => {
+    const map: Record<KanbanLane, OpsBoardItem[]> = {
+      upcoming: [], ready_for_figma: [], imported: [], exported: [], other: [],
+    }
+    for (const item of items) {
+      const lane = getKanbanLane(item.monday_status, item.pipeline_status)
+      map[lane].push(item)
+    }
+    return map
+  }, [items])
+
+  return (
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 items-start flex-1 min-h-0">
+        {SYNC_WORKFLOW_LANES.map(lane => (
+          <SyncLaneColumn
+            key={lane}
+            lane={lane}
+            items={laneItems[lane]}
+            onItemClick={onItemClick}
+            headerAction={
+              lane === 'ready_for_figma' && laneItems[lane].length > 0 ? (
+                <Button variant="ghost" size="sm" className="h-6 gap-1 text-[10px] px-1.5" onClick={onQueueReady}>
+                  <Play className="h-2.5 w-2.5" /> Queue All
+                </Button>
+              ) : undefined
+            }
+          />
+        ))}
+      </div>
+
+      {laneItems.other.length > 0 && (
+        <div className="space-y-2 shrink-0">
+          <button
+            className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground hover:text-foreground"
+            onClick={onToggleOther}
+          >
+            {showOther ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            Other statuses ({laneItems.other.length})
+          </button>
+          {showOther && (
+            <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+              {laneItems.other.map(item => <KanbanCard key={item.id} item={item} onClick={() => onItemClick(item)} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Feedback Kanban ─────────────────────────────────────────────────────────
+
+function FeedbackLaneColumn({
+  lane,
+  items,
+  onItemClick,
+}: {
+  lane: FeedbackLane
+  items: OpsBoardItem[]
+  onItemClick: (item: OpsBoardItem) => void
+}) {
+  const [visibleCount, setVisibleCount] = useState(LANE_PAGE_SIZE)
+  const visible = items.slice(0, visibleCount)
+  const remaining = items.length - visibleCount
+
+  return (
+    <div className="flex flex-col min-h-0">
+      <div className="flex items-center justify-between px-1 shrink-0 mb-2">
+        <FeedbackLanePill lane={lane} count={items.length} />
+      </div>
+      <div className="flex-1 min-h-[120px] overflow-y-auto scrollbar-subtle rounded-lg bg-muted/40 p-2 space-y-2 max-h-[calc(100vh-280px)]">
+        {items.length === 0 ? (
+          <p className="py-6 text-center text-[11px] text-muted-foreground/50">Empty</p>
+        ) : (
+          <>
+            {visible.map(item => (
+              <KanbanCard key={item.id} item={item} onClick={() => onItemClick(item)} />
+            ))}
+            {remaining > 0 && (
+              <button
+                className="w-full rounded-md border border-dashed border-border py-2 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                onClick={() => setVisibleCount(c => c + LANE_PAGE_SIZE)}
+              >
+                Load more ({remaining} remaining)
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FeedbackKanbanView({
+  items,
+  onItemClick,
+  showOther,
+  onToggleOther,
+}: {
+  items: OpsBoardItem[]
+  onItemClick: (item: OpsBoardItem) => void
+  showOther: boolean
+  onToggleOther: () => void
+}) {
+  const laneItems = useMemo(() => {
+    const map: Record<FeedbackLane, OpsBoardItem[]> = {
+      ready_for_review: [], feedback_given: [], other: [],
+    }
+    for (const item of items) {
+      const lane = getFeedbackLane(item.monday_status)
+      map[lane].push(item)
+    }
+    return map
+  }, [items])
+
+  return (
+    <div className="flex flex-col gap-4 flex-1 min-h-0">
+      <div className="grid grid-cols-2 gap-3 items-start flex-1 min-h-0">
+        {FEEDBACK_WORKFLOW_LANES.map(lane => (
+          <FeedbackLaneColumn
+            key={lane}
+            lane={lane}
+            items={laneItems[lane]}
+            onItemClick={onItemClick}
+          />
+        ))}
+      </div>
+
+      {laneItems.other.length > 0 && (
+        <div className="space-y-2 shrink-0">
+          <button
+            className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground hover:text-foreground"
+            onClick={onToggleOther}
+          >
+            {showOther ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            Other statuses ({laneItems.other.length})
+          </button>
+          {showOther && (
+            <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+              {laneItems.other.map(item => <KanbanCard key={item.id} item={item} onClick={() => onItemClick(item)} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Sync Table ──────────────────────────────────────────────────────────────
+
+function SyncTableView({ items, onItemClick }: { items: OpsBoardItem[]; onItemClick: (item: OpsBoardItem) => void }) {
   const [sortKey, setSortKey] = useState<'name' | 'batch' | 'status' | 'updated'>('updated')
   const [sortAsc, setSortAsc] = useState(false)
 
@@ -655,6 +860,102 @@ function TableView({ items, onItemClick }: { items: OpsBoardItem[]; onItemClick:
                       </a>
                     )}
                   </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {sorted.length === 0 && (
+          <p className="py-8 text-center text-sm text-muted-foreground">No items match filters.</p>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+// ── Feedback Table ──────────────────────────────────────────────────────────
+
+function FeedbackTableView({ items, onItemClick }: { items: OpsBoardItem[]; onItemClick: (item: OpsBoardItem) => void }) {
+  const [sortKey, setSortKey] = useState<'name' | 'batch' | 'status' | 'updated'>('updated')
+  const [sortAsc, setSortAsc] = useState(false)
+
+  const sorted = [...items].sort((a, b) => {
+    const dir = sortAsc ? 1 : -1
+    switch (sortKey) {
+      case 'name':
+        return dir * (a.item_name ?? '').localeCompare(b.item_name ?? '')
+      case 'batch':
+        return dir * (a.batch_canonical ?? '').localeCompare(b.batch_canonical ?? '')
+      case 'status': {
+        const laneA = getFeedbackLane(a.monday_status)
+        const laneB = getFeedbackLane(b.monday_status)
+        return dir * laneA.localeCompare(laneB)
+      }
+      case 'updated':
+        return dir * (new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime())
+      default:
+        return 0
+    }
+  })
+
+  const toggleSort = (key: typeof sortKey) => {
+    if (sortKey === key) setSortAsc(!sortAsc)
+    else { setSortKey(key); setSortAsc(true) }
+  }
+
+  const SortHeader = ({ label, field }: { label: string; field: typeof sortKey }) => (
+    <th
+      className="text-left text-xs font-medium text-muted-foreground px-3 py-2 cursor-pointer hover:text-foreground select-none"
+      onClick={() => toggleSort(field)}
+    >
+      {label} {sortKey === field && (sortAsc ? '↑' : '↓')}
+    </th>
+  )
+
+  return (
+    <Card>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="border-b border-border">
+            <tr>
+              <SortHeader label="Name" field="name" />
+              <SortHeader label="Batch" field="batch" />
+              <th className="text-left text-xs font-medium text-muted-foreground px-3 py-2">Agency</th>
+              <SortHeader label="Review Status" field="status" />
+              <SortHeader label="Updated" field="updated" />
+              <th className="text-left text-xs font-medium text-muted-foreground px-3 py-2">Links</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {sorted.map(item => (
+              <tr key={item.id} className="hover:bg-muted/30 transition-colors cursor-pointer" onClick={() => onItemClick(item)}>
+                <td className="px-3 py-2.5 max-w-[280px]">
+                  <p className="truncate font-medium" title={item.item_name}>
+                    {item.experiment_name ?? item.item_name}
+                  </p>
+                </td>
+                <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                  {item.batch_canonical ?? '—'}
+                </td>
+                <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                  {item.creative_partner ?? '—'}
+                </td>
+                <td className="px-3 py-2.5">
+                  <FeedbackLanePill lane={getFeedbackLane(item.monday_status)} />
+                </td>
+                <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
+                  {new Date(item.updated_at).toLocaleDateString()}
+                </td>
+                <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                  <a
+                    href={`https://loopearplugs.monday.com/boards/${item.monday_board_id}/pulses/${item.monday_item_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-muted-foreground hover:text-foreground"
+                    title="Open in Monday"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
                 </td>
               </tr>
             ))}

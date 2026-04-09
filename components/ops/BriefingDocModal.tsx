@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -9,13 +9,49 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
-import { ExternalLink, FileText, Loader2, AlertCircle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { ExternalLink, FileText, Loader2, AlertCircle, Sparkles, Send, CheckCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
+
+// ── Types ───────────────────────────────────────────────────────────────────
 
 interface DocSection {
   heading: string
   body: string
 }
+
+interface DocResponse {
+  item_name: string
+  doc_id: string | null
+  doc_content: string | null
+  columns: Record<string, string>
+}
+
+interface FeedbackDocResponse {
+  item_name: string
+  feedback_doc_id: string | null
+  feedback_doc_content: string | null
+  parsed_feedback: Record<string, Record<string, string>>
+  review: {
+    generated_summary: string | null
+    contradiction_note: string | null
+    summary_draft: string | null
+    synced_to_monday: boolean
+    synced_at: string | null
+  } | null
+}
+
+interface BriefingDocModalProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  mondayItemId: string | null
+  mondayBoardId: string | null
+  itemName?: string
+}
+
+type Tab = 'briefing' | 'feedback'
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 function parseDocSections(markdown: string): DocSection[] {
   const lines = markdown.split('\n')
@@ -107,20 +143,7 @@ function renderBody(text: string) {
   )
 }
 
-interface BriefingDocModalProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  mondayItemId: string | null
-  mondayBoardId: string | null
-  itemName?: string
-}
-
-interface DocResponse {
-  item_name: string
-  doc_id: string | null
-  doc_content: string | null
-  columns: Record<string, string>
-}
+// ── Modal ───────────────────────────────────────────────────────────────────
 
 export function BriefingDocModal({
   open,
@@ -129,45 +152,156 @@ export function BriefingDocModal({
   mondayBoardId,
   itemName,
 }: BriefingDocModalProps) {
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [data, setData] = useState<DocResponse | null>(null)
+  const [activeTab, setActiveTab] = useState<Tab>('briefing')
 
-  const fetchDoc = useCallback(async () => {
+  // Briefing tab state
+  const [briefLoading, setBriefLoading] = useState(false)
+  const [briefError, setBriefError] = useState<string | null>(null)
+  const [briefData, setBriefData] = useState<DocResponse | null>(null)
+
+  // Feedback tab state
+  const [fbLoading, setFbLoading] = useState(false)
+  const [fbError, setFbError] = useState<string | null>(null)
+  const [fbData, setFbData] = useState<FeedbackDocResponse | null>(null)
+  const [summaryDraft, setSummaryDraft] = useState('')
+  const [summarizing, setSummarizing] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncDone, setSyncDone] = useState(false)
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Fetch briefing doc
+  const fetchBriefing = useCallback(async () => {
     if (!mondayItemId) return
-    setLoading(true)
-    setError(null)
-    setData(null)
+    setBriefLoading(true)
+    setBriefError(null)
+    setBriefData(null)
     try {
       const params = new URLSearchParams({ item_id: mondayItemId })
       if (mondayBoardId) params.set('board_id', mondayBoardId)
       const res = await fetch(`/api/ops/monday-doc?${params}`)
       const json = await res.json()
       if (!res.ok) {
-        setError(json.error ?? `Failed (${res.status})`)
+        setBriefError(json.error ?? `Failed (${res.status})`)
         return
       }
-      setData(json)
+      setBriefData(json)
     } catch {
-      setError('Network error — could not reach server')
+      setBriefError('Network error — could not reach server')
     } finally {
-      setLoading(false)
+      setBriefLoading(false)
+    }
+  }, [mondayItemId, mondayBoardId])
+
+  // Fetch feedback doc
+  const fetchFeedback = useCallback(async () => {
+    if (!mondayItemId) return
+    setFbLoading(true)
+    setFbError(null)
+    try {
+      const params = new URLSearchParams({ item_id: mondayItemId })
+      if (mondayBoardId) params.set('board_id', mondayBoardId)
+      const res = await fetch(`/api/ops/feedback-doc?${params}`)
+      const json = await res.json()
+      if (!res.ok) {
+        setFbError(json.error ?? `Failed (${res.status})`)
+        return
+      }
+      setFbData(json)
+      const draft = json.review?.summary_draft ?? json.review?.generated_summary ?? ''
+      setSummaryDraft(draft)
+      setSyncDone(json.review?.synced_to_monday ?? false)
+    } catch {
+      setFbError('Network error — could not reach server')
+    } finally {
+      setFbLoading(false)
     }
   }, [mondayItemId, mondayBoardId])
 
   useEffect(() => {
-    if (open && mondayItemId) fetchDoc()
-  }, [open, mondayItemId, fetchDoc])
+    if (open && mondayItemId) {
+      fetchBriefing()
+      fetchFeedback()
+      setActiveTab('briefing')
+      setSyncDone(false)
+    }
+  }, [open, mondayItemId, fetchBriefing, fetchFeedback])
 
-  const sections = data?.doc_content ? parseDocSections(data.doc_content) : []
+  // Autosave draft on blur/close
+  const saveDraft = useCallback(async (draft: string) => {
+    if (!mondayItemId || !mondayBoardId) return
+    await fetch('/api/ops/feedback-draft', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item_id: mondayItemId, board_id: mondayBoardId, draft }),
+    }).catch(() => {})
+  }, [mondayItemId, mondayBoardId])
+
+  const handleDraftChange = (value: string) => {
+    setSummaryDraft(value)
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current)
+    draftTimerRef.current = setTimeout(() => saveDraft(value), 1500)
+  }
+
+  const handleClose = (nextOpen: boolean) => {
+    if (!nextOpen && summaryDraft) {
+      saveDraft(summaryDraft)
+    }
+    onOpenChange(nextOpen)
+  }
+
+  // Generate summary
+  const handleGenerateSummary = async () => {
+    if (!mondayItemId || !mondayBoardId) return
+    setSummarizing(true)
+    try {
+      const res = await fetch('/api/ops/feedback-summarize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id: mondayItemId, board_id: mondayBoardId }),
+      })
+      const json = await res.json()
+      if (res.ok && json.summary) {
+        setSummaryDraft(json.summary)
+        if (json.contradiction_note) {
+          setFbData(prev => prev ? { ...prev, review: { ...prev.review!, contradiction_note: json.contradiction_note } } : prev)
+        }
+      }
+    } finally {
+      setSummarizing(false)
+    }
+  }
+
+  // Sync to Monday
+  const handleSyncToMonday = async () => {
+    if (!mondayItemId || !mondayBoardId) return
+    setSyncing(true)
+    try {
+      const res = await fetch('/api/ops/feedback-sync-monday', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          item_id: mondayItemId,
+          board_id: mondayBoardId,
+          summary: summaryDraft,
+        }),
+      })
+      if (res.ok) {
+        setSyncDone(true)
+      }
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const sections = briefData?.doc_content ? parseDocSections(briefData.doc_content) : []
   const mondayUrl =
     mondayBoardId && mondayItemId
       ? `https://loopearplugs.monday.com/boards/${mondayBoardId}/pulses/${mondayItemId}`
       : null
 
   const metaBadges: { label: string; value: string }[] = []
-  if (data?.columns) {
-    const c = data.columns
+  if (briefData?.columns) {
+    const c = briefData.columns
     if (c.batch || c.batch_canonical) metaBadges.push({ label: 'Batch', value: c.batch ?? c.batch_canonical ?? '' })
     if (c.section || c.section_name) metaBadges.push({ label: 'Section', value: c.section ?? c.section_name ?? '' })
     if (c.status) metaBadges.push({ label: 'Status', value: c.status })
@@ -176,20 +310,22 @@ export function BriefingDocModal({
     }
   }
 
+  const feedbackSections = fbData?.feedback_doc_content ? parseDocSections(fbData.feedback_doc_content) : []
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
         <DialogHeader className="flex-shrink-0 px-6 pt-5 pb-3 border-b border-border/50">
           <div className="flex items-start justify-between gap-3 pr-6">
             <div className="min-w-0 flex-1">
               <DialogTitle className="text-base font-semibold leading-snug truncate">
-                {data?.item_name ?? itemName ?? 'Briefing'}
+                {briefData?.item_name ?? itemName ?? 'Briefing'}
               </DialogTitle>
               <DialogDescription className="mt-1 flex items-center gap-2 text-xs">
                 <FileText className="h-3 w-3 flex-shrink-0" />
                 Monday Doc preview
-                {data?.doc_id && (
-                  <span className="text-muted-foreground/60">#{data.doc_id}</span>
+                {briefData?.doc_id && (
+                  <span className="text-muted-foreground/60">#{briefData.doc_id}</span>
                 )}
               </DialogDescription>
             </div>
@@ -219,63 +355,303 @@ export function BriefingDocModal({
               ))}
             </div>
           )}
+
+          {/* Tabs */}
+          <div className="flex gap-0 mt-3 -mb-3 border-b-0">
+            <button
+              className={cn(
+                'px-4 py-2 text-xs font-medium border-b-2 transition-colors',
+                activeTab === 'briefing'
+                  ? 'border-primary text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              )}
+              onClick={() => setActiveTab('briefing')}
+            >
+              Briefing
+            </button>
+            <button
+              className={cn(
+                'px-4 py-2 text-xs font-medium border-b-2 transition-colors',
+                activeTab === 'feedback'
+                  ? 'border-primary text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              )}
+              onClick={() => setActiveTab('feedback')}
+            >
+              Feedback
+            </button>
+          </div>
         </DialogHeader>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
-          {loading && (
-            <div className="flex flex-col items-center justify-center py-16 gap-3">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">Fetching briefing from Monday...</p>
-            </div>
+          {activeTab === 'briefing' && (
+            <BriefingTab
+              loading={briefLoading}
+              error={briefError}
+              data={briefData}
+              sections={sections}
+            />
           )}
-
-          {error && (
-            <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
-              <AlertCircle className="h-5 w-5 text-destructive/70" />
-              <p className="text-sm text-destructive">{error}</p>
-            </div>
-          )}
-
-          {!loading && !error && data && !data.doc_content && (
-            <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
-              <FileText className="h-8 w-8 text-muted-foreground/30" />
-              <div>
-                <p className="text-sm text-muted-foreground">No briefing doc found</p>
-                <p className="text-xs text-muted-foreground/60 mt-1">
-                  This item may not have a briefing document attached yet.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {!loading && !error && sections.length > 0 && (
-            <div className="space-y-4">
-              {sections.map((section, i) => (
-                <div
-                  key={i}
-                  className={cn(
-                    'rounded-lg border border-border/50 bg-card',
-                    section.heading && 'overflow-hidden'
-                  )}
-                >
-                  {section.heading && (
-                    <div className="px-3 py-2 bg-muted/30 border-b border-border/40">
-                      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        {section.heading}
-                      </h3>
-                    </div>
-                  )}
-                  {section.body && (
-                    <div className="px-3 py-2.5">
-                      {renderBody(section.body)}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+          {activeTab === 'feedback' && (
+            <FeedbackTab
+              loading={fbLoading}
+              error={fbError}
+              data={fbData}
+              feedbackSections={feedbackSections}
+              summaryDraft={summaryDraft}
+              onDraftChange={handleDraftChange}
+              summarizing={summarizing}
+              onGenerateSummary={handleGenerateSummary}
+              syncing={syncing}
+              syncDone={syncDone}
+              onSyncToMonday={handleSyncToMonday}
+            />
           )}
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// ── Briefing Tab ────────────────────────────────────────────────────────────
+
+function BriefingTab({
+  loading,
+  error,
+  data,
+  sections,
+}: {
+  loading: boolean
+  error: string | null
+  data: DocResponse | null
+  sections: DocSection[]
+}) {
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Fetching briefing from Monday...</p>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+        <AlertCircle className="h-5 w-5 text-destructive/70" />
+        <p className="text-sm text-destructive">{error}</p>
+      </div>
+    )
+  }
+
+  if (data && !data.doc_content) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+        <FileText className="h-8 w-8 text-muted-foreground/30" />
+        <div>
+          <p className="text-sm text-muted-foreground">No briefing doc found</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            This item may not have a briefing document attached yet.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (sections.length > 0) {
+    return (
+      <div className="space-y-4">
+        {sections.map((section, i) => (
+          <div
+            key={i}
+            className={cn(
+              'rounded-lg border border-border/50 bg-card',
+              section.heading && 'overflow-hidden'
+            )}
+          >
+            {section.heading && (
+              <div className="px-3 py-2 bg-muted/30 border-b border-border/40">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {section.heading}
+                </h3>
+              </div>
+            )}
+            {section.body && (
+              <div className="px-3 py-2.5">
+                {renderBody(section.body)}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return null
+}
+
+// ── Feedback Tab ────────────────────────────────────────────────────────────
+
+function FeedbackTab({
+  loading,
+  error,
+  data,
+  feedbackSections,
+  summaryDraft,
+  onDraftChange,
+  summarizing,
+  onGenerateSummary,
+  syncing,
+  syncDone,
+  onSyncToMonday,
+}: {
+  loading: boolean
+  error: string | null
+  data: FeedbackDocResponse | null
+  feedbackSections: DocSection[]
+  summaryDraft: string
+  onDraftChange: (value: string) => void
+  summarizing: boolean
+  onGenerateSummary: () => void
+  syncing: boolean
+  syncDone: boolean
+  onSyncToMonday: () => void
+}) {
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Fetching feedback from Monday...</p>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+        <AlertCircle className="h-5 w-5 text-destructive/70" />
+        <p className="text-sm text-destructive">{error}</p>
+      </div>
+    )
+  }
+
+  if (data && !data.feedback_doc_content) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+        <FileText className="h-8 w-8 text-muted-foreground/30" />
+        <div>
+          <p className="text-sm text-muted-foreground">No feedback doc found</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            This item may not have a feedback document attached yet.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  const contradictionNote = data?.review?.contradiction_note
+
+  return (
+    <div className="space-y-5">
+      {/* Feedback doc content */}
+      {feedbackSections.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Feedback Document
+          </h3>
+          {feedbackSections.map((section, i) => (
+            <div
+              key={i}
+              className={cn(
+                'rounded-lg border border-border/50 bg-card',
+                section.heading && 'overflow-hidden'
+              )}
+            >
+              {section.heading && (
+                <div className="px-3 py-2 bg-muted/30 border-b border-border/40">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {section.heading}
+                  </h3>
+                </div>
+              )}
+              {section.body && (
+                <div className="px-3 py-2.5">
+                  {renderBody(section.body)}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Summary section */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Summarized Feedback
+          </h3>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1.5"
+            onClick={onGenerateSummary}
+            disabled={summarizing}
+          >
+            {summarizing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" />
+            )}
+            {summaryDraft ? 'Regenerate' : 'Generate Summary'}
+          </Button>
+        </div>
+
+        {contradictionNote && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
+            <span className="font-medium">Note:</span> {contradictionNote}
+          </div>
+        )}
+
+        {summarizing ? (
+          <div className="flex items-center gap-3 py-6 justify-center">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">Generating summary with Claude...</p>
+          </div>
+        ) : (
+          <textarea
+            className="w-full rounded-lg border border-input bg-background px-3 py-2.5 text-[13px] leading-relaxed min-h-[120px] resize-y focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors"
+            placeholder="Summary will appear here after generation. You can edit it before syncing to Monday."
+            value={summaryDraft}
+            onChange={(e) => onDraftChange(e.target.value)}
+          />
+        )}
+      </div>
+
+      {/* Sync to Monday */}
+      <div className="pt-2 border-t border-border/50">
+        {syncDone ? (
+          <div className="flex items-center gap-2 justify-center py-3">
+            <CheckCircle className="h-5 w-5 text-emerald-500" />
+            <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+              Synced to Monday
+            </p>
+          </div>
+        ) : (
+          <Button
+            className="w-full gap-2"
+            size="lg"
+            onClick={onSyncToMonday}
+            disabled={syncing || !summaryDraft.trim()}
+          >
+            {syncing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+            Sync to Monday
+          </Button>
+        )}
+      </div>
+    </div>
   )
 }

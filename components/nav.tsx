@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { Network, Settings, Puzzle, MessageSquare, LayoutGrid, ScrollText, LogOut, TrendingUp, Kanban, Inbox, BookOpen } from 'lucide-react'
+import { Network, Settings, Puzzle, MessageSquare, LayoutGrid, ScrollText, LogOut, TrendingUp, Kanban, Inbox, BookOpen, ChevronRight, ChevronDown } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-auth'
 
 interface NavItem {
@@ -17,6 +17,7 @@ interface NavItem {
 interface NavSection {
   label: string
   items: NavItem[]
+  collapsed?: boolean
 }
 
 const sections: NavSection[] = [
@@ -30,7 +31,7 @@ const sections: NavSection[] = [
   {
     label: 'Operations',
     items: [
-      { name: 'Briefing Pipeline', href: '/ops', icon: Kanban },
+      { name: 'Briefing Workflow', href: '/ops', icon: Kanban },
     ],
   },
   {
@@ -38,10 +39,16 @@ const sections: NavSection[] = [
     items: [
       { name: 'Frontify Intake', href: '/admin/frontify-intake', icon: Inbox },
       { name: 'Heimdall Plugin', href: '/admin/plugin', icon: Puzzle },
-      { name: 'Feedback Summarizer', href: '/sheets', icon: MessageSquare },
       { name: 'Mimir', href: '/briefing-assistant', icon: LayoutGrid, external: true },
       { name: 'Loop Document Chat', href: '/document-chat', icon: BookOpen },
       { name: 'Forecast', href: '/forecast', icon: TrendingUp, external: true },
+    ],
+  },
+  {
+    label: 'Archive',
+    collapsed: true,
+    items: [
+      { name: 'Feedback Summarizer', href: '/sheets', icon: MessageSquare },
     ],
   },
   {
@@ -52,10 +59,24 @@ const sections: NavSection[] = [
   },
 ]
 
+const ARCHIVE_STORAGE_KEY = 'heimdall:nav-archive-open'
+
 function NavContent() {
   const pathname = usePathname()
   const router = useRouter()
   const [userEmail, setUserEmail] = useState<string | null>(null)
+  const [archiveOpen, setArchiveOpen] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem(ARCHIVE_STORAGE_KEY) === 'true'
+  })
+
+  const toggleArchive = () => {
+    setArchiveOpen(prev => {
+      const next = !prev
+      try { localStorage.setItem(ARCHIVE_STORAGE_KEY, String(next)) } catch {}
+      return next
+    })
+  }
 
   useEffect(() => {
     const supabase = createSupabaseBrowserClient()
@@ -80,39 +101,56 @@ function NavContent() {
         <p className="text-sm text-muted-foreground">Admin Panel</p>
       </div>
       <div className="space-y-6 flex-1">
-        {sections.map((section, sectionIdx) => (
-          <div key={section.label}>
-            {sectionIdx > 0 && <div className="mb-3 border-t border-border" />}
-            <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
-              {section.label}
-            </p>
-            <ul className="space-y-1">
-              {section.items.map((item) => {
-                const Icon = item.icon
-                const isActive = item.href === '/admin'
-                  ? pathname === '/admin'
-                  : pathname.startsWith(item.href.split('?')[0])
-                return (
-                  <li key={item.name}>
-                    <Link
-                      href={item.href}
-                      {...(item.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-                      className={cn(
-                        'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                        isActive
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                      )}
-                    >
-                      <Icon className="h-4 w-4" />
-                      {item.name}
-                    </Link>
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
-        ))}
+        {sections.map((section, sectionIdx) => {
+          const isArchive = section.collapsed
+          const isOpen = isArchive ? archiveOpen : true
+
+          return (
+            <div key={section.label}>
+              {sectionIdx > 0 && <div className="mb-3 border-t border-border" />}
+              {isArchive ? (
+                <button
+                  onClick={toggleArchive}
+                  className="mb-2 px-3 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60 hover:text-muted-foreground transition-colors w-full"
+                >
+                  {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                  {section.label}
+                </button>
+              ) : (
+                <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
+                  {section.label}
+                </p>
+              )}
+              {isOpen && (
+                <ul className="space-y-1">
+                  {section.items.map((item) => {
+                    const Icon = item.icon
+                    const isActive = item.href === '/admin'
+                      ? pathname === '/admin'
+                      : pathname.startsWith(item.href.split('?')[0])
+                    return (
+                      <li key={item.name}>
+                        <Link
+                          href={item.href}
+                          {...(item.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                          className={cn(
+                            'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                            isActive
+                              ? 'bg-primary text-primary-foreground'
+                              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                          )}
+                        >
+                          <Icon className="h-4 w-4" />
+                          {item.name}
+                        </Link>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          )
+        })}
       </div>
 
       {/* User footer */}

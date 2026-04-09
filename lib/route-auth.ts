@@ -21,6 +21,17 @@ export function isPrivilegedEmail(email: string | undefined): boolean {
   return PRIVILEGED_EMAIL_DOMAINS.includes(domain)
 }
 
+const FEEDBACK_REVIEWERS = (process.env.HEIMDALL_FEEDBACK_REVIEWERS || '')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean)
+
+export function isFeedbackReviewer(email: string | undefined): boolean {
+  if (!email) return false
+  if (FEEDBACK_REVIEWERS.length === 0) return isPrivilegedEmail(email)
+  return FEEDBACK_REVIEWERS.includes(email.toLowerCase())
+}
+
 /**
  * Require an authenticated Supabase user on a route handler.
  * Returns { user, supabase } on success, or a 401 NextResponse.
@@ -92,6 +103,26 @@ export async function requirePrivilegedUser(request: Request) {
     return {
       error: NextResponse.json(
         { error: 'Insufficient privileges' },
+        { status: 403 },
+      ),
+    }
+  }
+
+  return result
+}
+
+/**
+ * Require a user who is on the feedback-reviewer allowlist.
+ * Falls back to privileged-domain check when the allowlist env is empty.
+ */
+export async function requireFeedbackReviewer(request: Request) {
+  const result = await requireUser(request)
+  if (result.error) return result
+
+  if (!isFeedbackReviewer(result.user.email)) {
+    return {
+      error: NextResponse.json(
+        { error: 'Feedback reviewer access required' },
         { status: 403 },
       ),
     }

@@ -13,6 +13,10 @@ export type PipelineStatus =
 
 export type KanbanLane = 'upcoming' | 'ready_for_figma' | 'imported' | 'exported' | 'other'
 
+export type FeedbackLane = 'ready_for_review' | 'feedback_given' | 'other'
+
+export type BoardMode = 'sync' | 'feedback'
+
 const STATUS_CONFIG: Record<PipelineStatus, { label: string; bg: string; text: string; dot: string }> = {
   new:      { label: 'New',      bg: 'bg-[hsl(var(--status-new)/0.12)]',      text: 'text-[hsl(var(--status-new))]',      dot: 'bg-[hsl(var(--status-new))]' },
   eligible: { label: 'Eligible', bg: 'bg-[hsl(var(--status-eligible)/0.12)]', text: 'text-[hsl(var(--status-eligible))]', dot: 'bg-[hsl(var(--status-eligible))]' },
@@ -120,3 +124,46 @@ export function getKanbanLane(mondayStatus: string | null, pipelineStatus: Pipel
   if (status === 'exported to frontify') return 'exported'
   return 'other'
 }
+
+// ── Feedback mode ───────────────────────────────────────────────────────────
+
+const FEEDBACK_LANE_CONFIG: Record<FeedbackLane, { label: string; bg: string; text: string; dot: string }> = {
+  ready_for_review: { label: 'Ready for Review', bg: 'bg-[hsl(var(--status-eligible)/0.12)]', text: 'text-[hsl(var(--status-eligible))]', dot: 'bg-[hsl(var(--status-eligible))]' },
+  feedback_given:   { label: 'Feedback Given',   bg: 'bg-[hsl(var(--status-synced)/0.12)]',   text: 'text-[hsl(var(--status-synced))]',   dot: 'bg-[hsl(var(--status-synced))]' },
+  other:            { label: 'Other',             bg: 'bg-[hsl(var(--status-skipped)/0.12)]',  text: 'text-[hsl(var(--status-skipped))]',  dot: 'bg-[hsl(var(--status-skipped))]' },
+}
+
+export function FeedbackLanePill({
+  lane,
+  count,
+  className,
+}: {
+  lane: FeedbackLane
+  count?: number
+  className?: string
+}) {
+  const config = FEEDBACK_LANE_CONFIG[lane]
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium',
+        config.bg,
+        config.text,
+        className
+      )}
+    >
+      <span className={cn('h-1.5 w-1.5 rounded-full', config.dot)} />
+      {config.label}
+      {count !== undefined && <span className="opacity-70">{count}</span>}
+    </span>
+  )
+}
+
+export function getFeedbackLane(mondayStatus: string | null): FeedbackLane {
+  const status = (mondayStatus ?? '').toLowerCase().trim()
+  if (status === 'ready for review') return 'ready_for_review'
+  if (status === 'feedback') return 'feedback_given'
+  return 'other'
+}
+
+export const FEEDBACK_WORKFLOW_LANES: FeedbackLane[] = ['ready_for_review', 'feedback_given']

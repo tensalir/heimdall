@@ -108,6 +108,10 @@ const envSchema = z.object({
   HEIMDALL_ALLOWED_EMAIL_DOMAINS: z.string().optional(),
   /** Client-side mirror of HEIMDALL_ALLOWED_EMAIL_DOMAINS for sidebar gating. Non-secret. */
   NEXT_PUBLIC_HEIMDALL_ALLOWED_EMAIL_DOMAINS: z.string().optional(),
+  /** CSV of full email addresses allowed to use the ops feedback-review workflow. */
+  HEIMDALL_FEEDBACK_REVIEWERS: z.string().optional(),
+  /** Client-side mirror of HEIMDALL_FEEDBACK_REVIEWERS for UI gating. Non-secret. */
+  NEXT_PUBLIC_HEIMDALL_FEEDBACK_REVIEWERS: z.string().optional(),
   /** Monday briefing board ID for sprint integration. */
   MONDAY_BRIEFING_BOARD_ID: z.string().optional(),
   /** Monday briefing doc column ID. */
