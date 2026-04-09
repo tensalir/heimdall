@@ -5,7 +5,7 @@ import { requireUser } from '@/lib/route-auth'
 export const dynamic = 'force-dynamic'
 
 /**
- * GET /api/briefing-assistant/board-items?board_id=9147622374
+ * GET /api/briefing-assistant/board-items?board_id=18404406006
  * Returns items from a Monday board for the import picker.
  * Column values are keyed by title (e.g. batch, format, product, agency).
  */

@@ -5,7 +5,7 @@
 import 'dotenv/config'
 
 const MONDAY_API_URL = 'https://api.monday.com/v2'
-const BOARD_ID = '9147622374'
+const BOARD_ID = process.env.MONDAY_BOARD_ID ?? '18404406006'
 
 const EXPERIMENTS = [
   'EXP-JU38.LiveLouder-Experience-Experience',

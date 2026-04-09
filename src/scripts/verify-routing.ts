@@ -30,8 +30,8 @@ const briefing: BriefingDTO = {
   variants: [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }],
 }
 const key1 = buildIdempotencyKey('123', 'ts1')
-const r1 = await createOrQueueFigmaPage(briefing, { mondayBoardId: '9147622374', idempotencyKey: key1 })
+const r1 = await createOrQueueFigmaPage(briefing, { mondayBoardId: '18404406006', idempotencyKey: key1 })
 console.log('First call:', r1.outcome, r1.message)
-const r2 = await createOrQueueFigmaPage(briefing, { mondayBoardId: '9147622374', idempotencyKey: key1 })
+const r2 = await createOrQueueFigmaPage(briefing, { mondayBoardId: '18404406006', idempotencyKey: key1 })
 console.log('Second call (same key):', r2.outcome, r2.job?.state ?? '-', '(expected: skipped or queued with existing job)')
 console.log('\nDone.')

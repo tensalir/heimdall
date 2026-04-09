@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 
 export default function QueuePage() {
   const [itemId, setItemId] = useState('')
-  const [boardId, setBoardId] = useState('9147622374')
+  const [boardId, setBoardId] = useState('18404406006')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<{
     success: boolean
@@ -76,7 +76,7 @@ export default function QueuePage() {
               value={boardId}
               onChange={(e) => setBoardId(e.target.value)}
               className="w-full rounded-md border bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              placeholder="9147622374"
+              placeholder="18404406006"
             />
           </div>
 

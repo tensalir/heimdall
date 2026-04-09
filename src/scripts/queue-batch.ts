@@ -1,7 +1,7 @@
 /**
  * Queue all Monday items for a given batch (e.g. April 2026).
  * Run: npx tsx src/scripts/queue-batch.ts
- * Optional: BATCH=2026-04 BOARD=9147622374 npx tsx src/scripts/queue-batch.ts
+ * Optional: BATCH=2026-04 BOARD=18404406006 npx tsx src/scripts/queue-batch.ts
  */
 
 import 'dotenv/config'
@@ -10,7 +10,7 @@ import type { MondayBoardItemRow } from '../services/mondayBoardReader.js'
 import { parseBatchToCanonical } from '../domain/routing/batchToFile.js'
 import { queueMondayItem } from '../api/webhooks/monday.js'
 
-const BOARD_ID = process.env.MONDAY_BOARD_ID ?? process.env.BOARD ?? '9147622374'
+const BOARD_ID = process.env.MONDAY_BOARD_ID ?? process.env.BOARD ?? '18404406006'
 const BATCH_CANONICAL = process.env.BATCH ?? '2026-04'
 
 function getBatchRaw(item: MondayBoardItemRow): string | null {

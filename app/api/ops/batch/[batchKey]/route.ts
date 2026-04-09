@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
 import { getBoardByMondayId } from '@/src/services/opsBoardStore'
 
-const MONDAY_BOARD_ID = '9147622374'
+const MONDAY_BOARD_ID = process.env.MONDAY_BOARD_ID ?? '18404406006'
 
 export async function GET(
   _request: Request,

@@ -55,7 +55,7 @@ FRONTIFY_LIBRARY_ID=your_library_id
 1. Log in to the Heimdall admin (same auth as your app).
 2. Call:
    ```http
-   GET /api/admin/monday/columns?boardId=9147622374
+   GET /api/admin/monday/columns?boardId=18404406006
    ```
    (Use your board ID; with cookies so you’re authenticated.)
 3. In the response, find the column whose **title** is “Assets” and note its **id** (e.g. `link0` or `text3`).

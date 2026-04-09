@@ -8,7 +8,7 @@ import {
 import { updateItemPipelineStatus } from '@/src/services/opsBoardStore'
 export const dynamic = 'force-dynamic'
 
-const BOARD_ID = process.env.MONDAY_BOARD_ID ?? '9147622374'
+const BOARD_ID = process.env.MONDAY_BOARD_ID ?? '18404406006'
 const MAX_CONCURRENCY = 3
 
 function buildSyncFileRef(fileKey: string, fileName: string): string {

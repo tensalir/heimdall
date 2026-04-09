@@ -13,7 +13,7 @@ import { getTemplateNodeTree } from '../integrations/figma/templateCache.js'
 import { computeNodeMapping } from '../agents/mappingAgent.js'
 import { getDocContent, getDocIdFromColumnValue } from '../integrations/monday/docReader.js'
 
-const BOARD_ID = process.env.MONDAY_BOARD_ID ?? '9147622374'
+const BOARD_ID = process.env.MONDAY_BOARD_ID ?? '18404406006'
 const ITEM_ID = '10867939252'
 
 async function fetchItem(): Promise<MondayItem | null> {

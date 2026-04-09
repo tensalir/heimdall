@@ -36,7 +36,7 @@ In Vercel Project Settings → Environment Variables, add:
 ### Monday.com
 - `MONDAY_API_TOKEN` - Your Monday API token
 - `MONDAY_SIGNING_SECRET` - Monday webhook signing secret
-- `MONDAY_BOARD_ID` - Default board ID (9147622374)
+- `MONDAY_BOARD_ID` - Default board ID (18404406006)
 
 ### Figma
 - `FIGMA_ACCESS_TOKEN` - Figma personal access token

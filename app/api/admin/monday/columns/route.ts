@@ -3,7 +3,7 @@ import { createSupabaseRouteClient } from '@/lib/supabase-auth'
 import { mondayGraphql } from '@/src/integrations/monday/client'
 
 /**
- * GET /api/admin/monday/columns?boardId=9147622374
+ * GET /api/admin/monday/columns?boardId=18404406006
  *
  * Returns column id, title, and type for the given Monday board.
  * Use this to find MONDAY_ASSETS_COLUMN_ID (e.g. the "Assets" column id).

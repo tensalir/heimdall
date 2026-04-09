@@ -17,7 +17,7 @@ import {
 
 export const dynamic = 'force-dynamic'
 
-const BOARD_ID = process.env.MONDAY_BOARD_ID ?? '9147622374'
+const BOARD_ID = process.env.MONDAY_BOARD_ID ?? '18404406006'
 
 function buildSyncFileRef(fileKey: string, fileName: string): string {
   const key = fileKey.trim()

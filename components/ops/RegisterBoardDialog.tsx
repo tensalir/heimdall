@@ -87,7 +87,7 @@ export function RegisterBoardDialog({ onRegistered }: RegisterBoardDialogProps) 
               type="text"
               inputMode="numeric"
               className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              placeholder="e.g. 9147622374"
+              placeholder="e.g. 18404406006"
               value={mondayBoardId}
               onChange={(e) => setMondayBoardId(e.target.value)}
               required

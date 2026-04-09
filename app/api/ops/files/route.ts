@@ -8,7 +8,7 @@ import {
 } from '@/src/services/opsBoardStore'
 
 const FIGMA_PROJECT_ID = '387033831'
-const MONDAY_BOARD_ID = '9147622374'
+const MONDAY_BOARD_ID = process.env.MONDAY_BOARD_ID ?? '18404406006'
 
 function extractBatchCanonical(fileName: string): string | null {
   const match = fileName.match(/^([A-Z]+)\s+(\d{4})\s*-/i)
@@ -32,7 +32,7 @@ export async function GET() {
   if (!existing) {
     await createBoard({
       mondayBoardId: MONDAY_BOARD_ID,
-      boardName: 'Performance Ads',
+      boardName: 'Paid Social - Studio',
       figmaProjectId: FIGMA_PROJECT_ID,
       figmaProjectName: 'Performance Ads',
     })

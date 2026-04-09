@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getProjectFiles, getFile } from '@/src/integrations/figma/restClient'
 
 const DEFAULT_PROJECT_ID = '387033831'
-const DEFAULT_MONDAY_BOARD_ID = '9147622374'
+const DEFAULT_MONDAY_BOARD_ID = '18404406006'
 const MONDAY_API_URL = 'https://api.monday.com/v2'
 const RATE_LIMIT_DELAY_MS = 500
 
