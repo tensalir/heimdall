@@ -112,16 +112,16 @@ export function StatusDot({ status, className }: { status: PipelineStatus; class
 }
 
 export function getKanbanLane(mondayStatus: string | null, pipelineStatus: PipelineStatus): KanbanLane {
-  if (pipelineStatus === 'failed' || pipelineStatus === 'skipped') return 'other'
-  if (pipelineStatus === 'synced' || pipelineStatus === 'queued' || pipelineStatus === 'syncing') {
-    const status = (mondayStatus ?? '').toLowerCase().trim()
-    if (status === 'exported to frontify') return 'exported'
-    return 'imported'
-  }
   const status = (mondayStatus ?? '').toLowerCase().trim()
-  if (status === 'brief wip') return 'upcoming'
-  if (status === 'brief ready / approved') return 'ready_for_figma'
+  if (pipelineStatus === 'failed' || pipelineStatus === 'skipped') return 'other'
   if (status === 'exported to frontify') return 'exported'
+  if (status === 'brief ready / approved') {
+    if (pipelineStatus === 'synced' || pipelineStatus === 'queued' || pipelineStatus === 'syncing') {
+      return 'imported'
+    }
+    return 'ready_for_figma'
+  }
+  if (status === 'brief wip') return 'upcoming'
   return 'other'
 }
 

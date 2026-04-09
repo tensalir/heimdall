@@ -98,9 +98,10 @@ function getColFromRow(col: Record<string, string | null>, ...keys: string[]): s
   return null
 }
 
-function parseCsvLower(value: string | undefined): string[] {
-  if (!value || !value.trim()) return []
-  return value
+function parseCsvLower(value: string | undefined, fallback?: string): string[] {
+  const source = value && value.trim() ? value : (fallback ?? '')
+  if (!source.trim()) return []
+  return source
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean)
@@ -132,9 +133,10 @@ export async function POST(request: NextRequest) {
     const legacyPages = coerceLegacyPageSummaries(body.pages)
 
     const env = getEnv()
-    const statusAllowlist = parseCsvLower(env.PLUGIN_FILTER_STATUS ?? 'brief ready,approved,ready')
+    const statusAllowlist = parseCsvLower(env.PLUGIN_FILTER_STATUS, 'brief ready / approved')
     const partnerAllowlist = parseCsvLower(
-      env.PLUGIN_FILTER_CREATIVE_PARTNER ?? 'studio,content creation'
+      env.PLUGIN_FILTER_CREATIVE_PARTNER,
+      'studio,content creation'
     )
 
     let batchCanonical: string | null = null
