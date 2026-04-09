@@ -1,18 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { classifyApiRoute } from '@/lib/route-auth'
+import { classifyApiRoute } from '../../../lib/route-auth.js'
 import {
   MIMIR_TEXT_MODEL,
   MAPPING_MODEL,
   MIMIR_IMAGE_MODEL,
   MIMIR_BRIEFING_MAX_TOKENS,
   MIMIR_ANALYSIS_MAX_TOKENS,
-} from './models'
+} from './models.js'
 import {
   DATASOURCE_IDS,
   UI_DATASOURCE_IDS,
   validateDatasourceIds,
-} from './datasources'
-import { customerInsightsAdapter } from './sources/customerInsightsAdapter'
+} from './datasources.js'
+import { customerInsightsAdapter } from './sources/customerInsightsAdapter.js'
 
 describe('Mimir model configuration', () => {
   it('text model is a valid Anthropic model string', () => {

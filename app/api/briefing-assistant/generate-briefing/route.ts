@@ -4,6 +4,7 @@ import { WorkingDocSectionsSchema } from '@/src/domain/briefingAssistant/schema'
 import { getEvidence } from '@/src/domain/briefingAssistant/sources'
 import { validateDatasourceIds } from '@/src/domain/briefingAssistant/datasources'
 import { MIMIR_TEXT_MODEL, MIMIR_BRIEFING_MAX_TOKENS } from '@/src/domain/briefingAssistant/models'
+import { buildBriefingContext } from '@/src/domain/briefingAssistant/briefingContextBuilder'
 import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 
@@ -47,7 +48,6 @@ export async function POST(req: NextRequest) {
     agencyRef?: string
     assetCount?: number
     sourceIds?: string[]
-    /** UUIDs of briefing_source_items — primary evidence for Create Briefing flow */
     sourceItemIds?: string[]
   }
   try {
@@ -76,58 +76,27 @@ export async function POST(req: NextRequest) {
     Array.isArray(rawSourceItemIds) ? rawSourceItemIds : [],
   )
 
-  const evidenceParts: string[] = []
-  if (evidence.length > 0) {
-    evidenceParts.push(
-      `Evidence from data sources (use to ground your sections where relevant):\n${evidence
-        .map((e, i) => `[${i + 1}] (id: ${e.id}) ${e.text}${e.recency ? ` (${e.recency})` : ''}`)
-        .join('\n')}`,
-    )
-  }
-  if (itemEvidence.lines.length > 0) {
-    const offset = evidence.length
-    evidenceParts.push(
-      `Evidence from selected source items (ads, trends, comments, etc.):\n${itemEvidence.lines
-        .map((line, i) => `[${offset + i + 1}] ${line}`)
-        .join('\n')}`,
-    )
-  }
-  const evidenceBlock =
-    evidenceParts.length > 0 ? `\n\n${evidenceParts.join('\n\n')}\n` : ''
-
-  const prompt = `You are a creative strategist writing a creative briefing for Loop Earplugs. Generate content for a briefing document based on the following metadata.
-${evidenceBlock}
-
-Assignment metadata:
-- Brief name: ${briefName}
-- Product / use case: ${productOrUseCase || '(not specified)'}
-- Format: ${format}
-- Funnel stage: ${funnel} (tof = top of funnel, bof = bottom of funnel, retention)
-- Agency: ${agencyRef || '(not specified)'}
-- Number of assets: ${assetCount}
-
-Produce a JSON object with exactly these keys, each with 1-3 sentences of concise, actionable content suitable for a creative brief. Use plain text, no markdown. Where the evidence above supports a section, draw on it.
-- idea: The core creative idea or concept
-- why: Why this idea matters / strategic rationale
-- audience: Target audience description
-- product: Product context and positioning
-- visual: Visual direction and style notes
-- copyInfo: Copy tone, key messages, CTAs
-- test: What we're testing or learning
-- variants: Any variant considerations (A/B, formats, etc.)
-
-Return ONLY valid JSON in this exact shape:
-{"idea":"...","why":"...","audience":"...","product":"...","visual":"...","copyInfo":"...","test":"...","variants":"..."}`
+  const { system, user } = await buildBriefingContext({
+    briefName,
+    productOrUseCase,
+    format,
+    funnel,
+    agencyRef,
+    assetCount,
+    datasourceEvidence: evidence,
+    sourceItemLines: itemEvidence.lines,
+  })
 
   try {
     const client = new Anthropic({ apiKey })
     const response = await client.messages.create({
       model: MIMIR_TEXT_MODEL,
       max_tokens: MIMIR_BRIEFING_MAX_TOKENS,
+      system,
       messages: [
         {
           role: 'user',
-          content: prompt,
+          content: user,
         },
       ],
     })

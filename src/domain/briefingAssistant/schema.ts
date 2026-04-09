@@ -106,8 +106,11 @@ export function workingDocToBriefingDTO(
     idea: state.sections.idea,
     audienceRegion: state.sections.audience,
     segment: state.sections.audience,
-    formats: state.sections.visual,
+    formats: state.sections.variants
+      ? `${state.sections.visual ?? ''}\n\nVariants: ${state.sections.variants}`.trim()
+      : state.sections.visual,
     variants: state.variants,
+    linkForReview: undefined,
     images:
       state.visualRefs?.map((v) => ({
         url: v.url,
