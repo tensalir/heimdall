@@ -76,12 +76,12 @@ export interface LoopProduct {
 }
 
 export const LOOP_PRODUCTS: LoopProduct[] = [
-  { slug: 'switch', name: 'Loop Switch 2', tagline: 'All-day adjustable, 3 modes', imageUrl: 'https://www.loopearplugs.com/cdn/shop/files/switch-emerald.png' },
-  { slug: 'dream', name: 'Loop Dream', tagline: 'Sleep, side-sleeping, snoring', imageUrl: 'https://www.loopearplugs.com/cdn/shop/files/dream-black.png' },
-  { slug: 'quiet', name: 'Loop Quiet 2', tagline: 'Deep focus, travel, commutes', imageUrl: 'https://www.loopearplugs.com/cdn/shop/files/quiet-white.png' },
-  { slug: 'experience', name: 'Experience 2', tagline: 'Concerts, festivals, events', imageUrl: 'https://www.loopearplugs.com/cdn/shop/files/experience-silver.png' },
-  { slug: 'experience-plus', name: 'Experience 2 Plus', tagline: 'Events + extra reduction', imageUrl: 'https://www.loopearplugs.com/cdn/shop/files/experience-plus-gold.png' },
-  { slug: 'engage', name: 'Engage 2', tagline: 'Socializing, parenting', imageUrl: 'https://www.loopearplugs.com/cdn/shop/files/engage-clear.png' },
-  { slug: 'engage-plus', name: 'Engage 2 Plus', tagline: 'Socializing + extra reduction', imageUrl: 'https://www.loopearplugs.com/cdn/shop/files/engage-plus-clear.png' },
-  { slug: 'engage-kids', name: 'Engage Kids 2', tagline: 'School, play, ages 6-12', imageUrl: 'https://www.loopearplugs.com/cdn/shop/files/engage-kids.png' },
+  { slug: 'switch', name: 'Loop Switch 2', tagline: 'All-day adjustable, 3 modes', imageUrl: 'https://cdn.shopify.com/s/files/1/1442/3288/files/PDP_SWITCH_EMERALD_1-371454.png?v=1729670651' },
+  { slug: 'dream', name: 'Loop Dream', tagline: 'Sleep, side-sleeping, snoring', imageUrl: 'https://cdn.shopify.com/s/files/1/1442/3288/files/PDP_DREAM_LILAC_1-270685.png?v=1728593375' },
+  { slug: 'quiet', name: 'Loop Quiet 2', tagline: 'Deep focus, travel, commutes', imageUrl: 'https://cdn.shopify.com/s/files/1/1442/3288/files/PDP_QUIET_WHITE_01-805740.png?v=1725976815' },
+  { slug: 'experience', name: 'Experience 2', tagline: 'Concerts, festivals, events', imageUrl: 'https://cdn.shopify.com/s/files/1/1442/3288/files/PDP_EXPERIENCE2_SILVER_01.png?v=1770983744' },
+  { slug: 'experience-plus', name: 'Experience 2 Plus', tagline: 'Events + extra reduction', imageUrl: 'https://cdn.shopify.com/s/files/1/1442/3288/files/PDP_EXPERIENCE2PLUS_GOLD_01-374433.png?v=1715750475' },
+  { slug: 'engage', name: 'Engage 2', tagline: 'Socializing, parenting', imageUrl: 'https://cdn.shopify.com/s/files/1/1442/3288/files/PDP_ENGAGE2_CLEAR_01-917223.png?v=1715087473' },
+  { slug: 'engage-plus', name: 'Engage 2 Plus', tagline: 'Socializing + extra reduction', imageUrl: 'https://cdn.shopify.com/s/files/1/1442/3288/files/PDP_ENGAGE2PLUS_CLEAR_01-244449.png?v=1715087473' },
+  { slug: 'engage-kids', name: 'Engage Kids 2', tagline: 'School, play, ages 6-12', imageUrl: 'https://cdn.shopify.com/s/files/1/1442/3288/files/PDP_ENGAGE_KIDS_2_BERRY_BLUE_01.png?v=1759828353' },
 ]

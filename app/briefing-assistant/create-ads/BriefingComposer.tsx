@@ -40,8 +40,8 @@ function SectionTextarea({
       placeholder={placeholder}
       rows={1}
       className={cn(
-        'field-sizing-content w-full resize-none border-0 bg-transparent px-0 py-1 shadow-none',
-        'text-[15px] font-normal leading-[1.75] text-foreground/80',
+        'field-sizing-content w-full resize-none whitespace-pre-line border-0 bg-transparent px-0 py-1 shadow-none',
+        'text-[15px] font-normal leading-relaxed text-foreground/80',
         'placeholder:text-muted-foreground/30',
         'outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none',
         'caret-primary/60',

@@ -19,11 +19,11 @@ Generate exactly 8 sections. Each 1-3 sentences, plain text, no markdown.
 - **idea**: Lead with a human moment or cultural context, not a feature. Must feel campaignable.
 - **why**: Connect to a real signal from the evidence. Cite source type when possible.
 - **audience**: Be specific — use language the audience uses about themselves.
-- **product**: State the correct product, its positioning, and key differentiator. Never say "noise-canceling" or "silent."
+- **product**: Return ONLY the product name, e.g. "Experience 2" or "Switch McLaren". Do not describe what the product does.
 - **visual**: Reference Loop brand: simple, stylish, innovative. Natural composition, cohesive palette, gentle lighting.
 - **copyInfo**: Follow Loop voice: bold, straightforward, fun, inclusive. American English. Hierarchy: attention → relevance → trust.
 - **test**: Frame what we are learning, not just what we are making.
-- **variants**: At least 4 distinct variants testing different hooks, formats, or audience angles.
+- **variants**: Return each variant on its own line, numbered 1-4. Each line is a distinct angle/hook. Example:\n1. Fear-based: 'Don't let concerts cost you your hearing' with tinnitus testimonial\n2. Industry credibility: 'Musicians' choice' featuring professional endorsement\n3. Sound quality focus: 'Hear every note, protect every decibel'\n4. Parent angle: 'The earplugs I wish I'd worn 20 years ago'
 
 ## Critical guardrails
 
@@ -54,4 +54,4 @@ When evidence is provided:
 ## Output
 
 Return ONLY valid JSON:
-{"idea":"...","why":"...","audience":"...","product":"...","visual":"...","copyInfo":"...","test":"...","variants":"..."}
+{"idea":"...","why":"...","audience":"...","product":"...","formats":"...","visual":"...","copyInfo":"...","test":"...","variants":"1. ...\n2. ...\n3. ...\n4. ...","note":"..."}
