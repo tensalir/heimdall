@@ -115,11 +115,42 @@ export function BriefingSourceRail({
     }
   }, [initialSourceId])
 
+  useEffect(() => {
+    if (selectedIds.length === 0) return
+    const knownIds = new Set(items.map((i) => i.id))
+    const missing = selectedIds.filter((id) => !knownIds.has(id))
+    if (missing.length === 0) return
+    let cancelled = false
+    ;(async () => {
+      const fetched: SourceItem[] = []
+      for (const id of missing) {
+        try {
+          const res = await fetch(`/api/briefing-assistant/source-items/${id}`)
+          const data = await res.json()
+          if (cancelled) return
+          if (data.item) fetched.push(data.item as SourceItem)
+        } catch {
+          /* ignore individual failures */
+        }
+      }
+      if (!cancelled && fetched.length > 0) {
+        setItems((prev) => {
+          const existing = new Set(prev.map((i) => i.id))
+          const newItems = fetched.filter((f) => !existing.has(f.id))
+          return newItems.length > 0 ? [...newItems, ...prev] : prev
+        })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedIds, items])
+
   const filteredItems = useMemo(() => {
     if (typeFilter.length === 0) return items
     const allowed = new Set(typeFilter)
-    return items.filter((i) => allowed.has(i.type))
-  }, [items, typeFilter])
+    return items.filter((i) => allowed.has(i.type) || selectedSet.has(i.id))
+  }, [items, typeFilter, selectedSet])
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -196,7 +227,7 @@ export function BriefingSourceRail({
           <div className="flex items-center justify-center py-12">
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
-        ) : items.length === 0 ? (
+        ) : items.length === 0 && selectedIds.length === 0 ? (
           <div className="px-4 py-12 text-center">
             <FileText className="mx-auto mb-3 size-10 text-muted-foreground/30" />
             <p className="text-sm font-medium text-foreground">No sources yet</p>

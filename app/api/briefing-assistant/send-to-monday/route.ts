@@ -4,6 +4,7 @@ import { workingDocToBriefingDTO } from '@/src/domain/briefingAssistant/schema'
 import { WorkingDocStateSchema } from '@/src/domain/briefingAssistant/schema'
 import { createOrQueueFigmaPage, buildIdempotencyKey } from '@/src/orchestration/createOrQueueFigmaPage'
 import { recordIntegrationCall } from '@/src/services/integrationTelemetry'
+import { requireUser } from '@/lib/route-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,6 +47,9 @@ function buildBriefingDocMarkdown(sections: {
  * Creates Monday item if needed, creates briefing doc, queues Figma sync.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const routeStart = Date.now()
 
   try {

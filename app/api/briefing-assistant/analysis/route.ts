@@ -7,6 +7,7 @@ import {
   computeOverallScore,
   RUBRIC_VERSION,
 } from '@/src/domain/briefingAssistant/scoring/rubric'
+import { MIMIR_TEXT_MODEL, MIMIR_ANALYSIS_MAX_TOKENS } from '@/src/domain/briefingAssistant/models'
 
 export const dynamic = 'force-dynamic'
 
@@ -70,8 +71,8 @@ export async function POST(req: NextRequest) {
   try {
     const client = new Anthropic({ apiKey })
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
+      model: MIMIR_TEXT_MODEL,
+      max_tokens: MIMIR_ANALYSIS_MAX_TOKENS,
       messages: [{ role: 'user', content: prompt }],
     })
 
@@ -110,7 +111,7 @@ export async function POST(req: NextRequest) {
           score_overall: overall,
           analysis_summary: summary,
           rubric_version: RUBRIC_VERSION,
-          model_used: 'claude-sonnet-4-20250514',
+          model_used: MIMIR_TEXT_MODEL,
           raw_response: parsed,
         },
         { onConflict: 'source_item_id,rubric_version' },

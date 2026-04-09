@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { getEvidence } from '@/src/domain/briefingAssistant/sources'
 import { validateDatasourceIds } from '@/src/domain/briefingAssistant/datasources'
+import { MIMIR_TEXT_MODEL, MIMIR_BRIEFING_MAX_TOKENS } from '@/src/domain/briefingAssistant/models'
+import { requireUser } from '@/lib/route-auth'
 import type { AngleGenerationResult } from '@/src/domain/briefingAssistant/angleContext'
 import { z } from 'zod'
 
@@ -29,6 +31,9 @@ function formatEvidenceBlock(evidence: { id: string; text: string; recency?: str
  * sourceIds must be canonical datasource IDs. Fetches evidence and generates angles via LLM with dataRefs.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   try {
     const body = await req.json()
     const parsed = BodySchema.safeParse(body)
@@ -63,8 +68,8 @@ Each dataRefs array must contain ids from the evidence list above.`
 
       const client = new Anthropic({ apiKey })
       const response = await client.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2048,
+        model: MIMIR_TEXT_MODEL,
+        max_tokens: MIMIR_BRIEFING_MAX_TOKENS,
         messages: [{ role: 'user', content: userPrompt }],
         system: systemPrompt,
       })

@@ -243,7 +243,7 @@ export function CreateAdsClient({
           agencyRef: '',
           assetCount: 4,
           sourceItemIds: selectedIds,
-          sourceIds: ['ad_performance', 'social_comments', 'untapped_use_cases'],
+          sourceIds: ['ad_performance', 'social_comments'],
         }),
       })
       const data = await res.json()

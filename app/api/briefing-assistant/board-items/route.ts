@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { readMondayBoardItemsWithMeta } from '@/src/services/mondayBoardReader'
+import { requireUser } from '@/lib/route-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,6 +10,9 @@ export const dynamic = 'force-dynamic'
  * Column values are keyed by title (e.g. batch, format, product, agency).
  */
 export async function GET(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const { searchParams } = new URL(req.url)
   const boardId = searchParams.get('board_id')?.trim()
   if (!boardId) {

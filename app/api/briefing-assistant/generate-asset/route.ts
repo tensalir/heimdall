@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSupabase } from '@/lib/supabase'
 import { requireUser } from '@/lib/route-auth'
 import { generateImage, isVesperAvailable } from '@/src/integrations/vesper/client'
+import { MIMIR_TEXT_MODEL, MIMIR_PROMPT_ENGINEERING_MAX_TOKENS } from '@/src/domain/briefingAssistant/models'
 import Anthropic from '@anthropic-ai/sdk'
 
 export const dynamic = 'force-dynamic'
@@ -37,13 +38,25 @@ export async function POST(req: NextRequest) {
     reference_image_url?: string
   }
 
+  let safeRefUrl: string | undefined
+  if (reference_image_url) {
+    try {
+      const u = new URL(reference_image_url)
+      if (u.protocol === 'https:' && !u.hostname.match(/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/)) {
+        safeRefUrl = reference_image_url
+      }
+    } catch {
+      /* invalid URL — ignore */
+    }
+  }
+
   const prompt = await buildGenerationPrompt(briefing_sections, source_item_id, db)
 
   try {
     const result = await generateImage({
       prompt,
       modelId: model,
-      referenceImageUrl: reference_image_url,
+      referenceImageUrl: safeRefUrl,
       aspectRatio: '4:5',
       resolution: '1K',
     })
@@ -117,8 +130,8 @@ async function buildGenerationPrompt(
 
       const client = new Anthropic({ apiKey })
       const response = await client.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 512,
+        model: MIMIR_TEXT_MODEL,
+        max_tokens: MIMIR_PROMPT_ENGINEERING_MAX_TOKENS,
         messages: [{
           role: 'user',
           content: `You are a prompt engineer for AI image generation (Nano Banana / Gemini).

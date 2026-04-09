@@ -24,11 +24,28 @@ import { createServerClient } from '@supabase/ssr'
 import { classifyApiRoute } from '@/lib/route-auth'
 import { timingSafeEqualSecret } from '@/lib/crypto-compare'
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers':
-    'Content-Type, Authorization, X-Heimdall-Secret, X-Heimdall-Plugin-Token, X-Heimdall-Gpt-Actions-Secret',
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean)
+
+function resolveOrigin(request: NextRequest): string {
+  const origin = request.headers.get('origin') ?? ''
+  if (ALLOWED_ORIGINS.length > 0 && ALLOWED_ORIGINS.includes(origin)) return origin
+  if (/^https:\/\/.*\.vercel\.app$/.test(origin)) return origin
+  if (origin && origin === request.nextUrl.origin) return origin
+  return ''
+}
+
+function corsHeaders(request: NextRequest): Record<string, string> {
+  const origin = resolveOrigin(request)
+  return {
+    ...(origin ? { 'Access-Control-Allow-Origin': origin } : {}),
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers':
+      'Content-Type, Authorization, X-Heimdall-Secret, X-Heimdall-Plugin-Token, X-Heimdall-Gpt-Actions-Secret',
+    ...(origin ? { 'Vary': 'Origin' } : {}),
+  }
 }
 
 const PRIVILEGED_EMAIL_DOMAINS = (process.env.HEIMDALL_ALLOWED_EMAIL_DOMAINS || 'thoughtform.co,loopearplugs.com')
@@ -80,8 +97,8 @@ function legacyRedirect(request: NextRequest): NextResponse | null {
 /*  API route policy classification — imported from lib/route-auth.ts  */
 /* ------------------------------------------------------------------ */
 
-function addCors(response: NextResponse): NextResponse {
-  for (const [key, value] of Object.entries(CORS_HEADERS)) {
+function addCors(request: NextRequest, response: NextResponse): NextResponse {
+  for (const [key, value] of Object.entries(corsHeaders(request))) {
     response.headers.set(key, value)
   }
   return response
@@ -89,18 +106,18 @@ function addCors(response: NextResponse): NextResponse {
 
 async function handleApi(request: NextRequest): Promise<NextResponse> {
   if (request.method === 'OPTIONS') {
-    return new NextResponse(null, { status: 204, headers: CORS_HEADERS })
+    return new NextResponse(null, { status: 204, headers: corsHeaders(request) })
   }
 
   const { pathname } = request.nextUrl
   const policy = classifyApiRoute(pathname)
 
   if (policy === 'public') {
-    return addCors(NextResponse.next())
+    return addCors(request, NextResponse.next())
   }
 
   if (policy === 'webhook') {
-    return addCors(NextResponse.next())
+    return addCors(request, NextResponse.next())
   }
 
   if (policy === 'machine') {
@@ -109,12 +126,12 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
 
     if (!machineSecret && !pluginSecret) {
       if (process.env.NODE_ENV === 'production') {
-        return addCors(NextResponse.json(
+        return addCors(request, NextResponse.json(
           { error: 'Machine authentication not configured' },
-          { status: 503, headers: CORS_HEADERS },
+          { status: 503, headers: corsHeaders(request) },
         ))
       }
-      return addCors(NextResponse.next())
+      return addCors(request, NextResponse.next())
     }
 
     const providedMachine = request.headers.get('x-heimdall-secret')
@@ -126,24 +143,24 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
       !!pluginSecret && (await timingSafeEqualSecret(pluginSecret, providedPlugin ?? ''))
 
     if (!machineMatch && !pluginMatch) {
-      return addCors(NextResponse.json(
+      return addCors(request, NextResponse.json(
         { error: 'Machine authentication required' },
-        { status: 403, headers: CORS_HEADERS },
+        { status: 403, headers: corsHeaders(request) },
       ))
     }
-    return addCors(NextResponse.next())
+    return addCors(request, NextResponse.next())
   }
 
   if (policy === 'gpt_actions') {
     const secret = process.env.HEIMDALL_GPT_ACTIONS_SECRET?.trim()
     if (!secret) {
       if (process.env.NODE_ENV === 'production') {
-        return addCors(NextResponse.json(
+        return addCors(request, NextResponse.json(
           { error: 'GPT Actions authentication not configured' },
-          { status: 503, headers: CORS_HEADERS },
+          { status: 503, headers: corsHeaders(request) },
         ))
       }
-      return addCors(NextResponse.next())
+      return addCors(request, NextResponse.next())
     }
     const authz = request.headers.get('authorization')
     const bearer = authz?.toLowerCase().startsWith('bearer ') ? authz.slice(7).trim() : ''
@@ -152,19 +169,19 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
       bearer ||
       ''
     if (!(await timingSafeEqualSecret(secret, provided))) {
-      return addCors(NextResponse.json(
+      return addCors(request, NextResponse.json(
         { error: 'GPT Actions authentication required' },
-        { status: 403, headers: CORS_HEADERS },
+        { status: 403, headers: corsHeaders(request) },
       ))
     }
-    return addCors(NextResponse.next())
+    return addCors(request, NextResponse.next())
   }
 
   if (policy === 'dual') {
     const machineSecret = process.env.HEIMDALL_MACHINE_SECRET
     const provided = request.headers.get('x-heimdall-secret')
     if (machineSecret && (await timingSafeEqualSecret(machineSecret, provided ?? ''))) {
-      return addCors(NextResponse.next())
+      return addCors(request, NextResponse.next())
     }
   }
 
@@ -172,12 +189,12 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   if (!supabaseUrl || !supabaseAnonKey) {
     if (process.env.NODE_ENV === 'production') {
-      return addCors(NextResponse.json(
+      return addCors(request, NextResponse.json(
         { error: 'Authentication not configured' },
-        { status: 503, headers: CORS_HEADERS },
+        { status: 503, headers: corsHeaders(request) },
       ))
     }
-    return addCors(NextResponse.next())
+    return addCors(request, NextResponse.next())
   }
 
   let response = NextResponse.next({ request: { headers: request.headers } })
@@ -201,15 +218,15 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
     if (isSheetsReadApi(pathname) && hasValidSheetsCookie(request)) {
-      return addCors(NextResponse.next())
+      return addCors(request, NextResponse.next())
     }
-    return addCors(NextResponse.json(
+    return addCors(request, NextResponse.json(
       { error: 'Authentication required' },
-      { status: 401, headers: CORS_HEADERS },
+      { status: 401, headers: corsHeaders(request) },
     ))
   }
 
-  return addCors(response)
+  return addCors(request, response)
 }
 
 /* ------------------------------------------------------------------ */

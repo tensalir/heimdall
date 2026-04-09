@@ -3,6 +3,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { WorkingDocSectionsSchema } from '@/src/domain/briefingAssistant/schema'
 import { getEvidence } from '@/src/domain/briefingAssistant/sources'
 import { validateDatasourceIds } from '@/src/domain/briefingAssistant/datasources'
+import { MIMIR_TEXT_MODEL, MIMIR_BRIEFING_MAX_TOKENS } from '@/src/domain/briefingAssistant/models'
+import { requireUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
@@ -25,6 +27,9 @@ const SECTION_KEYS = [
  * Returns: { sections, evidenceRefs? } for creative validation.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireUser(req)
+  if (auth.error) return auth.error
+
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     return NextResponse.json(
@@ -117,8 +122,8 @@ Return ONLY valid JSON in this exact shape:
   try {
     const client = new Anthropic({ apiKey })
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2048,
+      model: MIMIR_TEXT_MODEL,
+      max_tokens: MIMIR_BRIEFING_MAX_TOKENS,
       messages: [
         {
           role: 'user',
@@ -169,8 +174,8 @@ Return ONLY valid JSON in this exact shape:
       evidenceRefs: evidenceRefs.length > 0 ? evidenceRefs : undefined,
     })
   } catch (e) {
-    const message = e instanceof Error ? e.message : 'Unknown error'
-    return NextResponse.json({ error: message }, { status: 502 })
+    console.error('[generate-briefing]', e instanceof Error ? e.message : e)
+    return NextResponse.json({ error: 'Briefing generation failed' }, { status: 502 })
   }
 }
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/route-auth'
+import { getSupabase } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,7 +11,11 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const auth = await requireUser(req)
   if (auth.error) return auth.error
-  const db = auth.supabase
+
+  const db = getSupabase()
+  if (!db) {
+    return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
+  }
 
   const { searchParams } = new URL(req.url)
   const limit = Math.min(Number(searchParams.get('limit') || 20), 100)

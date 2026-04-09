@@ -30,7 +30,7 @@ assert(valid.includes('ad_performance'), 'valid includes ad_performance')
 assert(valid.includes('untapped_use_cases'), 'valid includes untapped_use_cases')
 assert(!(valid as readonly string[]).includes('invalid'), 'valid excludes invalid')
 
-assert(UI_DATASOURCE_IDS.length === 3, 'UI shows 3 datasources (no static_fallback)')
+assert(UI_DATASOURCE_IDS.length === 4, 'UI shows 4 datasources (no static_fallback)')
 assert(!UI_DATASOURCE_IDS.includes('static_fallback'), 'static_fallback not in UI list')
 
 assert(DATASOURCE_CONFIG.ad_performance.label === 'Ads', 'ad_performance label is Ads')

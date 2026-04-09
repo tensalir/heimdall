@@ -13,8 +13,7 @@ import type { MondayItem } from '../integrations/monday/client.js'
 import { columnMap, getCol } from '../integrations/monday/client.js'
 import { mondayItemToBriefing } from '../domain/briefing/mondayToBriefing.js'
 import type { BriefingDTO } from '../domain/briefing/schema.js'
-
-const MAPPING_MODEL = 'claude-opus-4-6'
+import { MAPPING_MODEL } from '../domain/briefingAssistant/models.js'
 
 export interface TemplateNodeInfo {
   id: string

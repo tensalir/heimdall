@@ -17,19 +17,19 @@ const TABS: { id: InsightTab; label: string; icon: typeof Lightbulb }[] = [
 const TAB_PLACEHOLDERS: Record<InsightTab, { title: string; description: string }> = {
   customer_insights: {
     title: 'Customer Insights',
-    description: 'Customer interviews, survey highlights, and product-specific insights from Loop Earplugs. Connect your insights pipeline to populate this view with first-party qualitative data.',
+    description: 'Not yet connected. This view will display customer interviews, survey highlights, and product-specific insights once an ingestion pipeline is wired.',
   },
   social_comments: {
     title: 'Loop Social Comments',
-    description: 'Comments and conversations from Loop Earplugs owned social media channels. Connect your social accounts to surface brand-specific sentiment and community feedback.',
+    description: 'Not yet connected. This view will show comments from Loop Earplugs owned social channels once social account integration is configured.',
   },
   reviews: {
     title: 'Product Reviews',
-    description: 'Reviews from e-commerce platforms and review sites for Loop Earplugs products. Connect review aggregation to track product perception, feature requests, and satisfaction trends.',
+    description: 'Not yet connected. This view will surface reviews from e-commerce and review sites once review aggregation is configured.',
   },
   synthesized: {
     title: 'Synthesized Signals',
-    description: 'AI-generated synthesis across all Loop first-party data sources: recurring themes, emerging patterns, and strategic opportunities derived from customer insights, social comments, and reviews.',
+    description: 'Not yet available. This view will provide AI-generated synthesis across first-party data sources once at least one upstream source (customer insights, social comments, or reviews) is connected.',
   },
 }
 

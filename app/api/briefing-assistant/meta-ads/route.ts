@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireUser } from '@/lib/route-auth'
+import { requireUser, requirePrivilegedUser } from '@/lib/route-auth'
 import { getSupabase } from '@/lib/supabase'
 import { isValidMediaUrl, thumbnailStatus } from '@/lib/media-utils'
 import { MetaTokenError, searchMetaAdLibrary } from '@/src/integrations/meta/client'
@@ -482,15 +482,24 @@ async function triggerWatchlistSync(db: SupabaseDb) {
  * Sync body: { search_terms, page_ids?, countries?, country?, limit?, source_mode? }
  */
 export async function POST(req: NextRequest) {
-  const auth = await requireUser(req); if (auth.error) return auth.error
+  const { searchParams } = new URL(req.url)
+  const action = searchParams.get('action')
+
+  const PRIVILEGED_ACTIONS = new Set([
+    'warm-thumbnails', 'cleanup-media', 'sync-watchlist', 'run-quality-pass',
+  ])
+  if (action && PRIVILEGED_ACTIONS.has(action)) {
+    const auth = await requirePrivilegedUser(req)
+    if (auth.error) return auth.error
+  } else {
+    const auth = await requireUser(req)
+    if (auth.error) return auth.error
+  }
 
   const db = getSupabase()
   if (!db) {
     return NextResponse.json({ error: 'Database not configured' }, { status: 500 })
   }
-
-  const { searchParams } = new URL(req.url)
-  const action = searchParams.get('action')
 
   if (action === 'warm-thumbnails') {
     return handleWarmThumbnails(db)
