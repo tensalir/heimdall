@@ -8,6 +8,14 @@ export type UserRole = 'admin' | 'user'
 const STORAGE_KEY = 'heimdall:user-role'
 const PRIVILEGED_STORAGE_KEY = 'heimdall:is-privileged'
 const FEEDBACK_REVIEWER_KEY = 'heimdall:is-feedback-reviewer'
+const BRIEFING_ONLY_KEY = 'heimdall:is-briefing-only'
+
+const BRIEFING_ONLY_USERS = (
+  process.env.NEXT_PUBLIC_HEIMDALL_BRIEFING_ONLY_USERS || ''
+)
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean)
 
 const FEEDBACK_REVIEWERS = (
   process.env.NEXT_PUBLIC_HEIMDALL_FEEDBACK_REVIEWERS || ''
@@ -109,6 +117,45 @@ export function useIsPrivileged(): boolean {
   }, [])
 
   return privileged
+}
+
+/**
+ * Returns true when the current user is on the briefing-only restricted list.
+ * These users can access /ops but not the full staff Heimdall shell.
+ */
+export function useIsBriefingOnly(): boolean {
+  const [briefingOnly, setBriefingOnly] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      return localStorage.getItem(BRIEFING_ONLY_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  useEffect(() => {
+    if (BRIEFING_ONLY_USERS.length === 0) {
+      setBriefingOnly(false)
+      return
+    }
+    const supabase = createSupabaseBrowserClient()
+    if (!supabase) {
+      setBriefingOnly(false)
+      return
+    }
+    supabase.auth.getUser().then(({ data: { user }, error }) => {
+      if (error || !user) {
+        setBriefingOnly(false)
+        try { localStorage.removeItem(BRIEFING_ONLY_KEY) } catch {}
+        return
+      }
+      const result = BRIEFING_ONLY_USERS.includes(user.email?.toLowerCase() ?? '')
+      setBriefingOnly(result)
+      try { localStorage.setItem(BRIEFING_ONLY_KEY, String(result)) } catch {}
+    })
+  }, [])
+
+  return briefingOnly
 }
 
 /**

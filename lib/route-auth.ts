@@ -21,6 +21,16 @@ export function isPrivilegedEmail(email: string | undefined): boolean {
   return PRIVILEGED_EMAIL_DOMAINS.includes(domain)
 }
 
+const BRIEFING_ONLY_USERS = (process.env.HEIMDALL_BRIEFING_ONLY_USERS || '')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean)
+
+export function isBriefingOnlyUser(email: string | undefined): boolean {
+  if (!email) return false
+  return BRIEFING_ONLY_USERS.includes(email.toLowerCase())
+}
+
 const FEEDBACK_REVIEWERS = (process.env.HEIMDALL_FEEDBACK_REVIEWERS || '')
   .split(',')
   .map((e) => e.trim().toLowerCase())

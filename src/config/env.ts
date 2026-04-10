@@ -112,6 +112,10 @@ const envSchema = z.object({
   HEIMDALL_FEEDBACK_REVIEWERS: z.string().optional(),
   /** Client-side mirror of HEIMDALL_FEEDBACK_REVIEWERS for UI gating. Non-secret. */
   NEXT_PUBLIC_HEIMDALL_FEEDBACK_REVIEWERS: z.string().optional(),
+  /** CSV of exact emails restricted to /ops briefing workflow only (no full staff access). */
+  HEIMDALL_BRIEFING_ONLY_USERS: z.string().optional(),
+  /** Client-side mirror of HEIMDALL_BRIEFING_ONLY_USERS for nav gating. Non-secret. */
+  NEXT_PUBLIC_HEIMDALL_BRIEFING_ONLY_USERS: z.string().optional(),
   /** Monday briefing board ID for sprint integration. */
   MONDAY_BRIEFING_BOARD_ID: z.string().optional(),
   /** Monday briefing doc column ID. */

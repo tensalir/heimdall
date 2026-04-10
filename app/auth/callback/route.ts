@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { isBriefingOnlyUser } from '@/lib/route-auth'
+
+const DEFAULT_REDIRECT = '/admin'
 
 /**
  * GET /auth/callback
@@ -9,20 +12,20 @@ import { cookies } from 'next/headers'
  * Exchanges the ?code= parameter for a session and sets auth cookies.
  */
 function sanitizeRedirect(raw: string): string {
-  if (!raw.startsWith('/') || raw.startsWith('//')) return '/admin'
+  if (!raw.startsWith('/') || raw.startsWith('//')) return DEFAULT_REDIRECT
   try {
     const url = new URL(raw, 'http://localhost')
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '/admin'
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return DEFAULT_REDIRECT
     return url.pathname + url.search
   } catch {
-    return '/admin'
+    return DEFAULT_REDIRECT
   }
 }
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
-  const next = sanitizeRedirect(searchParams.get('next') ?? '/admin')
+  let next = sanitizeRedirect(searchParams.get('next') ?? DEFAULT_REDIRECT)
 
   if (code) {
     const cookieStore = await cookies()
@@ -47,6 +50,12 @@ export async function GET(request: Request) {
     const { error } = await supabase.auth.exchangeCodeForSession(code)
 
     if (!error) {
+      if (next === DEFAULT_REDIRECT) {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user && isBriefingOnlyUser(user.email)) {
+          next = '/ops'
+        }
+      }
       return NextResponse.redirect(new URL(next, origin))
     }
   }

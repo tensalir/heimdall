@@ -2,12 +2,13 @@
  * Heimdall middleware — route-based auth + CORS + legacy redirects.
  *
  * Auth zones:
- *   /admin/*              → Supabase session (magic link / email+password)
- *   /forecast/*           → Supabase session (same as admin)
- *   /feedback/*           → Supabase session (same as admin)
+ *   /admin/*              → Supabase session + privileged domain (staff only)
+ *   /forecast/*           → Supabase session + privileged domain (staff only)
+ *   /feedback/*           → Supabase session + privileged domain (staff only)
+ *   /ops/*                → Supabase session + privileged domain (staff + briefing-only testers)
  *   /briefing-assistant/* → Supabase session preferred; BRIEFING_LOCAL_PASSWORD fallback for localhost dev
  *   /sheets/*             → Cookie-based auth with SHEETS_PASSWORD
- *   /document-chat/*      → Supabase session + privileged domain (same as admin)
+ *   /document-chat/*      → Supabase session + privileged domain (staff only)
  *   /api/*                → Classified by route policy (user / machine / webhook / public / gpt_actions)
  *   /auth/*               → No auth (callback handler)
  *   /                     → No auth (landing redirect)
@@ -54,6 +55,16 @@ function isPrivilegedUser(email: string | undefined): boolean {
   if (!email) return false
   const domain = email.split('@')[1]?.toLowerCase()
   return PRIVILEGED_EMAIL_DOMAINS.includes(domain)
+}
+
+const BRIEFING_ONLY_USERS = (process.env.HEIMDALL_BRIEFING_ONLY_USERS || '')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean)
+
+function isBriefingOnlyUser(email: string | undefined): boolean {
+  if (!email) return false
+  return BRIEFING_ONLY_USERS.includes(email.toLowerCase())
 }
 
 /* ------------------------------------------------------------------ */
@@ -230,7 +241,10 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
 /*  Admin Auth — Supabase session                                     */
 /* ------------------------------------------------------------------ */
 
-async function handleAdminAuth(request: NextRequest): Promise<NextResponse> {
+async function handleAdminAuth(
+  request: NextRequest,
+  options?: { allowBriefingOnly?: boolean },
+): Promise<NextResponse> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   if (!supabaseUrl || !supabaseAnonKey) {
@@ -269,6 +283,12 @@ async function handleAdminAuth(request: NextRequest): Promise<NextResponse> {
 
   if (!isPrivilegedUser(user.email)) {
     return NextResponse.json({ error: 'Insufficient privileges' }, { status: 403 })
+  }
+
+  if (!options?.allowBriefingOnly && isBriefingOnlyUser(user.email)) {
+    const url = request.nextUrl.clone()
+    url.pathname = '/ops'
+    return NextResponse.redirect(url)
   }
 
   return response
@@ -406,29 +426,34 @@ export async function middleware(request: NextRequest) {
     return handleApi(request)
   }
 
-  // 4. Admin + Document Chat: Supabase session + privileged domain
+  // 4. Admin + Document Chat: Supabase session + privileged domain (staff only)
   if (pathname.startsWith('/admin') || pathname.startsWith('/document-chat')) {
     return handleAdminAuth(request)
   }
 
-  // 5. Forecast, Feedback, Ops: internal tools — Supabase session (same as admin)
-  if (pathname.startsWith('/forecast') || pathname.startsWith('/feedback') || pathname.startsWith('/ops')) {
+  // 5. Forecast, Feedback: staff only (briefing-only users redirected to /ops)
+  if (pathname.startsWith('/forecast') || pathname.startsWith('/feedback')) {
     return handleAdminAuth(request)
   }
 
-  // 6. Sheets routes: cookie-based auth
+  // 6. Ops: staff + briefing-only testers
+  if (pathname.startsWith('/ops')) {
+    return handleAdminAuth(request, { allowBriefingOnly: true })
+  }
+
+  // 7. Sheets routes: cookie-based auth
   if (pathname.startsWith('/sheets')) {
     const denied = handleSheetsAuth(request)
     if (denied) return denied
     return NextResponse.next()
   }
 
-  // 7. Briefing Assistant: Supabase session preferred, local password fallback
+  // 8. Briefing Assistant: Supabase session preferred, local password fallback
   if (pathname.startsWith('/briefing-assistant')) {
     return handleBriefingAuth(request)
   }
 
-  // 8. Everything else (root landing, etc.)
+  // 9. Everything else (root landing, etc.)
   return NextResponse.next()
 }
 
