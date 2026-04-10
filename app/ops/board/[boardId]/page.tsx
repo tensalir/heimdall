@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { Card, CardContent } from '@/components/ui/card'
@@ -110,6 +110,8 @@ export default function BoardDetailPage() {
     try { localStorage.setItem(modeStorageKey, m) } catch {}
   }, [modeStorageKey])
 
+  const prevModeRef = useRef(boardMode)
+
   const batchStorageKey = `heimdall:ops:last-batch:${boardId}`
   const [filterBatch, _setFilterBatch] = useState<string | 'all'>(() => {
     if (typeof window === 'undefined') return 'all'
@@ -169,6 +171,23 @@ export default function BoardDetailPage() {
 
     setFiltersInitialized(true)
   }, [board, items, filtersInitialized, boardMode])
+
+  useEffect(() => {
+    if (prevModeRef.current === boardMode) return
+    prevModeRef.current = boardMode
+    if (!board || items.length === 0) return
+
+    if (boardMode === 'feedback') {
+      const agencies = [...new Set(items.map(i => i.creative_partner).filter(Boolean))] as string[]
+      const external = agencies.filter(cp => !RELEVANT_PARTNERS.includes(cp))
+      setFilterPartners(new Set(external.length > 0 ? external : agencies))
+    } else {
+      const defaults = board.default_creative_partners?.length
+        ? board.default_creative_partners
+        : RELEVANT_PARTNERS
+      setFilterPartners(new Set(defaults))
+    }
+  }, [boardMode, board, items])
 
   const handleSync = async () => {
     setSyncing(true)
@@ -414,6 +433,7 @@ function AgencyFilter({
   const primaryPartners = creativePartners.filter(cp => RELEVANT_PARTNERS.includes(cp))
   const agencyPartners = creativePartners.filter(cp => !RELEVANT_PARTNERS.includes(cp))
   const activeAgencyCount = agencyPartners.filter(cp => filterPartners.has(cp)).length
+  const isSyncMode = boardMode === 'sync'
 
   return (
     <div className="flex items-center gap-1.5">
@@ -440,11 +460,14 @@ function AgencyFilter({
           <Popover>
             <PopoverTrigger asChild>
               <button
+                disabled={isSyncMode}
                 className={cn(
                   'h-6 rounded-md px-2 text-[11px] font-medium transition-colors border inline-flex items-center gap-1',
-                  activeAgencyCount > 0
-                    ? 'bg-primary/15 text-primary border-primary/30'
-                    : 'bg-transparent text-muted-foreground border-transparent hover:bg-muted/50'
+                  isSyncMode
+                    ? 'bg-transparent text-muted-foreground/40 border-transparent cursor-not-allowed'
+                    : activeAgencyCount > 0
+                      ? 'bg-primary/15 text-primary border-primary/30'
+                      : 'bg-transparent text-muted-foreground border-transparent hover:bg-muted/50'
                 )}
               >
                 Agencies{activeAgencyCount > 0 ? ` (${activeAgencyCount})` : ''}
