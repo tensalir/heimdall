@@ -564,6 +564,11 @@ function parseFeedbackTableFromSections(sections: DocSection[]): EditableVersion
   return versions
 }
 
+function autoResize(el: HTMLTextAreaElement) {
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
+}
+
 function EditableFeedbackTable({
   versions,
   onChange,
@@ -611,10 +616,13 @@ function EditableFeedbackTable({
                     </td>
                     <td className="px-1 py-1">
                       <textarea
-                        className="w-full bg-transparent border-0 px-2 py-1 text-[12px] text-foreground/90 leading-relaxed resize-none focus:outline-none focus:ring-1 focus:ring-primary/30 rounded min-h-[28px]"
+                        ref={(el) => { if (el) autoResize(el) }}
+                        className="w-full bg-transparent border-0 px-2 py-1.5 text-[12px] text-foreground/90 leading-relaxed resize-none focus:outline-none focus:ring-1 focus:ring-primary/30 rounded min-h-[2.25rem] overflow-hidden"
                         value={row.feedback}
-                        rows={Math.max(1, Math.ceil(row.feedback.length / 60))}
-                        onChange={(e) => handleCellChange(vIdx, rIdx, e.target.value)}
+                        onChange={(e) => {
+                          handleCellChange(vIdx, rIdx, e.target.value)
+                          autoResize(e.target)
+                        }}
                         placeholder="Enter feedback..."
                       />
                     </td>
