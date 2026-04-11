@@ -114,6 +114,16 @@ function parseFileNameToBatch(fileName: string): string | null {
   return parsed?.canonicalKey ?? null
 }
 
+function sortBatchKeysDesc(batchKeys: string[]): string[] {
+  return [...batchKeys].sort((a, b) => {
+    const parsedA = parseBatchToCanonical(a)
+    const parsedB = parseBatchToCanonical(b)
+    const keyA = parsedA?.canonicalKey ?? a
+    const keyB = parsedB?.canonicalKey ?? b
+    return keyB.localeCompare(keyA)
+  })
+}
+
 function hasConcretePageId(value: { figma_page_id: string | null } | undefined): boolean {
   return value?.figma_page_id != null && String(value.figma_page_id).trim() !== ''
 }
@@ -158,7 +168,7 @@ export async function POST(request: NextRequest) {
         if (matching.length === 1) {
           batchCanonical = matching[0]
         } else if (matching.length > 1) {
-          availableBatches = matching.sort()
+          availableBatches = sortBatchKeysDesc(matching)
           return NextResponse.json({
             needsBatchSelection: true,
             availableBatches,
@@ -168,7 +178,7 @@ export async function POST(request: NextRequest) {
             }),
           })
         } else {
-          const allMapKeys = Object.keys(map).sort()
+          const allMapKeys = sortBatchKeysDesc(Object.keys(map))
           if (allMapKeys.length > 0) {
             return NextResponse.json({
               needsBatchSelection: true,

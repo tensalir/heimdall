@@ -1,0 +1,20 @@
+{
+  "name": "Iterator",
+  "id": "0000000000000000000",
+  "api": "1.0.0",
+  "main": "code.js",
+  "documentAccess": "dynamic-page",
+  "editorType": ["figma"],
+  "menu": [
+    { "name": "Iterate on Selection", "command": "iterate" },
+    { "separator": true },
+    { "name": "Generate from Briefing", "command": "generate" },
+    { "separator": true },
+    { "name": "Derive Variants", "command": "derive-variants" }
+  ],
+  "networkAccess": {
+    "allowedDomains": ["https://bifrost-rose.vercel.app", "https://*.vercel.app", "https://api.figma.com"],
+    "devAllowedDomains": ["*"],
+    "reasoning": "Plugin communicates with Iterator backend on Vercel, Figma REST API, and Gemini API for image generation."
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "heimdall-iterator-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.102.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.2"
+  }
+}
