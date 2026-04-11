@@ -34,12 +34,14 @@ export interface EditStep {
   rationale: string
 }
 
+export type NanoBananaModel = 'nano-banana-pro' | 'nano-banana-2'
+
 export interface GenerationBrief {
   prompt: string
   referenceImageUrls: string[]
-  aspectRatio: '4:5' | '9:16' | '1:1'
-  resolution: '1K' | '2K' | '4K'
-  style: 'photorealistic' | 'editorial' | 'illustration' | 'product-render'
+  aspectRatio: '4:5' | '9:16' | '1:1' | '16:9' | '2:3' | '3:2' | '3:4' | '4:3' | '5:4'
+  resolution: '512' | '1K' | '2K' | '4K'
+  style?: 'photorealistic' | 'editorial' | 'illustration' | 'product-render'
 }
 
 export interface IteratorJob {

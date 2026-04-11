@@ -72,8 +72,12 @@ const envSchema = z.object({
   VESPER_API_URL: z.string().url().optional(),
   /** Vesper server-to-server auth secret. */
   VESPER_API_SECRET: z.string().min(1).optional(),
-  /** Gemini API key for direct Nano Banana generation (Vesper fallback). */
+  /** Gemini API key for direct Nano Banana generation (Vesper fallback and Iterator). */
   GEMINI_API_KEY: z.string().min(1).optional(),
+  /** Iterator-specific Gemini API key (separate Google Cloud project). Falls back to GEMINI_API_KEY if unset. */
+  ITERATOR_GEMINI_API_KEY: z.string().min(1).optional(),
+  /** Iterator plugin auth secret. Revocable independently from HEIMDALL_PLUGIN_SECRET. */
+  ITERATOR_PLUGIN_SECRET: z.string().min(1).optional(),
   /** Supabase public URL (client-side auth). */
   NEXT_PUBLIC_SUPABASE_URL: z.string().url().optional(),
   /** Supabase anon key (client-side auth). */
