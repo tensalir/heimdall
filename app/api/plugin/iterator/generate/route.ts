@@ -10,9 +10,9 @@
 
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { generateImage, generateBatch, getAvailableModels } from '../../../../../src/iterator/gemini/nanoBananaClient'
-import { storeBase64Asset } from '../../../../../src/iterator/storage/assetStore'
-import { updateJobStatus, storeGeneratedAsset } from '../../../../../src/iterator/jobs/iteratorJobs'
+import { generateImage, getAvailableModels } from '@/src/iterator/gemini/nanoBananaClient'
+import { storeBase64Asset } from '@/src/iterator/storage/assetStore'
+import { updateJobStatus, storeGeneratedAsset } from '@/src/iterator/jobs/iteratorJobs'
 
 export const maxDuration = 120
 

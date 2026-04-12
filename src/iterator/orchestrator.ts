@@ -6,11 +6,11 @@
  * Claude (planning), Gemini (generation), and Figma (assembly).
  */
 
-import type { AnalyzeRequest, EditPlan, IteratorMode } from './types'
-import { planLayeredIteration } from './claude/layeredPlanner'
-import { planBackgroundVariation } from './claude/backgroundPlanner'
-import { planFlatVariants } from './claude/flatVariantPlanner'
-import { planFromBriefing } from './claude/briefingPlanner'
+import type { AnalyzeRequest, EditPlan, IteratorMode } from './types.js'
+import { planLayeredIteration } from './claude/layeredPlanner.js'
+import { planBackgroundVariation } from './claude/backgroundPlanner.js'
+import { planFlatVariants } from './claude/flatVariantPlanner.js'
+import { planFromBriefing } from './claude/briefingPlanner.js'
 
 export async function orchestrate(request: AnalyzeRequest): Promise<EditPlan> {
   const mode = request.mode

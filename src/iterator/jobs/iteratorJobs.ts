@@ -5,8 +5,8 @@
  * from lib/discoveryJobs.ts but with Iterator-specific status states.
  */
 
-import { getSupabase } from '../../../lib/supabase'
-import type { IteratorJob, IteratorJobStatus, IteratorMode, EditPlan } from '../types'
+import { getSupabase } from '../../../lib/supabase.js'
+import type { IteratorJob, IteratorJobStatus, IteratorMode, EditPlan } from '../types.js'
 
 const TABLE = 'iterator_jobs'
 

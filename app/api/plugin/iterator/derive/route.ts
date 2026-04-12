@@ -9,8 +9,8 @@
 
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { extractFrameData } from '../../../../../src/iterator/figma/extraction'
-import { createJob, updateJobStatus } from '../../../../../src/iterator/jobs/iteratorJobs'
+import { extractFrameData } from '@/src/iterator/figma/extraction'
+import { createJob, updateJobStatus } from '@/src/iterator/jobs/iteratorJobs'
 
 export const maxDuration = 120
 

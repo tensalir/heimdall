@@ -6,7 +6,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk'
-import type { AnalyzeRequest, EditPlan } from '../types'
+import type { AnalyzeRequest, EditPlan } from '../types.js'
 
 const client = new Anthropic()
 
@@ -35,11 +35,9 @@ export async function planFlatVariants(request: AnalyzeRequest): Promise<EditPla
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 8192,
-    thinking: { type: 'adaptive' },
-    output_config: { effort: 'high' },
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userContent }],
-  } as Parameters<typeof client.messages.create>[0])
+  })
 
   const textBlock = response.content.find((b) => b.type === 'text')
   if (!textBlock || textBlock.type !== 'text') {

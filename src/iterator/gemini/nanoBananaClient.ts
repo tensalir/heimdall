@@ -11,7 +11,7 @@
  * Reference: https://ai.google.dev/gemini-api/docs/image-generation
  */
 
-import type { GenerationBrief } from '../types'
+import type { GenerationBrief } from '../types.js'
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 

@@ -8,7 +8,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { getJob } from '../../../../../src/iterator/jobs/iteratorJobs'
+import { getJob } from '@/src/iterator/jobs/iteratorJobs'
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)

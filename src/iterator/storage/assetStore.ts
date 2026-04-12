@@ -6,7 +6,7 @@
  * established by mediaMirror.ts instead of storing large data: URLs.
  */
 
-import { getSupabase } from '../../../lib/supabase'
+import { getSupabase } from '../../../lib/supabase.js'
 
 const BUCKET = 'iterator-assets'
 

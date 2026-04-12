@@ -8,9 +8,9 @@
  */
 
 import { NextResponse } from 'next/server'
-import { AnalyzeRequestSchema } from '../../../../src/iterator/types'
-import { orchestrate, chooseMode } from '../../../../src/iterator/orchestrator'
-import { createJob, updateJobStatus } from '../../../../src/iterator/jobs/iteratorJobs'
+import { AnalyzeRequestSchema } from '@/src/iterator/types'
+import { orchestrate, chooseMode } from '@/src/iterator/orchestrator'
+import { createJob, updateJobStatus } from '@/src/iterator/jobs/iteratorJobs'
 
 export const maxDuration = 120
 
