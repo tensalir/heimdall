@@ -93,3 +93,21 @@ export async function exportFrameAsImage(fileKey: string, nodeId: string, scale 
     return null
   }
 }
+
+/**
+ * Export multiple child nodes as PNG image URLs.
+ * Used to extract individual image layers for use as Nano Banana style references.
+ */
+export async function exportChildImages(
+  fileKey: string,
+  nodeIds: string[],
+  scale = 2,
+): Promise<Record<string, string>> {
+  try {
+    const images = await exportNodeImages(fileKey, nodeIds, { format: 'png', scale })
+    return images || {}
+  } catch (err) {
+    console.error('[iterator/extraction] Failed to export child images:', (err as Error).message)
+    return {}
+  }
+}
