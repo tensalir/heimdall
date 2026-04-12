@@ -43,13 +43,17 @@ export async function POST(request: Request) {
     }
 
     try {
-      const plan = await orchestrate(req)
+      const result = await orchestrate(req)
 
       if (job) {
-        await updateJobStatus(job.id, 'completed', { edit_plan: plan })
+        await updateJobStatus(job.id, 'completed', { edit_plan: result.editPlan })
       }
 
-      return NextResponse.json({ jobId: job?.id, plan })
+      return NextResponse.json({
+        jobId: job?.id,
+        editPlan: result.editPlan,
+        copyPlan: result.copyPlan ?? null,
+      })
     } catch (planError) {
       if (job) {
         await updateJobStatus(job.id, 'failed', { error: (planError as Error).message })

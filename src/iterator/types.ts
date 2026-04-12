@@ -53,6 +53,29 @@ export interface GenerationBrief {
   style?: 'photorealistic' | 'editorial' | 'illustration' | 'product-render'
 }
 
+export interface CopyVariant {
+  captionPrimaryText: string
+  headline: string
+  description: string
+  cta: string
+  productAssignment: string
+  hookType: 'question' | 'callout' | 'confession' | 'micro-drama' | 'identity-statement' | string
+  angle: string
+}
+
+export interface CopyPlan {
+  variants: CopyVariant[]
+  copyStrategy: 'shared_caption' | 'per_variant'
+  qaFlags: string[]
+  nextTestIdeas: string[]
+  reasoning: string
+}
+
+export interface IterationResult {
+  editPlan: EditPlan
+  copyPlan?: CopyPlan
+}
+
 export interface IteratorJob {
   id: string
   mode: IteratorMode
