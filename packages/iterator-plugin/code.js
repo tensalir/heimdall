@@ -42,12 +42,58 @@
         const layerSummary = extractLayerSummary(sourceFrame);
         figma.ui.postMessage({ type: "frame-data", data: layerSummary });
       }
-      if (msg.type === "apply-variant") {
+      if (msg.type === "create-placeholder") {
         try {
-          figma.ui.postMessage({ type: "status", text: "Cloning frame..." });
+          let findImageRects2 = function(node) {
+            const rects = [];
+            if (node.type === "RECTANGLE" && node.fills && node.fills.length > 0) {
+              const fills = node.fills;
+              if (fills[0].type === "IMAGE") rects.push(node);
+            }
+            if ("children" in node) {
+              for (const c of node.children) rects.push(...findImageRects2(c));
+            }
+            return rects;
+          };
+          var findImageRects = findImageRects2;
           const clone = sourceFrame.clone();
           clone.name = sourceFrame.name + "-variant";
           clone.x = sourceFrame.x + sourceFrame.width + 80;
+          const imageRects = findImageRects2(clone);
+          for (const rect of imageRects) {
+            rect.fills = [{ type: "SOLID", color: { r: 0.85, g: 0.85, b: 0.88 }, opacity: 1 }];
+          }
+          const label = figma.createText();
+          await figma.loadFontAsync({ family: "Inter", style: "Semi Bold" });
+          label.fontName = { family: "Inter", style: "Semi Bold" };
+          label.characters = "Generating variant...";
+          label.fontSize = 32;
+          label.fills = [{ type: "SOLID", color: { r: 0.4, g: 0.35, b: 0.9 } }];
+          clone.appendChild(label);
+          label.x = 80;
+          label.y = clone.height - 120;
+          figma.currentPage.selection = [clone];
+          figma.viewport.scrollAndZoomIntoView([clone]);
+          figma.ui.postMessage({
+            type: "placeholder-ready",
+            cloneId: clone.id,
+            imageRectNames: imageRects.map((r) => r.name)
+          });
+        } catch (err) {
+          figma.ui.postMessage({ type: "status", text: "Error creating placeholder: " + err.message });
+        }
+      }
+      if (msg.type === "apply-variant") {
+        try {
+          const cloneId = msg.cloneId;
+          const clone = await figma.getNodeByIdAsync(cloneId);
+          if (!clone || clone.type !== "FRAME") {
+            figma.ui.postMessage({ type: "status", text: "Error: variant frame not found" });
+            return;
+          }
+          const variantFrame = clone;
+          const genLabel = variantFrame.children.find((c) => c.type === "TEXT" && c.name === "Generating variant...");
+          if (genLabel) genLabel.remove();
           const images = msg.images || [];
           let imagesPlaced = 0;
           for (const img of images) {
@@ -56,21 +102,15 @@
             const image = figma.createImage(bytes);
             const originalNode = await figma.getNodeByIdAsync(img.nodeId);
             if (!originalNode) continue;
-            const targetRect = findImageRectInClone(clone, originalNode.name);
+            const targetRect = findImageRectInClone(variantFrame, originalNode.name);
             if (!targetRect) continue;
-            const fills = JSON.parse(JSON.stringify(targetRect.fills));
-            if (fills.length > 0 && fills[0].type === "IMAGE") {
-              fills[0].imageHash = image.hash;
-            } else {
-              fills.unshift({ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" });
-            }
-            targetRect.fills = fills;
+            targetRect.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
             imagesPlaced++;
           }
           const copyChanges = msg.copyChanges || [];
           let copyApplied = 0;
           for (const change of copyChanges) {
-            const textNode = findTextNodeInClone(clone, change.nodeName);
+            const textNode = findTextNodeInClone(variantFrame, change.nodeName);
             if (!textNode || textNode.type !== "TEXT") continue;
             try {
               await figma.loadFontAsync(textNode.fontName);
@@ -80,11 +120,11 @@
             } catch (e) {
             }
           }
-          figma.currentPage.selection = [clone];
-          figma.viewport.scrollAndZoomIntoView([clone]);
+          figma.currentPage.selection = [variantFrame];
+          figma.viewport.scrollAndZoomIntoView([variantFrame]);
           figma.ui.postMessage({
             type: "status",
-            text: `Variant created! ${imagesPlaced} images replaced, ${copyApplied} copy changes applied.`
+            text: "Done! " + imagesPlaced + " images replaced, " + copyApplied + " copy changes applied."
           });
         } catch (err) {
           figma.ui.postMessage({
@@ -218,13 +258,20 @@
       el.textContent = text;
     }
 
-    document.getElementById('btn-variant').addEventListener('click', async function() {
-      var btn = document.getElementById('btn-variant');
-      btn.disabled = true;
-      btn.textContent = 'Generating variant...';
+    var pendingCloneId = null;
 
+    window.addEventListener('message', function(event) {
+      var msg = event.data.pluginMessage;
+      if (!msg) return;
+      if (msg.type === 'placeholder-ready') {
+        pendingCloneId = msg.cloneId;
+        startGeneration();
+      }
+    });
+
+    async function startGeneration() {
       try {
-        setProgress('Step 1/4: Sending to Iterator backend...');
+        setProgress('Step 2/5: Sending to Iterator backend...');
 
         // Recursively find image node IDs (frames named {EDIT})
         var imageNodeIds = [];
@@ -265,7 +312,7 @@
         }
 
         var result = await resp.json();
-        setProgress('Step 2/4: Downloading generated images...');
+        setProgress('Step 3/5: Downloading generated images...');
 
         // Fetch each generated image as bytes
         var imagePayloads = [];
@@ -273,7 +320,7 @@
           var imgResult = result.imageResults[j];
           if (imgResult.url) {
             try {
-              setProgress('Step 2/4: Downloading image ' + (j + 1) + '/' + result.imageResults.length + '...');
+              setProgress('Step 3/5: Downloading image ' + (j + 1) + '/' + result.imageResults.length + '...');
               var imgResp = await fetch(imgResult.url);
               if (imgResp.ok) {
                 var buf = await imgResp.arrayBuffer();
@@ -289,7 +336,7 @@
           }
         }
 
-        setProgress('Step 3/4: Preparing copy changes...');
+        setProgress('Step 4/5: Preparing copy changes...');
 
         // Extract copy changes from copyPlan
         var copyChanges = [];
@@ -319,11 +366,12 @@
           }
         }
 
-        setProgress('Step 4/4: Applying variant to Figma...');
+        setProgress('Step 5/5: Applying images and copy to variant...');
 
-        // Send to main thread for application
+        // Send to main thread for application on the existing clone
         parent.postMessage({ pluginMessage: {
           type: 'apply-variant',
+          cloneId: pendingCloneId,
           images: imagePayloads,
           copyChanges: copyChanges
         }}, '*');
@@ -332,9 +380,20 @@
         var el = document.getElementById('status');
         el.style.display = 'block';
         el.textContent = 'Error: ' + (err.message || err);
-        btn.disabled = false;
-        btn.textContent = 'Create Variant';
+        document.getElementById('btn-variant').disabled = false;
+        document.getElementById('btn-variant').textContent = 'Create Variant';
       }
+    }
+
+    document.getElementById('btn-variant').addEventListener('click', function() {
+      var btn = document.getElementById('btn-variant');
+      btn.disabled = true;
+      btn.textContent = 'Generating variant...';
+      setProgress('Step 1/5: Creating placeholder frame...');
+
+      // Ask main thread to clone and create grey placeholders
+      parent.postMessage({ pluginMessage: { type: 'create-placeholder' } }, '*');
+      // startGeneration() will be called when 'placeholder-ready' arrives
     });
 
     parent.postMessage({ pluginMessage: { type: 'ready' } }, '*');
