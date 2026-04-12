@@ -8,7 +8,7 @@
 
 import { getSupabase } from '../../../lib/supabase.js'
 
-const BUCKET = 'iterator-assets'
+const BUCKET = 'briefing-media'
 
 export async function storeAsset(
   jobId: string,

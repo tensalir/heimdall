@@ -108,7 +108,11 @@ export async function POST(request: Request) {
 
       if (result.imageBase64) {
         const storedUrl = await storeBase64Asset(jobId, `img-${nodeId.replace(':', '-')}`, result.imageBase64)
-        imageResults.push({ nodeId, url: storedUrl, error: null })
+        if (storedUrl) {
+          imageResults.push({ nodeId, url: storedUrl, error: null })
+        } else {
+          imageResults.push({ nodeId, url: null, error: 'Image generated but storage failed' })
+        }
       } else {
         imageResults.push({ nodeId, url: null, error: result.error || 'Generation failed' })
       }
