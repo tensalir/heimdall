@@ -25,6 +25,11 @@ You are creating a new performance ad from a creative briefing. Your task:
 
 Return JSON matching the EditPlan schema.
 
+Story preservation:
+- If the concept involves lifestyle or person-centric imagery, identify which regions carry the narrative.
+- Plan overlay placement that supports the story rather than obscuring the subject.
+- Include a "storyPreservation" field: storySubject, protectedRegions, occlusionRisk, recommendedAdjustment, rationale.
+
 Use adaptive thinking to reason through the creative direction before committing.`
 
 export async function planFromBriefing(request: AnalyzeRequest): Promise<EditPlan> {

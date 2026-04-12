@@ -22,7 +22,13 @@ Design principles:
 - Maintain brand consistency. Loop uses Avantt and FK Screamer typefaces.
 - Respect safe zones. Content must stay within platform-specific margins.
 - Prefer intentional composition over mechanical rearrangement.
-- If a change would make the ad weaker, say so and suggest an alternative.`
+- If a change would make the ad weaker, say so and suggest an alternative.
+
+Story preservation:
+- The background image carries part of the ad's meaning. Identify what narrative it tells (person commuting, product in use, lifestyle scene).
+- Identify story-carrying regions: faces, gaze, hands, gestures, product interaction, environmental cues.
+- If any overlay would obscure these regions after resizing, recommend moving it to a less narrative-critical area.
+- Include a "storyPreservation" field in your output with: storySubject, protectedRegions, occlusionRisk (low/medium/high), recommendedAdjustment (none/move_up/move_down/move_left/move_right/shrink_overlay/reformat_overlay), and rationale.`
 
 export async function planLayeredIteration(request: AnalyzeRequest): Promise<EditPlan> {
   const userContent = buildUserMessage(request)
@@ -58,7 +64,7 @@ function buildUserMessage(request: AnalyzeRequest): string {
     parts.push(`## Target ratios\n${request.targetRatios.join(', ')}`)
   }
 
-  parts.push(`\nReturn a JSON edit plan following this shape:\n{ "mode": "layered-iteration", "sourceDescription": "...", "steps": [...], "targetRatios": [...], "confidence": "high|medium|low", "humanReviewNeeded": boolean, "reasoning": "..." }`)
+  parts.push(`\nReturn a JSON edit plan following this shape:\n{ "mode": "layered-iteration", "sourceDescription": "...", "steps": [...], "targetRatios": [...], "confidence": "high|medium|low", "humanReviewNeeded": boolean, "reasoning": "...", "storyPreservation": { "storySubject": "...", "protectedRegions": [...], "occlusionRisk": "low|medium|high", "recommendedAdjustment": "none|move_up|move_down|...", "rationale": "..." } }`)
 
   return parts.join('\n\n')
 }

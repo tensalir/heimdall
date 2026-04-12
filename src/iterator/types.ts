@@ -16,6 +16,14 @@ export const AnalyzeRequestSchema = z.object({
 
 export type AnalyzeRequest = z.infer<typeof AnalyzeRequestSchema>
 
+export interface StoryPreservation {
+  storySubject: string
+  protectedRegions: string[]
+  occlusionRisk: 'low' | 'medium' | 'high'
+  recommendedAdjustment: 'none' | 'move_up' | 'move_down' | 'move_left' | 'move_right' | 'shrink_overlay' | 'reformat_overlay'
+  rationale: string
+}
+
 export interface EditPlan {
   mode: IteratorMode
   sourceDescription: string
@@ -24,6 +32,7 @@ export interface EditPlan {
   confidence: 'high' | 'medium' | 'low'
   humanReviewNeeded: boolean
   reasoning: string
+  storyPreservation?: StoryPreservation
 }
 
 export interface EditStep {

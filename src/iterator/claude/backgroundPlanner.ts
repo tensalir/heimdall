@@ -21,6 +21,12 @@ Your task is to analyze a source ad and plan:
 The background generation brief should describe the visual scene, mood, lighting, and composition.
 Do NOT include text or typography in the background generation — those will be added as separate Figma layers.
 
+Story preservation:
+- The background image carries part of the ad's meaning. Identify what it communicates.
+- When generating background variations, preserve the narrative intent (scene type, mood, subject role).
+- When planning overlay assembly, check whether overlays would occlude story-carrying regions (faces, gestures, product interaction).
+- Include a "storyPreservation" field: storySubject, protectedRegions, occlusionRisk, recommendedAdjustment, rationale.
+
 Return JSON matching the EditPlan schema with additional generation_briefs for background candidates.`
 
 export async function planBackgroundVariation(request: AnalyzeRequest): Promise<EditPlan> {
