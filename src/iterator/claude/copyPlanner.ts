@@ -9,7 +9,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import type { AnalyzeRequest, CopyPlan } from '../types.js'
-import { loadSkillWithReferences } from './skillLoader.js'
+import { loadSkillWithReferences, extractJson } from './skillLoader.js'
 
 const client = new Anthropic()
 
@@ -58,7 +58,7 @@ export async function planCopy(request: AnalyzeRequest): Promise<CopyPlan> {
     throw new Error('No text response from Claude for copy planning')
   }
 
-  return JSON.parse(textBlock.text) as CopyPlan
+  return JSON.parse(extractJson(textBlock.text)) as CopyPlan
 }
 
 function buildUserMessage(request: AnalyzeRequest): string {

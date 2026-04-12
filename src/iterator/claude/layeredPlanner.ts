@@ -8,6 +8,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import type { AnalyzeRequest, EditPlan } from '../types.js'
+import { extractJson } from './skillLoader.js'
 
 const client = new Anthropic()
 
@@ -45,7 +46,7 @@ export async function planLayeredIteration(request: AnalyzeRequest): Promise<Edi
     throw new Error('No text response from Claude')
   }
 
-  const parsed = JSON.parse(textBlock.text)
+  const parsed = JSON.parse(extractJson(textBlock.text))
   return parsed as EditPlan
 }
 

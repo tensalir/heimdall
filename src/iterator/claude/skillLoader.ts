@@ -57,6 +57,21 @@ export function loadSkillReference(skillName: string, refPath: string): string {
 }
 
 /**
+ * Extract JSON from a Claude response that may be wrapped in
+ * markdown code fences (```json ... ```).
+ */
+export function extractJson(text: string): string {
+  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/)
+  if (fenceMatch) return fenceMatch[1].trim()
+  const braceStart = text.indexOf('{')
+  const braceEnd = text.lastIndexOf('}')
+  if (braceStart !== -1 && braceEnd > braceStart) {
+    return text.slice(braceStart, braceEnd + 1)
+  }
+  return text.trim()
+}
+
+/**
  * Load the core skill SKILL.md plus a set of reference files,
  * concatenated with section headers. Useful for building a
  * comprehensive system prompt from a skill and its key references.
