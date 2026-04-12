@@ -19,7 +19,8 @@ export async function storeAsset(
   const db = getSupabase()
   if (!db) return null
 
-  const path = `${jobId}/${assetType}-${Date.now()}.png`
+  const ext = contentType === 'image/jpeg' ? 'jpg' : 'png'
+  const path = `${jobId}/${assetType}-${Date.now()}.${ext}`
 
   const { error: uploadError } = await db.storage
     .from(BUCKET)
@@ -33,11 +34,9 @@ export async function storeAsset(
     return null
   }
 
-  const { data: signedUrl } = await db.storage
-    .from(BUCKET)
-    .createSignedUrl(path, 60 * 60 * 24 * 7) // 7-day expiry
-
-  return signedUrl?.signedUrl || null
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+  const publicUrl = `${supabaseUrl}/storage/v1/object/public/${BUCKET}/${path}`
+  return publicUrl
 }
 
 export async function storeBase64Asset(
@@ -46,5 +45,6 @@ export async function storeBase64Asset(
   base64Data: string,
 ): Promise<string | null> {
   const buffer = Buffer.from(base64Data, 'base64')
-  return storeAsset(jobId, assetType, buffer)
+  const isJpeg = buffer[0] === 0xff && buffer[1] === 0xd8
+  return storeAsset(jobId, assetType, buffer, isJpeg ? 'image/jpeg' : 'image/png')
 }
