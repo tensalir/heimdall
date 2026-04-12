@@ -9,7 +9,7 @@ config({ path: resolve(__dirname, '../../.env.local') })
 config({ path: resolve(__dirname, '../../.env') })
 
 const define = {
-  __ITERATOR_TOKEN__: JSON.stringify(process.env.ITERATOR_PLUGIN_SECRET || ''),
+  __ITERATOR_TOKEN__: JSON.stringify(process.env.ITERATOR_PLUGIN_SECRET || process.env.HEIMDALL_PLUGIN_SECRET || ''),
 }
 
 const opts = {

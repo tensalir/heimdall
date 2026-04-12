@@ -6,19 +6,32 @@
     return DEFAULT_ITERATOR_API;
   }
   function getPluginToken() {
-    return true ? "" : "";
+    return true ? "58a1bfb45c0020137ee780cafd52f27dc6d9dcada2b69fe44eae5452c9360f37" : "";
   }
 
   // src/commands/iterate.ts
+  function resolveExperimentFrame(node) {
+    let current = node;
+    while (current) {
+      if (current.type === "FRAME" && /^EXP-/.test(current.name)) {
+        return current;
+      }
+      current = current.parent;
+    }
+    return null;
+  }
   function runIterate() {
     const selection = figma.currentPage.selection;
     if (selection.length === 0) {
-      figma.closePlugin("Select a frame to iterate on.");
+      figma.closePlugin("Select an ad frame (or any element inside one) to iterate on.");
       return;
     }
-    const frame = selection[0];
-    if (frame.type !== "FRAME") {
-      figma.closePlugin("Please select a frame (not a group or other node type).");
+    const selected = selection[0];
+    const frame = resolveExperimentFrame(selected);
+    if (!frame) {
+      figma.closePlugin(
+        "Could not find an experiment frame (EXP-...). Please select an ad frame like EXP-SB171...9x16, or any element inside one."
+      );
       return;
     }
     const html = buildUI(frame.id, frame.name);
@@ -113,16 +126,23 @@
     return found;
   }
   function extractLayerSummary(frame) {
-    const children = frame.children.map((c) => ({
-      id: c.id,
-      name: c.name,
-      type: c.type,
-      x: Math.round(c.x),
-      y: Math.round(c.y),
-      width: Math.round(c.width),
-      height: Math.round(c.height),
-      visible: c.visible !== false
-    }));
+    function mapNode(c) {
+      const node = {
+        id: c.id,
+        name: c.name,
+        type: c.type,
+        x: Math.round(c.x),
+        y: Math.round(c.y),
+        width: Math.round(c.width),
+        height: Math.round(c.height),
+        visible: c.visible !== false
+      };
+      if ("children" in c && c.children.length > 0) {
+        node.children = c.children.map(mapNode);
+      }
+      return node;
+    }
+    const children = frame.children.map(mapNode);
     return {
       id: frame.id,
       name: frame.name,
@@ -206,16 +226,19 @@
       try {
         setProgress('Step 1/4: Sending to Iterator backend...');
 
-        // Find image node IDs (frames named {EDIT})
+        // Recursively find image node IDs (frames named {EDIT})
         var imageNodeIds = [];
-        if (frameData && frameData.children) {
-          for (var i = 0; i < frameData.children.length; i++) {
-            var child = frameData.children[i];
-            if (child.type === 'FRAME' && child.name.indexOf('{EDIT}') >= 0) {
+        function findEditFrames(nodes) {
+          if (!nodes) return;
+          for (var i = 0; i < nodes.length; i++) {
+            var child = nodes[i];
+            if (child.type === 'FRAME' && child.name && child.name.indexOf('{EDIT}') >= 0) {
               imageNodeIds.push(child.id);
             }
+            if (child.children) findEditFrames(child.children);
           }
         }
+        if (frameData) findEditFrames(frameData.children);
 
         // POST to variant endpoint
         var reqBody = {
@@ -272,15 +295,26 @@
         var copyChanges = [];
         if (result.copyPlan && result.copyPlan.variants && result.copyPlan.variants.length > 0) {
           var variant = result.copyPlan.variants[0];
-          // Map headline to the main text node
-          if (variant.headline) {
-            // Try to find the headline text node by common patterns
-            for (var k = 0; k < frameData.children.length; k++) {
-              var c = frameData.children[k];
+          // Find the headline text node (largest TEXT node in the tree)
+          function findLargestText(nodes) {
+            var best = null;
+            if (!nodes) return best;
+            for (var k = 0; k < nodes.length; k++) {
+              var c = nodes[k];
               if (c.type === 'TEXT' && c.height > 100) {
-                copyChanges.push({ nodeName: c.name, text: variant.headline });
-                break;
+                if (!best || c.height > best.height) best = c;
               }
+              if (c.children) {
+                var sub = findLargestText(c.children);
+                if (sub && (!best || sub.height > best.height)) best = sub;
+              }
+            }
+            return best;
+          }
+          if (variant.headline) {
+            var headlineNode = findLargestText(frameData.children);
+            if (headlineNode) {
+              copyChanges.push({ nodeName: headlineNode.name, text: variant.headline });
             }
           }
         }

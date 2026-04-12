@@ -19,7 +19,7 @@ import { planCopy } from '@/src/iterator/claude/copyPlanner'
 import { storeBase64Asset } from '@/src/iterator/storage/assetStore'
 import type { GenerationBrief, CopyPlan } from '@/src/iterator/types'
 
-export const maxDuration = 120
+export const maxDuration = 300
 
 const VariantRequestSchema = z.object({
   sourceFileKey: z.string(),

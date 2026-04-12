@@ -8,23 +8,44 @@
 
 import { getApiBase, getPluginToken } from '../constants'
 
+/**
+ * Walk up from a node to find the nearest ancestor frame whose name
+ * matches the EXP- naming convention (e.g. EXP-SB171...9x16).
+ * This lets users select any child element and still get the full ad context.
+ */
+function resolveExperimentFrame(node: SceneNode): FrameNode | null {
+  let current: BaseNode | null = node
+  while (current) {
+    if (current.type === 'FRAME' && /^EXP-/.test(current.name)) {
+      return current as FrameNode
+    }
+    current = current.parent
+  }
+  return null
+}
+
 export function runIterate(): void {
   const selection = figma.currentPage.selection
   if (selection.length === 0) {
-    figma.closePlugin('Select a frame to iterate on.')
+    figma.closePlugin('Select an ad frame (or any element inside one) to iterate on.')
     return
   }
 
-  const frame = selection[0]
-  if (frame.type !== 'FRAME') {
-    figma.closePlugin('Please select a frame (not a group or other node type).')
+  const selected = selection[0]
+  const frame = resolveExperimentFrame(selected)
+
+  if (!frame) {
+    figma.closePlugin(
+      'Could not find an experiment frame (EXP-...). '
+      + 'Please select an ad frame like EXP-SB171...9x16, or any element inside one.'
+    )
     return
   }
 
   const html = buildUI(frame.id, frame.name)
   figma.showUI(html, { width: 440, height: 640 })
 
-  const sourceFrame = frame as FrameNode
+  const sourceFrame = frame
 
   figma.ui.onmessage = async (msg: { type: string; [key: string]: unknown }) => {
     if (msg.type === 'ready') {
@@ -138,16 +159,24 @@ function findTextNodeInClone(clone: FrameNode, targetName: string): TextNode | n
 }
 
 function extractLayerSummary(frame: FrameNode) {
-  const children = frame.children.map((c) => ({
-    id: c.id,
-    name: c.name,
-    type: c.type,
-    x: Math.round(c.x),
-    y: Math.round(c.y),
-    width: Math.round(c.width),
-    height: Math.round(c.height),
-    visible: c.visible !== false,
-  }))
+  function mapNode(c: SceneNode): Record<string, unknown> {
+    const node: Record<string, unknown> = {
+      id: c.id,
+      name: c.name,
+      type: c.type,
+      x: Math.round(c.x),
+      y: Math.round(c.y),
+      width: Math.round(c.width),
+      height: Math.round(c.height),
+      visible: c.visible !== false,
+    }
+    if ('children' in c && (c as FrameNode).children.length > 0) {
+      node.children = (c as FrameNode).children.map(mapNode)
+    }
+    return node
+  }
+
+  const children = frame.children.map(mapNode)
 
   return {
     id: frame.id,
@@ -234,16 +263,19 @@ function buildUI(frameId: string, frameName: string): string {
       try {
         setProgress('Step 1/4: Sending to Iterator backend...');
 
-        // Find image node IDs (frames named {EDIT})
+        // Recursively find image node IDs (frames named {EDIT})
         var imageNodeIds = [];
-        if (frameData && frameData.children) {
-          for (var i = 0; i < frameData.children.length; i++) {
-            var child = frameData.children[i];
-            if (child.type === 'FRAME' && child.name.indexOf('{EDIT}') >= 0) {
+        function findEditFrames(nodes) {
+          if (!nodes) return;
+          for (var i = 0; i < nodes.length; i++) {
+            var child = nodes[i];
+            if (child.type === 'FRAME' && child.name && child.name.indexOf('{EDIT}') >= 0) {
               imageNodeIds.push(child.id);
             }
+            if (child.children) findEditFrames(child.children);
           }
         }
+        if (frameData) findEditFrames(frameData.children);
 
         // POST to variant endpoint
         var reqBody = {
@@ -300,15 +332,26 @@ function buildUI(frameId: string, frameName: string): string {
         var copyChanges = [];
         if (result.copyPlan && result.copyPlan.variants && result.copyPlan.variants.length > 0) {
           var variant = result.copyPlan.variants[0];
-          // Map headline to the main text node
-          if (variant.headline) {
-            // Try to find the headline text node by common patterns
-            for (var k = 0; k < frameData.children.length; k++) {
-              var c = frameData.children[k];
+          // Find the headline text node (largest TEXT node in the tree)
+          function findLargestText(nodes) {
+            var best = null;
+            if (!nodes) return best;
+            for (var k = 0; k < nodes.length; k++) {
+              var c = nodes[k];
               if (c.type === 'TEXT' && c.height > 100) {
-                copyChanges.push({ nodeName: c.name, text: variant.headline });
-                break;
+                if (!best || c.height > best.height) best = c;
               }
+              if (c.children) {
+                var sub = findLargestText(c.children);
+                if (sub && (!best || sub.height > best.height)) best = sub;
+              }
+            }
+            return best;
+          }
+          if (variant.headline) {
+            var headlineNode = findLargestText(frameData.children);
+            if (headlineNode) {
+              copyChanges.push({ nodeName: headlineNode.name, text: variant.headline });
             }
           }
         }
