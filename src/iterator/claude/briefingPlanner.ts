@@ -8,6 +8,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { AnalyzeRequest, EditPlan } from '../types.js'
 import { extractJson } from './skillLoader.js'
+import { formatCreativeContextBlock } from './creativeContextFormatter.js'
 
 const client = new Anthropic()
 
@@ -62,6 +63,11 @@ function buildUserMessage(request: AnalyzeRequest): string {
   }
   if (request.targetRatios?.length) {
     parts.push(`## Required aspect ratios\n${request.targetRatios.join(', ')}`)
+  }
+
+  const contextBlock = formatCreativeContextBlock(request.creativeContext)
+  if (contextBlock) {
+    parts.push(contextBlock)
   }
 
   parts.push(`\nAnalyze the briefing, choose a composition archetype and output path, then return an EditPlan JSON.`)

@@ -100,7 +100,7 @@ function resolveExperimentFrame(node: SceneNode): FrameNode | null {
 export function runIterate(): void {
   const selection = figma.currentPage.selection
   if (selection.length === 0) {
-    figma.closePlugin('Select an ad frame (or any element inside one) to iterate on.')
+    figma.closePlugin('Select an ad frame (or any element inside one) to create an iteration from.')
     return
   }
 
@@ -666,7 +666,7 @@ function buildUI(frameId: string, frameName: string): string {
   </style>
 </head>
 <body>
-  <h2>Iterator — Create Variant</h2>
+  <h2>Iterator — Create Iteration</h2>
   <div class="meta">Frame: ${frameName}</div>
   <div id="layers" class="layers">Loading layers...</div>
   <div style="margin-top: 12px;">

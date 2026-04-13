@@ -6,11 +6,11 @@
   "documentAccess": "dynamic-page",
   "editorType": ["figma"],
   "menu": [
-    { "name": "Iterate on Selection", "command": "iterate" },
+    { "name": "Create Iteration", "command": "iterate" },
     { "separator": true },
-    { "name": "Generate from Briefing", "command": "generate" },
+    { "name": "Resize / Derive Formats", "command": "derive-variants" },
     { "separator": true },
-    { "name": "Derive Variants", "command": "derive-variants" }
+    { "name": "Generate from Briefing", "command": "generate" }
   ],
   "networkAccess": {
     "allowedDomains": ["https://bifrost-rose.vercel.app", "https://*.vercel.app", "https://api.figma.com", "https://*.supabase.co"],

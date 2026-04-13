@@ -9,6 +9,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { AnalyzeRequest, EditPlan } from '../types.js'
 import { extractJson } from './skillLoader.js'
+import { formatCreativeContextBlock } from './creativeContextFormatter.js'
 
 const client = new Anthropic()
 
@@ -63,6 +64,11 @@ function buildUserMessage(request: AnalyzeRequest): string {
 
   if (request.targetRatios?.length) {
     parts.push(`## Target ratios\n${request.targetRatios.join(', ')}`)
+  }
+
+  const contextBlock = formatCreativeContextBlock(request.creativeContext)
+  if (contextBlock) {
+    parts.push(contextBlock)
   }
 
   parts.push(`\nReturn a JSON edit plan following this shape:\n{ "mode": "layered-iteration", "sourceDescription": "...", "steps": [...], "targetRatios": [...], "confidence": "high|medium|low", "humanReviewNeeded": boolean, "reasoning": "...", "storyPreservation": { "storySubject": "...", "protectedRegions": [...], "occlusionRisk": "low|medium|high", "recommendedAdjustment": "none|move_up|move_down|...", "rationale": "..." } }`)

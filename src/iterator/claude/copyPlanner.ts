@@ -10,6 +10,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { AnalyzeRequest, CopyPlan } from '../types.js'
 import { loadSkillWithReferences, extractJson } from './skillLoader.js'
+import { formatCreativeContextBlock } from './creativeContextFormatter.js'
 
 const client = new Anthropic()
 
@@ -89,6 +90,11 @@ function buildUserMessage(request: AnalyzeRequest): string {
 
   if (request.targetRatios?.length) {
     parts.push(`## Target formats\n${request.targetRatios.join(', ')}`)
+  }
+
+  const contextBlock = formatCreativeContextBlock(request.creativeContext)
+  if (contextBlock) {
+    parts.push(contextBlock)
   }
 
   parts.push(`Generate paid-social copy variants for this ad. Return JSON matching this shape:
