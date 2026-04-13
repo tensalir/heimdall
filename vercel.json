@@ -4,6 +4,11 @@
   "installCommand": "npm install",
   "framework": "nextjs",
   "outputDirectory": ".next",
+  "functions": {
+    "app/api/plugin/iterator/variant/route.ts": {
+      "maxDuration": 300
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/hibob-sync",

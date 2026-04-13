@@ -112,7 +112,25 @@ export async function POST(request: Request) {
     // Step 3: Export originals as style references
     const exportedUrls = await exportChildImages(sourceFileKey, targetImageIds)
 
-    // Step 4: Generate replacement images via Nano Banana (sequentially to avoid rate limits)
+    // Step 4: Generate images and copy in parallel
+    // Copy planning starts immediately alongside image generation to reduce total time
+    const copyPromise = planCopy({
+      mode: 'layered-iteration',
+      sourceFrameId,
+      sourceFileKey,
+      briefing: briefing || `Create a variant of this ad. Keep the same theme and product but vary the copy. Original: ${frameData.name}`,
+      layerData: {
+        name: frameData.name,
+        width: frameData.width,
+        height: frameData.height,
+        children: frameData.children,
+      },
+    }).catch((err) => {
+      console.warn('[variant] Copy planning failed:', (err as Error).message)
+      return null as CopyPlan | null
+    })
+
+    // Generate replacement images via Nano Banana (sequentially to avoid rate limits)
     const imageResults: ImageResult[] = []
     const jobId = `variant-${Date.now()}`
 
@@ -152,24 +170,8 @@ export async function POST(request: Request) {
       }
     }
 
-    // Step 5: Generate copy variants in parallel with image gen
-    let copyPlan: CopyPlan | null = null
-    try {
-      copyPlan = await planCopy({
-        mode: 'layered-iteration',
-        sourceFrameId,
-        sourceFileKey,
-        briefing: briefing || `Create a variant of this ad. Keep the same theme and product but vary the copy. Original: ${frameData.name}`,
-        layerData: {
-          name: frameData.name,
-          width: frameData.width,
-          height: frameData.height,
-          children: frameData.children,
-        },
-      })
-    } catch (err) {
-      console.warn('[variant] Copy planning failed:', (err as Error).message)
-    }
+    // Wait for copy planning to finish (started in parallel above)
+    const copyPlan = await copyPromise
 
     return NextResponse.json({
       frameData: {
