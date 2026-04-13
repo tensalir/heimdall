@@ -140,6 +140,7 @@ export function runIterate(): void {
             if (!targetRect) continue
 
             targetRect.fills = [{ type: 'IMAGE', imageHash: image.hash, scaleMode: 'FILL' }]
+            targetRect.name = `generated-${img.name || 'image-' + imagesPlaced}`
             imagesPlaced++
           } catch {
             // Image creation failed, skip

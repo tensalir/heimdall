@@ -37,10 +37,39 @@ interface ImageResult {
 }
 
 const IMAGE_PROMPTS: Record<string, string> = {
-  engage: 'Using the reference image as a style guide, create a new portrait-style photo of a different person — different gender or skin tone — laughing joyfully in a warm, social setting. Same intimate, candid mood. Same warm lighting and close crop. The person should feel real and approachable, not posed. No text, no logos, no earplugs visible.',
-  dream: 'Using the reference image as a style guide, create a new portrait-style photo of a different person — different gender or skin tone — peacefully sleeping or dozing. Same intimate, restful mood. Same soft, muted lighting. Close crop on face and upper body. The person should feel real and relaxed. No text, no logos, no earplugs visible.',
-  experience: 'Using the reference image as a style guide, create a new portrait-style photo of a different person — different gender or skin tone — enjoying a concert or live music event. Same vibrant, energetic mood with pink/purple lighting. Close crop. The person should feel real and in-the-moment. No text, no logos, no earplugs visible.',
-  default: 'Using the reference image as a style guide, create a new portrait-style photo of a different person — different gender or skin tone — in the same setting and mood. Same lighting, same crop style. The person should feel real and natural, not posed. No text, no logos, no product visible.',
+  engage: 'Using the reference image as a style guide, create a new portrait-style photo of a different person — different gender or skin tone — laughing joyfully in a warm, social setting. Same intimate, candid mood. Same warm lighting. Frame from mid-chest up, showing full face, hair, and shoulders with some breathing room around the subject. The person should feel real and approachable, not posed. No text, no logos, no earplugs visible.',
+  dream: 'Using the reference image as a style guide, create a new portrait-style photo of a different person — different gender or skin tone — peacefully sleeping or dozing. Same intimate, restful mood. Same soft, muted lighting. Frame from mid-chest up, showing full face, hair, and shoulders with some breathing room around the subject. The person should feel real and relaxed. No text, no logos, no earplugs visible.',
+  experience: 'Using the reference image as a style guide, create a new portrait-style photo of a different person — different gender or skin tone — enjoying a concert or live music event. Same vibrant, energetic mood with pink/purple lighting. Frame from mid-chest up, showing full face, hair, and shoulders with some breathing room around the subject. The person should feel real and in-the-moment. No text, no logos, no earplugs visible.',
+  default: 'Using the reference image as a style guide, create a new portrait-style photo of a different person — different gender or skin tone — in the same setting and mood. Same lighting. Frame from mid-chest up, showing full face, hair, and shoulders with some breathing room around the subject. The person should feel real and natural, not posed. No text, no logos, no product visible.',
+}
+
+type SupportedAspectRatio = GenerationBrief['aspectRatio']
+
+const GEMINI_RATIOS: Array<{ label: SupportedAspectRatio; value: number }> = [
+  { label: '1:1', value: 1 },
+  { label: '4:5', value: 4 / 5 },
+  { label: '5:4', value: 5 / 4 },
+  { label: '3:4', value: 3 / 4 },
+  { label: '4:3', value: 4 / 3 },
+  { label: '2:3', value: 2 / 3 },
+  { label: '3:2', value: 3 / 2 },
+  { label: '9:16', value: 9 / 16 },
+  { label: '16:9', value: 16 / 9 },
+]
+
+function snapToGeminiAspectRatio(width: number, height: number): SupportedAspectRatio {
+  if (width <= 0 || height <= 0) return '3:4'
+  const target = width / height
+  let best = GEMINI_RATIOS[0]
+  let bestDist = Math.abs(Math.log(target / best.value))
+  for (const entry of GEMINI_RATIOS) {
+    const dist = Math.abs(Math.log(target / entry.value))
+    if (dist < bestDist) {
+      best = entry
+      bestDist = dist
+    }
+  }
+  return best.label
 }
 
 function getPromptForImage(nodeName: string): string {
@@ -94,13 +123,18 @@ export async function POST(request: Request) {
         continue
       }
 
-      const nodeName = frameData.children.find((c) => c.id === nodeId)?.name || ''
+      const childNode = frameData.children.find((c) => c.id === nodeId)
+      const nodeName = childNode?.name || ''
       const prompt = getPromptForImage(nodeName)
+
+      const aspectRatio = childNode
+        ? snapToGeminiAspectRatio(childNode.width, childNode.height)
+        : '3:4' as SupportedAspectRatio
 
       const brief: GenerationBrief = {
         prompt,
         referenceImageUrls: [refUrl],
-        aspectRatio: '3:4',
+        aspectRatio,
         resolution: resolution as '512' | '1K' | '2K' | '4K',
       }
 
