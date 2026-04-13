@@ -1,6 +1,6 @@
 declare const __ITERATOR_TOKEN__: string
 
-export const DEFAULT_ITERATOR_API = 'https://heimdall-henna.vercel.app'
+export const DEFAULT_ITERATOR_API = 'https://bifrost-rose.vercel.app'
 
 export function getApiBase(): string {
   return DEFAULT_ITERATOR_API

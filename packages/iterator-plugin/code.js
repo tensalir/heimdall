@@ -21,7 +21,7 @@
   var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 
   // src/constants.ts
-  var DEFAULT_ITERATOR_API = "https://heimdall-henna.vercel.app";
+  var DEFAULT_ITERATOR_API = "https://bifrost-rose.vercel.app";
   function getApiBase() {
     return DEFAULT_ITERATOR_API;
   }

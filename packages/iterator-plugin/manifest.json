@@ -13,7 +13,7 @@
     { "name": "Derive Variants", "command": "derive-variants" }
   ],
   "networkAccess": {
-    "allowedDomains": ["https://heimdall-henna.vercel.app", "https://*.vercel.app", "https://api.figma.com", "https://*.supabase.co"],
+    "allowedDomains": ["https://bifrost-rose.vercel.app", "https://*.vercel.app", "https://api.figma.com", "https://*.supabase.co"],
     "devAllowedDomains": ["*"],
     "reasoning": "Plugin communicates with Iterator backend on Vercel, Figma REST API, and Gemini API for image generation."
   }
