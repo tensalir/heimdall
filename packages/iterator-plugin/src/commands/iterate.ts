@@ -50,8 +50,9 @@ function buildImageTransform(
   }
 
   const zoom = Math.max(0.3, Math.min(1, params.zoom))
-  const sx = baseScaleX * zoom
-  const sy = baseScaleY * zoom
+  const t = 1 - zoom
+  const sx = baseScaleX + (1 - baseScaleX) * t
+  const sy = baseScaleY + (1 - baseScaleY) * t
 
   const tx = (1 - sx) * 0.5 + params.panX * sx
   const ty = (1 - sy) * 0.5 + params.panY * sy
