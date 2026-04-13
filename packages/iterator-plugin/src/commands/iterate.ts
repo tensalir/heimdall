@@ -134,13 +134,21 @@ export function runIterate(): void {
             debugImgLog.push(`  createImage hash=${image.hash}`)
             // #endregion
 
-            const originalNode = await figma.getNodeByIdAsync(img.nodeId)
-            // #region agent log H4
-            debugImgLog.push(`  originalNode=${originalNode ? originalNode.name : 'NOT FOUND'}`)
-            // #endregion
-            if (!originalNode) { debugImgLog.push('  SKIP: original not found'); continue }
+          const originalNode = await figma.getNodeByIdAsync(img.nodeId)
+          if (!originalNode) { debugImgLog.push('  SKIP: original not found'); continue }
 
-            const targetRect = findImageRectInClone(variantFrame, originalNode.name)
+          // The original node is a FRAME named 'Image {EDIT}' containing a RECTANGLE.
+          // Find the rectangle inside the original, then match it by name in the clone.
+          let rectName = originalNode.name
+          if (originalNode.type === 'FRAME' && 'children' in originalNode) {
+            const origRect = (originalNode as FrameNode).children.find((c: SceneNode) => c.type === 'RECTANGLE')
+            if (origRect) rectName = origRect.name
+          }
+          // #region agent log H4
+          debugImgLog.push(`  originalNode=${originalNode.name} rectName=${rectName}`)
+          // #endregion
+
+          const targetRect = findImageRectInClone(variantFrame, rectName)
             // #region agent log H4
             debugImgLog.push(`  targetRect=${targetRect ? targetRect.id + ':' + targetRect.name : 'NOT FOUND'}`)
             // #endregion
@@ -195,9 +203,19 @@ function findImageRectInClone(clone: FrameNode, targetName: string): RectangleNo
   let found: RectangleNode | null = null
   function walk(node: SceneNode) {
     if (found) return
+    // Match by exact name -- could be a RECTANGLE with an image fill
     if (node.type === 'RECTANGLE' && node.name === targetName) {
       found = node as RectangleNode
       return
+    }
+    // Or match a FRAME by name and grab its first RECTANGLE child (the image holder)
+    if (node.type === 'FRAME' && node.name === targetName) {
+      for (const child of (node as FrameNode).children) {
+        if (child.type === 'RECTANGLE') {
+          found = child as RectangleNode
+          return
+        }
+      }
     }
     if ('children' in node) {
       for (const child of (node as FrameNode).children) walk(child)

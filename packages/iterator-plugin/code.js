@@ -109,12 +109,17 @@
               const image = figma.createImage(bytes);
               debugImgLog.push(`  createImage hash=${image.hash}`);
               const originalNode = await figma.getNodeByIdAsync(img.nodeId);
-              debugImgLog.push(`  originalNode=${originalNode ? originalNode.name : "NOT FOUND"}`);
               if (!originalNode) {
                 debugImgLog.push("  SKIP: original not found");
                 continue;
               }
-              const targetRect = findImageRectInClone(variantFrame, originalNode.name);
+              let rectName = originalNode.name;
+              if (originalNode.type === "FRAME" && "children" in originalNode) {
+                const origRect = originalNode.children.find((c) => c.type === "RECTANGLE");
+                if (origRect) rectName = origRect.name;
+              }
+              debugImgLog.push(`  originalNode=${originalNode.name} rectName=${rectName}`);
+              const targetRect = findImageRectInClone(variantFrame, rectName);
               debugImgLog.push(`  targetRect=${targetRect ? targetRect.id + ":" + targetRect.name : "NOT FOUND"}`);
               if (!targetRect) {
                 debugImgLog.push("  SKIP: rect not found in clone");
@@ -162,6 +167,14 @@
       if (node.type === "RECTANGLE" && node.name === targetName) {
         found = node;
         return;
+      }
+      if (node.type === "FRAME" && node.name === targetName) {
+        for (const child of node.children) {
+          if (child.type === "RECTANGLE") {
+            found = child;
+            return;
+          }
+        }
       }
       if ("children" in node) {
         for (const child of node.children) walk(child);
