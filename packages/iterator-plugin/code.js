@@ -1,7 +1,27 @@
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
+  var __defProps = Object.defineProperties;
+  var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
+  var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __propIsEnum = Object.prototype.propertyIsEnumerable;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __spreadValues = (a, b) => {
+    for (var prop in b || (b = {}))
+      if (__hasOwnProp.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    if (__getOwnPropSymbols)
+      for (var prop of __getOwnPropSymbols(b)) {
+        if (__propIsEnum.call(b, prop))
+          __defNormalProp(a, prop, b[prop]);
+      }
+    return a;
+  };
+  var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
+
   // src/constants.ts
-  var DEFAULT_ITERATOR_API = "https://bifrost-rose.vercel.app";
+  var DEFAULT_ITERATOR_API = "https://heimdall-henna.vercel.app";
   function getApiBase() {
     return DEFAULT_ITERATOR_API;
   }
@@ -10,6 +30,36 @@
   }
 
   // src/commands/iterate.ts
+  function buildImageTransform(rectW, rectH, imgW, imgH, params) {
+    const rectAR = rectW / rectH;
+    const imgAR = imgW / imgH;
+    let baseScaleX;
+    let baseScaleY;
+    if (imgAR > rectAR) {
+      baseScaleY = 1;
+      baseScaleX = rectAR / imgAR;
+    } else {
+      baseScaleX = 1;
+      baseScaleY = imgAR / rectAR;
+    }
+    const zoom = Math.max(0.3, Math.min(1, params.zoom));
+    const sx = baseScaleX * zoom;
+    const sy = baseScaleY * zoom;
+    const tx = (1 - sx) * 0.5 + params.panX * sx;
+    const ty = (1 - sy) * 0.5 + params.panY * sy;
+    const clampedTx = Math.max(0, Math.min(1 - sx, tx));
+    const clampedTy = Math.max(0, Math.min(1 - sy, ty));
+    return [[sx, 0, clampedTx], [0, sy, clampedTy]];
+  }
+  function applyCropToRect(rect, imageHash, rectW, rectH, imgW, imgH, params) {
+    const transform = buildImageTransform(rectW, rectH, imgW, imgH, params);
+    rect.fills = [{
+      type: "IMAGE",
+      imageHash,
+      scaleMode: "CROP",
+      imageTransform: transform
+    }];
+  }
   function resolveExperimentFrame(node) {
     let current = node;
     while (current) {
@@ -96,11 +146,13 @@
           if (genLabel) genLabel.remove();
           const images = msg.images || [];
           let imagesPlaced = 0;
+          const placedRects = [];
           for (const img of images) {
             if (!img.bytes || img.bytes.length === 0) continue;
             const bytes = new Uint8Array(img.bytes);
             try {
               const image = figma.createImage(bytes);
+              const imageSize = await image.getSizeAsync();
               const originalNode = await figma.getNodeByIdAsync(img.nodeId);
               if (!originalNode) continue;
               let rectName = originalNode.name;
@@ -111,6 +163,17 @@
               const targetRect = findImageRectInClone(variantFrame, rectName);
               if (!targetRect) continue;
               targetRect.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
+              const generatedName = `generated-${img.name || "image-" + imagesPlaced}`;
+              targetRect.name = generatedName;
+              placedRects.push({
+                rectId: targetRect.id,
+                imageHash: image.hash,
+                rectWidth: Math.round(targetRect.width),
+                rectHeight: Math.round(targetRect.height),
+                imageWidth: imageSize.width,
+                imageHeight: imageSize.height,
+                name: generatedName
+              });
               imagesPlaced++;
             } catch (e) {
             }
@@ -130,14 +193,70 @@
           }
           figma.currentPage.selection = [variantFrame];
           figma.viewport.scrollAndZoomIntoView([variantFrame]);
-          figma.ui.postMessage({
-            type: "status",
-            text: "Variant created! " + imagesPlaced + " images replaced, " + copyApplied + " copy changes applied."
-          });
+          if (placedRects.length > 0) {
+            const previews = [];
+            for (const pr of placedRects) {
+              try {
+                const rectNode = await figma.getNodeByIdAsync(pr.rectId);
+                if (!rectNode) continue;
+                const pngBytes = await rectNode.exportAsync({
+                  format: "PNG",
+                  constraint: { type: "SCALE", value: 0.5 }
+                });
+                previews.push(__spreadProps(__spreadValues({}, pr), {
+                  previewBytes: Array.from(pngBytes),
+                  mimeType: "image/png"
+                }));
+              } catch (e) {
+              }
+            }
+            figma.ui.postMessage({
+              type: "variant-placed",
+              cloneId,
+              imagesPlaced,
+              copyApplied,
+              previews
+            });
+          } else {
+            figma.ui.postMessage({
+              type: "status",
+              text: "Variant created! " + imagesPlaced + " images replaced, " + copyApplied + " copy changes applied."
+            });
+          }
         } catch (err) {
           figma.ui.postMessage({
             type: "status",
             text: `Error: ${err.message}`
+          });
+        }
+      }
+      if (msg.type === "apply-crop-adjustments") {
+        try {
+          const adjustments = msg.adjustments || [];
+          let adjusted = 0;
+          for (const adj of adjustments) {
+            const node = await figma.getNodeByIdAsync(adj.rectId);
+            if (!node || node.type !== "RECTANGLE") continue;
+            const zoom = 1 + adj.zoomDelta;
+            applyCropToRect(
+              node,
+              adj.imageHash,
+              adj.rectWidth,
+              adj.rectHeight,
+              adj.imageWidth,
+              adj.imageHeight,
+              { zoom, panX: adj.panX, panY: adj.panY }
+            );
+            adjusted++;
+          }
+          figma.ui.postMessage({
+            type: "status",
+            text: adjusted > 0 ? `Variant created! Auto-adjusted framing on ${adjusted} image(s).` : "Variant created! Images placed without crop adjustment."
+          });
+        } catch (err) {
+          figma.ui.postMessage({
+            type: "status",
+            text: `Error applying crop adjustments: ${err.message}`
           });
         }
       }
@@ -283,11 +402,94 @@
         pendingCloneId = msg.cloneId;
         startGeneration();
       }
+      if (msg.type === 'variant-placed') {
+        runPlacementReview(msg);
+      }
     });
+
+    async function runPlacementReview(msg) {
+      try {
+        var previews = msg.previews || [];
+        if (previews.length === 0) {
+          var el = document.getElementById('status');
+          el.style.display = 'block';
+          el.textContent = 'Variant created! ' + msg.imagesPlaced + ' images replaced, ' + msg.copyApplied + ' copy changes applied.';
+          return;
+        }
+
+        setProgress('Reviewing image framing (' + previews.length + ' images)...');
+
+        var adjustments = [];
+        for (var i = 0; i < previews.length; i++) {
+          var preview = previews[i];
+          try {
+            var base64 = '';
+            var bytes = preview.previewBytes;
+            for (var ci = 0; ci < bytes.length; ci += 8192) {
+              var chunk = bytes.slice(ci, ci + 8192);
+              base64 += String.fromCharCode.apply(null, chunk);
+            }
+            base64 = btoa(base64);
+
+            var reviewResp = await fetch(API_BASE + '/api/plugin/iterator/review-placement', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Heimdall-Plugin-Token': TOKEN
+              },
+              body: JSON.stringify({
+                previewImageBase64: base64,
+                mimeType: preview.mimeType,
+                rectWidth: preview.rectWidth,
+                rectHeight: preview.rectHeight,
+                imageWidth: preview.imageWidth,
+                imageHeight: preview.imageHeight,
+                context: 'Portrait lifestyle photo in a performance ad grid tile'
+              })
+            });
+
+            if (reviewResp.ok) {
+              var result = await reviewResp.json();
+              if (result.action === 'adjust' && (result.confidence === 'high' || result.confidence === 'medium')) {
+                adjustments.push({
+                  rectId: preview.rectId,
+                  imageHash: preview.imageHash,
+                  rectWidth: preview.rectWidth,
+                  rectHeight: preview.rectHeight,
+                  imageWidth: preview.imageWidth,
+                  imageHeight: preview.imageHeight,
+                  zoomDelta: result.zoomDelta,
+                  panX: result.panX,
+                  panY: result.panY
+                });
+              }
+            }
+          } catch (reviewErr) {
+            // Review failed for this image, keep initial placement
+          }
+        }
+
+        if (adjustments.length > 0) {
+          setProgress('Adjusting framing on ' + adjustments.length + ' image(s)...');
+          parent.postMessage({ pluginMessage: {
+            type: 'apply-crop-adjustments',
+            adjustments: adjustments
+          }}, '*');
+        } else {
+          var el = document.getElementById('status');
+          el.style.display = 'block';
+          el.textContent = 'Variant created! ' + msg.imagesPlaced + ' images replaced, ' + msg.copyApplied + ' copy changes applied.';
+        }
+      } catch (err) {
+        var el = document.getElementById('status');
+        el.style.display = 'block';
+        el.textContent = 'Variant created (review skipped): ' + (err.message || err);
+      }
+    }
 
     async function startGeneration() {
       try {
-        setProgress('Step 2/5: Sending to Iterator backend...');
+        setProgress('Step 2/6: Sending to Iterator backend...');
 
         // Recursively find image node IDs (frames named {EDIT})
         var imageNodeIds = [];
@@ -328,7 +530,7 @@
         }
 
         var result = await resp.json();
-        setProgress('Step 3/5: Downloading generated images...');
+        setProgress('Step 3/6: Downloading generated images...');
 
         // Fetch each generated image as bytes
         var imagePayloads = [];
@@ -336,7 +538,7 @@
           var imgResult = result.imageResults[j];
           if (imgResult.url) {
             try {
-              setProgress('Step 3/5: Downloading image ' + (j + 1) + '/' + result.imageResults.length + '...');
+              setProgress('Step 3/6: Downloading image ' + (j + 1) + '/' + result.imageResults.length + '...');
               var imgResp = await fetch(imgResult.url);
               if (imgResp.ok) {
                 var buf = await imgResp.arrayBuffer();
@@ -352,7 +554,7 @@
           }
         }
 
-        setProgress('Step 4/5: Preparing copy changes...');
+        setProgress('Step 4/6: Preparing copy changes...');
 
         // Extract copy changes from copyPlan
         var copyChanges = [];
@@ -382,7 +584,7 @@
           }
         }
 
-        setProgress('Step 5/5: Applying images and copy to variant...');
+        setProgress('Step 5/6: Applying images and copy to variant...');
 
         // Send to main thread for application on the existing clone
         parent.postMessage({ pluginMessage: {
@@ -405,7 +607,7 @@
       var btn = document.getElementById('btn-variant');
       btn.disabled = true;
       btn.textContent = 'Generating variant...';
-      setProgress('Step 1/5: Creating placeholder frame...');
+      setProgress('Step 1/6: Creating placeholder frame...');
 
       // Ask main thread to clone and create grey placeholders
       parent.postMessage({ pluginMessage: { type: 'create-placeholder' } }, '*');
