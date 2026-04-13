@@ -1,23 +1,25 @@
 /**
  * Resize / Derive Formats — adapts a master frame to different aspect ratios.
  *
- * Takes the selected frame as the master and creates art-directed
- * resized variants at the user's chosen target ratios (9:16, 4:5, 1:1).
- *
- * Flow:
- *  1. Plugin detects source ratio, shows checkbox UI for target formats
- *  2. User picks targets, clicks "Resize"
- *  3. Plugin captures the source layer snapshot BEFORE any mutation
- *  4. Clones the frame per target, applies recursive proportional baseline
- *  5. Sends source snapshot + target ratio to backend for art-directed plan
- *  6. Plugin applies plan steps, then runs image-framing review on photos
- *  7. Runs composition QA and reports results
+ * Pipeline:
+ *  1. Capture source snapshot BEFORE any mutation
+ *  2. Clone per target ratio
+ *  3. Resize root frame to target canonical size
+ *  4. Explicit background pass — force full-bleed coverage
+ *  5. Coherent proportional baseline on all content layers
+ *  6. Text reflow pass — scale fonts, enforce width, set auto-resize
+ *  7. Backend planner for art-directed refinements (optional)
+ *  8. Composition QA on full subtree (both axes)
+ *  9. Auto-fix QA failures
+ * 10. Image framing review
+ * 11. Re-run QA after image review
+ * 12. Sibling-aware placement (collision-free)
  */
 
 import { getApiBase, getPluginToken } from '../constants'
 
 // ---------------------------------------------------------------------------
-// Canonical sizes — single source of truth for the plugin
+// Canonical sizes
 // ---------------------------------------------------------------------------
 
 const CANONICAL_SIZES: Record<string, { w: number; h: number }> = {
@@ -25,6 +27,8 @@ const CANONICAL_SIZES: Record<string, { w: number; h: number }> = {
   '4x5': { w: 1440, h: 1800 },
   '1x1': { w: 1440, h: 1440 },
 }
+
+const PLACEMENT_GAP = 80
 
 function detectRatio(w: number, h: number): string | null {
   for (const [key, dim] of Object.entries(CANONICAL_SIZES)) {
@@ -50,7 +54,6 @@ export function runDeriveVariants(): void {
     return
   }
 
-  // Guard: reject frames that already contain derived EXP- children
   const sourceFrame = frame as FrameNode
   if (hasNestedDerivedFrames(sourceFrame)) {
     figma.closePlugin(
@@ -63,7 +66,7 @@ export function runDeriveVariants(): void {
   const sourceRatio = detectRatio(frame.width, frame.height)
   const fileKey = (figma as unknown as { fileKey?: string }).fileKey || ''
 
-  const html = buildUI(frame, sourceRatio, fileKey)
+  const html = buildUI(frame, sourceRatio)
   figma.showUI(html, { width: 440, height: 520 })
 
   figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
@@ -84,21 +87,15 @@ export function runDeriveVariants(): void {
         const node = await figma.getNodeByIdAsync(adj.rectId)
         if (!node || node.type !== 'RECTANGLE') continue
         applyCropToRect(
-          node as RectangleNode,
-          adj.imageHash,
-          adj.rectWidth,
-          adj.rectHeight,
-          adj.imageWidth,
-          adj.imageHeight,
+          node as RectangleNode, adj.imageHash,
+          adj.rectWidth, adj.rectHeight, adj.imageWidth, adj.imageHeight,
           { zoom: 1 + adj.zoomDelta, panX: adj.panX, panY: adj.panY },
         )
         adjusted++
       }
       figma.ui.postMessage({
         type: 'status',
-        text: adjusted > 0
-          ? `Adjusted framing on ${adjusted} image(s).`
-          : 'No framing adjustments needed.',
+        text: adjusted > 0 ? `Adjusted framing on ${adjusted} image(s).` : 'No framing adjustments needed.',
       })
     }
   }
@@ -116,129 +113,455 @@ async function handleDerive(
   const apiBase = getApiBase()
   const token = getPluginToken()
 
-  // Capture true source geometry BEFORE any mutation
   const sourceLayerData = extractLayerSummary(sourceFrame)
   const srcW = Math.round(sourceFrame.width)
   const srcH = Math.round(sourceFrame.height)
   const sourceRatio = detectRatio(srcW, srcH)
+
+  // Track placed clones so placement cursor advances correctly
+  let placementCursorX = sourceFrame.x + sourceFrame.width + PLACEMENT_GAP
 
   for (let i = 0; i < targetRatios.length; i++) {
     const ratio = targetRatios[i]
     const target = CANONICAL_SIZES[ratio]
     if (!target) continue
 
-    figma.ui.postMessage({
-      type: 'progress',
-      text: `Resizing to ${ratio} (${i + 1}/${targetRatios.length})...`,
-      step: 'cloning',
-    })
+    figma.ui.postMessage({ type: 'progress', text: `Resizing to ${ratio} (${i + 1}/${targetRatios.length})...`, step: 'cloning' })
 
-    // 1. Clone the frame (as a page-level sibling, not nested)
+    // --- 1. Clone ---
     const clone = sourceFrame.clone()
     clone.name = sourceFrame.name.replace(/\d+x\d+/, ratio) + (sourceFrame.name.includes(ratio) ? '' : `-${ratio}`)
-    clone.x = sourceFrame.x + (sourceFrame.width + 80) * (i + 1)
 
-    // 2. Resize the root frame to target dimensions
+    // --- 2. Resize root frame ---
     clone.resize(target.w, target.h)
 
-    // 3. Apply recursive proportional baseline to ALL descendants
-    applyRecursiveProportionalBaseline(clone, srcW, srcH, target.w, target.h)
+    // --- 3. Background pass — force full coverage ---
+    forceBackgroundCoverage(clone, target.w, target.h)
 
-    figma.ui.postMessage({
-      type: 'progress',
-      text: `Planning layout for ${ratio}...`,
-      step: 'planning',
-    })
+    // --- 4. Proportional baseline for content layers ---
+    applyContentBaseline(clone, srcW, srcH, target.w, target.h)
 
-    // 4. Ask backend for an art-directed edit plan
-    //    Send the TRUE source snapshot (pre-resize) so the planner can reason
-    //    about the real master→target conversion.
+    // --- 5. Text reflow pass ---
+    await reflowAllText(clone, srcW, srcH, target.w, target.h)
+
+    // --- 6. Remove contamination ---
+    removeNestedDerivedFrames(clone)
+
+    figma.ui.postMessage({ type: 'progress', text: `Planning layout for ${ratio}...`, step: 'planning' })
+
+    // --- 7. Backend planner (optional art-direction) ---
     let editPlan: EditPlan | null = null
     try {
       const resp = await fetch(`${apiBase}/api/plugin/iterator/derive`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Heimdall-Plugin-Token': token,
-        },
+        headers: { 'Content-Type': 'application/json', 'X-Heimdall-Plugin-Token': token },
         body: JSON.stringify({
-          sourceFileKey: fileKey,
-          sourceFrameId: sourceFrame.id,
-          targetRatios: [ratio],
-          sourceLayerData,
-          sourceWidth: srcW,
-          sourceHeight: srcH,
-          sourceRatio: sourceRatio || undefined,
+          sourceFileKey: fileKey, sourceFrameId: sourceFrame.id, targetRatios: [ratio],
+          sourceLayerData, sourceWidth: srcW, sourceHeight: srcH, sourceRatio: sourceRatio || undefined,
         }),
       })
-
       if (resp.ok) {
         const result = await resp.json()
         editPlan = result.editPlan || null
       }
-    } catch {
-      // Backend unreachable — proportional baseline already applied
-    }
+    } catch { /* fallback to baseline only */ }
 
-    figma.ui.postMessage({
-      type: 'progress',
-      text: `Applying layout for ${ratio}...`,
-      step: 'applying',
-    })
-
-    // 5. Apply any art-directed plan steps ON TOP of the proportional baseline
     if (editPlan && editPlan.steps && editPlan.steps.length > 0) {
-      await applyEditPlan(clone, editPlan.steps, srcW, srcH, target.w, target.h)
+      figma.ui.postMessage({ type: 'progress', text: `Applying layout for ${ratio}...`, step: 'applying' })
+      await applyEditPlan(clone, editPlan.steps, target.w, target.h)
     }
 
-    // 6. Run composition QA checks
-    figma.ui.postMessage({
-      type: 'progress',
-      text: `Running QA on ${ratio}...`,
-      step: 'qa',
-    })
-
-    const qaResult = runCompositionQA(clone, target.w, target.h)
-
-    // 7. Auto-fix simple QA failures
-    if (qaResult.clippedTexts.length > 0 || qaResult.edgeViolations.length > 0) {
+    // --- 8. First QA pass ---
+    figma.ui.postMessage({ type: 'progress', text: `Running QA on ${ratio}...`, step: 'qa' })
+    let qaResult = runFullSubtreeQA(clone, target.w, target.h)
+    if (qaResult.issues.length > 0) {
       applyQAFixes(clone, qaResult, target.w, target.h)
     }
 
-    // 8. Guard: verify no nested derived frames leaked into the output
-    removeNestedDerivedFrames(clone)
-
-    // 9. Review image framing
+    // --- 9. Image framing review ---
     const imageRects = findAllImageRects(clone)
     if (imageRects.length > 0) {
-      figma.ui.postMessage({
-        type: 'progress',
-        text: `Reviewing ${imageRects.length} image(s) in ${ratio}...`,
-        step: 'image-review',
-      })
-
-      await reviewAndFixImageFraming(clone, imageRects, apiBase, token)
+      figma.ui.postMessage({ type: 'progress', text: `Reviewing ${imageRects.length} image(s) in ${ratio}...`, step: 'image-review' })
+      await reviewAndFixImageFraming(imageRects, apiBase, token)
     }
+
+    // --- 10. Re-run QA after image review ---
+    qaResult = runFullSubtreeQA(clone, target.w, target.h)
+    if (qaResult.issues.length > 0) {
+      applyQAFixes(clone, qaResult, target.w, target.h)
+    }
+
+    // --- 11. Collision-free placement ---
+    placementCursorX = placeCloneWithoutOverlap(clone, sourceFrame, placementCursorX)
 
     figma.currentPage.selection = [clone]
     figma.viewport.scrollAndZoomIntoView([clone])
 
     figma.ui.postMessage({
-      type: 'ratio-complete',
-      ratio,
+      type: 'ratio-complete', ratio,
       qaResult: {
-        clippedTexts: qaResult.clippedTexts.length,
-        overlaps: qaResult.overlaps.length,
-        edgeViolations: qaResult.edgeViolations.length,
-        storyOcclusionWarnings: qaResult.storyOcclusionWarnings.length,
+        total: qaResult.issues.length,
+        clippedTexts: qaResult.issues.filter((i) => i.type === 'text-clip').length,
+        overlaps: qaResult.issues.filter((i) => i.type === 'overlap').length,
+        edgeViolations: qaResult.issues.filter((i) => i.type === 'edge').length,
+        storyOcclusionWarnings: qaResult.issues.filter((i) => i.type === 'occlusion').length,
       },
     })
   }
 
-  figma.ui.postMessage({
-    type: 'derive-complete',
-    count: targetRatios.length,
-  })
+  figma.ui.postMessage({ type: 'derive-complete', count: targetRatios.length })
+}
+
+// ---------------------------------------------------------------------------
+// Sibling-aware placement
+// ---------------------------------------------------------------------------
+
+interface Rect { x: number; y: number; w: number; h: number }
+
+function placeCloneWithoutOverlap(
+  clone: FrameNode,
+  source: FrameNode,
+  cursorX: number,
+): number {
+  const page = figma.currentPage
+  const cloneW = Math.round(clone.width)
+  const cloneH = Math.round(clone.height)
+  const sourceY = source.y
+
+  // Gather occupied rects from all page siblings (excluding the clone itself)
+  const obstacles: Rect[] = []
+  for (const child of page.children) {
+    if (child.id === clone.id) continue
+    if (child.type !== 'FRAME' && child.type !== 'COMPONENT' && child.type !== 'SECTION') continue
+    obstacles.push({ x: child.x, y: child.y, w: Math.round(child.width), h: Math.round(child.height) })
+  }
+
+  // Try placing at cursorX, same Y as source. Sweep right on collision.
+  let candidateX = cursorX
+  const candidateY = sourceY
+  let attempts = 0
+  const maxAttempts = 50
+
+  while (attempts < maxAttempts) {
+    const candidate: Rect = { x: candidateX, y: candidateY, w: cloneW, h: cloneH }
+    const hit = obstacles.find((o) => rectsIntersect(candidate, o))
+    if (!hit) break
+    candidateX = hit.x + hit.w + PLACEMENT_GAP
+    attempts++
+  }
+
+  clone.x = candidateX
+  clone.y = candidateY
+
+  return candidateX + cloneW + PLACEMENT_GAP
+}
+
+function rectsIntersect(a: Rect, b: Rect): boolean {
+  return !(a.x >= b.x + b.w || b.x >= a.x + a.w || a.y >= b.y + b.h || b.y >= a.y + a.h)
+}
+
+// ---------------------------------------------------------------------------
+// Background coverage pass
+// ---------------------------------------------------------------------------
+
+function forceBackgroundCoverage(frame: FrameNode, frameW: number, frameH: number): void {
+  // Find the background layer: the bottom-most child that is a RECTANGLE or
+  // FRAME covering most of the original frame
+  for (const child of frame.children) {
+    const isBgCandidate = (
+      (child.type === 'RECTANGLE' || child.type === 'FRAME') &&
+      child.width >= frameW * 0.5 && child.height >= frameH * 0.3
+    )
+    if (!isBgCandidate) continue
+
+    // Force it to cover the full target frame
+    child.x = 0
+    child.y = 0
+    if ('resize' in child) {
+      (child as FrameNode).resize(frameW, frameH)
+    }
+
+    // If it has an image fill, reset the crop to "cover" (identity transform)
+    if (child.type === 'RECTANGLE') {
+      const fills = (child.fills as readonly Paint[]) || []
+      const imgFill = fills.find((f) => f.type === 'IMAGE') as ImagePaint | undefined
+      if (imgFill?.imageHash) {
+        (child as RectangleNode).fills = [{
+          type: 'IMAGE',
+          imageHash: imgFill.imageHash,
+          scaleMode: 'FILL',
+        }]
+      }
+    }
+
+    break // only process the first (bottom-most) background candidate
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Content baseline — coherent proportional scaling
+// ---------------------------------------------------------------------------
+
+function applyContentBaseline(
+  frame: FrameNode,
+  srcW: number,
+  srcH: number,
+  tgtW: number,
+  tgtH: number,
+): void {
+  const scaleX = tgtW / srcW
+  const scaleY = tgtH / srcH
+
+  for (const child of frame.children) {
+    // Skip the background layer (already handled)
+    if (isBackgroundLayer(child, tgtW, tgtH)) continue
+    scaleContentNode(child, scaleX, scaleY, tgtW, tgtH)
+  }
+}
+
+function isBackgroundLayer(node: SceneNode, frameW: number, frameH: number): boolean {
+  return (
+    (node.type === 'RECTANGLE' || node.type === 'FRAME') &&
+    node.width >= frameW * 0.9 && node.height >= frameH * 0.9
+  )
+}
+
+function scaleContentNode(
+  node: SceneNode,
+  scaleX: number,
+  scaleY: number,
+  parentW: number,
+  parentH: number,
+): void {
+  // Scale position using both axes to maintain relative placement
+  node.x = Math.round(node.x * scaleX)
+  node.y = Math.round(node.y * scaleY)
+
+  // Skip text nodes (handled in reflow pass)
+  if (node.type === 'TEXT') return
+
+  // For resizable non-text elements, scale with both axes to match position scaling
+  if ('resize' in node) {
+    const newW = Math.max(1, Math.round(node.width * scaleX))
+    const newH = Math.max(1, Math.round(node.height * scaleY))
+    ;(node as FrameNode).resize(newW, newH)
+  }
+
+  // Clamp to parent bounds
+  if (node.x + node.width > parentW) {
+    node.x = Math.max(0, parentW - node.width)
+  }
+  if (node.y + node.height > parentH) {
+    node.y = Math.max(0, parentH - node.height)
+  }
+
+  // Recurse into non-instance children
+  if ('children' in node && node.type !== 'INSTANCE') {
+    const childFrame = node as FrameNode
+    const innerScaleX = childFrame.width > 0 ? (childFrame.width / (childFrame.width / scaleX)) : 1
+    const innerScaleY = childFrame.height > 0 ? (childFrame.height / (childFrame.height / scaleY)) : 1
+    for (const child of childFrame.children) {
+      scaleContentNode(child, innerScaleX, innerScaleY, childFrame.width, childFrame.height)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Text reflow pass
+// ---------------------------------------------------------------------------
+
+async function reflowAllText(
+  frame: FrameNode,
+  srcW: number,
+  srcH: number,
+  tgtW: number,
+  tgtH: number,
+): Promise<void> {
+  const fontScale = Math.min(tgtW / srcW, tgtH / srcH)
+  const allText = findAllTextNodes(frame)
+
+  for (const textNode of allText) {
+    try {
+      const fontName = textNode.fontName
+      if (fontName !== figma.mixed) {
+        await figma.loadFontAsync(fontName as FontName)
+      }
+
+      // Scale font size for severe compressions
+      if (fontScale < 0.85 && textNode.fontSize !== figma.mixed) {
+        const currentSize = textNode.fontSize as number
+        const newSize = Math.max(12, Math.round(currentSize * fontScale))
+        if (newSize < currentSize) {
+          textNode.fontSize = newSize
+        }
+      }
+
+      // Set auto-resize so text reflows within its container
+      textNode.textAutoResize = 'HEIGHT'
+
+      // Clamp width to frame with margin
+      const maxWidth = tgtW * 0.88
+      if (textNode.width > maxWidth) {
+        textNode.resize(Math.round(maxWidth), textNode.height)
+      }
+    } catch {
+      // Font not loadable, skip
+    }
+  }
+}
+
+function findAllTextNodes(node: SceneNode): TextNode[] {
+  const result: TextNode[] = []
+  if (node.type === 'TEXT') result.push(node as TextNode)
+  if ('children' in node) {
+    for (const child of (node as FrameNode).children) {
+      result.push(...findAllTextNodes(child))
+    }
+  }
+  return result
+}
+
+// ---------------------------------------------------------------------------
+// Full-subtree composition QA
+// ---------------------------------------------------------------------------
+
+interface QAIssue {
+  type: 'text-clip' | 'text-hclip' | 'overlap' | 'edge' | 'occlusion' | 'bg-gap'
+  id: string
+  name: string
+  detail: string
+}
+
+interface QAResult { issues: QAIssue[] }
+
+const SAFE_ZONES: Record<string, { top: number; bottom: number; side: number }> = {
+  '9x16': { top: 240, bottom: 492, side: 80 },
+  '4x5': { top: 180, bottom: 180, side: 80 },
+  '1x1': { top: 144, bottom: 144, side: 80 },
+}
+
+function runFullSubtreeQA(frame: FrameNode, frameW: number, frameH: number): QAResult {
+  const issues: QAIssue[] = []
+  const ratio = detectRatio(frameW, frameH)
+  const safeZone = ratio ? SAFE_ZONES[ratio] : { top: frameH * 0.1, bottom: frameH * 0.1, side: frameW * 0.04 }
+
+  // Walk all descendants for text clipping (both vertical and horizontal)
+  const allText = findAllTextNodes(frame)
+  for (const t of allText) {
+    // Use the node's absolute position relative to the frame
+    const absY = getAbsoluteY(t, frame)
+    const absX = getAbsoluteX(t, frame)
+    if (absY + t.height > frameH + 2) {
+      issues.push({ type: 'text-clip', id: t.id, name: t.name, detail: `vertical overflow by ${Math.round(absY + t.height - frameH)}px` })
+    }
+    if (absX + t.width > frameW + 2) {
+      issues.push({ type: 'text-hclip', id: t.id, name: t.name, detail: `horizontal overflow by ${Math.round(absX + t.width - frameW)}px` })
+    }
+  }
+
+  // Check top-level content children for overlap and edge proximity
+  const contentChildren: SceneNode[] = []
+  for (const child of frame.children) {
+    if (!isBackgroundLayer(child, frameW, frameH)) {
+      contentChildren.push(child)
+    }
+  }
+
+  for (let i = 0; i < contentChildren.length; i++) {
+    for (let j = i + 1; j < contentChildren.length; j++) {
+      const a = contentChildren[i], b = contentChildren[j]
+      if (!(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y)) {
+        issues.push({ type: 'overlap', id: a.id, name: `${a.name} x ${b.name}`, detail: 'content overlap' })
+      }
+    }
+  }
+
+  for (const child of contentChildren) {
+    if (child.x < safeZone.side) issues.push({ type: 'edge', id: child.id, name: child.name, detail: 'left' })
+    if (child.y < safeZone.top) issues.push({ type: 'edge', id: child.id, name: child.name, detail: 'top' })
+    if (child.x + child.width > frameW - safeZone.side) issues.push({ type: 'edge', id: child.id, name: child.name, detail: 'right' })
+    if (child.y + child.height > frameH - safeZone.bottom) issues.push({ type: 'edge', id: child.id, name: child.name, detail: 'bottom' })
+  }
+
+  // Background gap detection
+  let hasBg = false
+  for (const child of frame.children) {
+    if (isBackgroundLayer(child, frameW, frameH)) { hasBg = true; break }
+  }
+  if (!hasBg) {
+    issues.push({ type: 'bg-gap', id: frame.id, name: frame.name, detail: 'no full-bleed background detected' })
+  }
+
+  // Story occlusion
+  for (const child of contentChildren) {
+    if (child.type === 'FRAME') {
+      const coverageRatio = (child.width * child.height) / (frameW * frameH)
+      if (coverageRatio > 0.15 && child.y / frameH < 0.4) {
+        issues.push({ type: 'occlusion', id: child.id, name: child.name, detail: `${Math.round(coverageRatio * 100)}% coverage in upper zone` })
+      }
+    }
+  }
+
+  return { issues }
+}
+
+function getAbsoluteY(node: SceneNode, ancestor: FrameNode): number {
+  let y = node.y
+  let current: BaseNode | null = node.parent
+  while (current && current.id !== ancestor.id) {
+    if ('y' in current) y += (current as SceneNode).y
+    current = current.parent
+  }
+  return y
+}
+
+function getAbsoluteX(node: SceneNode, ancestor: FrameNode): number {
+  let x = node.x
+  let current: BaseNode | null = node.parent
+  while (current && current.id !== ancestor.id) {
+    if ('x' in current) x += (current as SceneNode).x
+    current = current.parent
+  }
+  return x
+}
+
+// ---------------------------------------------------------------------------
+// QA auto-fixes
+// ---------------------------------------------------------------------------
+
+function applyQAFixes(frame: FrameNode, qa: QAResult, frameW: number, frameH: number): void {
+  const ratio = detectRatio(frameW, frameH)
+  const safeZone = ratio ? SAFE_ZONES[ratio] : { top: frameH * 0.1, bottom: frameH * 0.1, side: frameW * 0.04 }
+
+  for (const issue of qa.issues) {
+    if (issue.type === 'text-clip' || issue.type === 'text-hclip') {
+      const node = frame.findOne((n) => n.id === issue.id)
+      if (node && node.type === 'TEXT') {
+        node.textAutoResize = 'HEIGHT'
+        if (node.width > frameW * 0.9) {
+          node.resize(Math.round(frameW * 0.85), node.height)
+        }
+        // Nudge up if still overflowing bottom
+        const absY = getAbsoluteY(node, frame)
+        if (absY + node.height > frameH - safeZone.bottom) {
+          node.y = Math.max(0, node.y - (absY + node.height - (frameH - safeZone.bottom)))
+        }
+      }
+    }
+
+    if (issue.type === 'edge') {
+      const node = frame.findOne((n) => n.id === issue.id)
+      if (!node) continue
+      if (issue.detail === 'left' && node.x < safeZone.side) node.x = safeZone.side
+      if (issue.detail === 'right' && node.x + node.width > frameW - safeZone.side) {
+        node.x = Math.max(safeZone.side, frameW - safeZone.side - node.width)
+      }
+      if (issue.detail === 'top' && node.y < safeZone.top) node.y = safeZone.top
+      if (issue.detail === 'bottom' && node.y + node.height > frameH - safeZone.bottom) {
+        node.y = Math.max(safeZone.top, frameH - safeZone.bottom - node.height)
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -246,10 +569,10 @@ async function handleDerive(
 // ---------------------------------------------------------------------------
 
 function hasNestedDerivedFrames(frame: FrameNode): boolean {
+  const parentRatio = detectRatio(frame.width, frame.height)
   for (const child of frame.children) {
-    if (child.type === 'FRAME' && detectRatio(child.width, child.height) !== null) {
+    if (child.type === 'FRAME') {
       const childRatio = detectRatio(child.width, child.height)
-      const parentRatio = detectRatio(frame.width, frame.height)
       if (childRatio && childRatio !== parentRatio) return true
     }
   }
@@ -262,82 +585,10 @@ function removeNestedDerivedFrames(frame: FrameNode): void {
   for (const child of frame.children) {
     if (child.type === 'FRAME') {
       const childRatio = detectRatio(child.width, child.height)
-      if (childRatio && childRatio !== parentRatio) {
-        toRemove.push(child)
-      }
+      if (childRatio && childRatio !== parentRatio) toRemove.push(child)
     }
   }
-  for (const node of toRemove) {
-    node.remove()
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Recursive proportional baseline
-// ---------------------------------------------------------------------------
-
-function applyRecursiveProportionalBaseline(
-  frame: FrameNode,
-  srcW: number,
-  srcH: number,
-  tgtW: number,
-  tgtH: number,
-): void {
-  const scaleX = tgtW / srcW
-  const scaleY = tgtH / srcH
-
-  for (const child of frame.children) {
-    scaleNodeRecursive(child, scaleX, scaleY, tgtW, tgtH)
-  }
-}
-
-function scaleNodeRecursive(
-  node: SceneNode,
-  scaleX: number,
-  scaleY: number,
-  frameW: number,
-  frameH: number,
-): void {
-  // Scale position
-  node.x = Math.round(node.x * scaleX)
-  node.y = Math.round(node.y * scaleY)
-
-  const isFullBleed = node.width >= frameW / scaleX * 0.9
-
-  if (isFullBleed && 'resize' in node) {
-    // Full-bleed elements stretch to frame width, scale height proportionally
-    (node as FrameNode).resize(frameW, Math.round(node.height * scaleY))
-  } else if ('resize' in node && node.type !== 'TEXT') {
-    // Scale non-text elements proportionally (use uniform scale from scaleX
-    // to keep product/component instances undistorted; only scale vertically
-    // when there's a very large vertical change)
-    const uniformScale = Math.min(scaleX, scaleY)
-    const newW = Math.round(node.width * uniformScale)
-    const newH = Math.round(node.height * uniformScale)
-    if (newW > 0 && newH > 0) {
-      (node as FrameNode).resize(newW, newH)
-    }
-  }
-
-  if (node.type === 'TEXT') {
-    const textNode = node as TextNode
-    textNode.textAutoResize = 'HEIGHT'
-    if (textNode.width > frameW * 0.9) {
-      textNode.resize(Math.round(frameW * 0.85), textNode.height)
-    }
-  }
-
-  // Recurse into children
-  if ('children' in node && node.type !== 'INSTANCE') {
-    const childFrame = node as FrameNode
-    for (const child of childFrame.children) {
-      // Children inside a container use the parent's internal scale,
-      // not the root frame's scale (their coords are relative to parent)
-      const parentScaleX = isFullBleed ? 1 : (scaleX === scaleY ? 1 : scaleX)
-      const parentScaleY = isFullBleed ? scaleY : (scaleX === scaleY ? 1 : scaleY)
-      scaleNodeRecursive(child, parentScaleX, parentScaleY, childFrame.width, childFrame.height)
-    }
-  }
+  for (const node of toRemove) node.remove()
 }
 
 // ---------------------------------------------------------------------------
@@ -352,75 +603,47 @@ interface EditStep {
   rationale: string
 }
 
-interface EditPlan {
-  steps: EditStep[]
-  [k: string]: unknown
-}
+interface EditPlan { steps: EditStep[]; [k: string]: unknown }
 
 async function applyEditPlan(
   frame: FrameNode,
   steps: EditStep[],
-  srcW: number,
-  srcH: number,
   tgtW: number,
   tgtH: number,
 ): Promise<void> {
   for (const step of steps) {
-    // Resolve node: try ID first, then name
     let node: SceneNode | null = null
     if (step.targetNodeId) {
       const byId = await figma.getNodeByIdAsync(step.targetNodeId)
-      if (byId && isDescendantOf(byId, frame)) {
-        node = byId as SceneNode
-      }
+      if (byId && isDescendantOf(byId, frame)) node = byId as SceneNode
     }
-    if (!node && step.targetNodeName) {
-      node = findNodeByName(frame, step.targetNodeName)
-    }
-
+    if (!node && step.targetNodeName) node = findNodeByName(frame, step.targetNodeName)
     if (!node) continue
 
     switch (step.action) {
       case 'move': {
-        const dx = Number(step.params.dx || 0)
-        const dy = Number(step.params.dy || 0)
-        const x = step.params.x as number | undefined
-        const y = step.params.y as number | undefined
-        if (x !== undefined) node.x = x
-        else node.x = node.x + dx
-        if (y !== undefined) node.y = y
-        else node.y = node.y + dy
+        const dx = Number(step.params.dx || 0), dy = Number(step.params.dy || 0)
+        const x = step.params.x as number | undefined, y = step.params.y as number | undefined
+        if (x !== undefined) node.x = x; else node.x = node.x + dx
+        if (y !== undefined) node.y = y; else node.y = node.y + dy
         break
       }
       case 'scale': {
         const factor = Number(step.params.factor || 1)
-        const factorX = Number(step.params.factorX || factor)
-        const factorY = Number(step.params.factorY || factor)
-        if ('resize' in node) {
-          (node as FrameNode).resize(
-            Math.round(node.width * factorX),
-            Math.round(node.height * factorY),
-          )
-        }
+        const fx = Number(step.params.factorX || factor), fy = Number(step.params.factorY || factor)
+        if ('resize' in node) (node as FrameNode).resize(Math.round(node.width * fx), Math.round(node.height * fy))
         break
       }
       case 'reflow': {
         if (node.type === 'TEXT') {
-          const textNode = node as TextNode
           try {
-            await figma.loadFontAsync(textNode.fontName as FontName)
-            textNode.textAutoResize = 'HEIGHT'
+            await figma.loadFontAsync(node.fontName as FontName)
+            node.textAutoResize = 'HEIGHT'
             const maxWidth = Number(step.params.maxWidth || tgtW * 0.85)
-            if (textNode.width > maxWidth) {
-              textNode.resize(maxWidth, textNode.height)
-            }
-            const newFontSize = step.params.fontSize as number | undefined
-            if (newFontSize) {
-              textNode.fontSize = newFontSize
-            }
-          } catch {
-            // Font not loadable, skip
-          }
+            if (node.width > maxWidth) node.resize(maxWidth, node.height)
+            const fontSize = step.params.fontSize as number | undefined
+            if (fontSize) node.fontSize = fontSize
+          } catch { /* font not loadable */ }
         }
         break
       }
@@ -432,25 +655,15 @@ async function applyEditPlan(
             const img = figma.getImageByHash(imgFill.imageHash)
             if (img) {
               const imgSize = await img.getSizeAsync()
-              const zoom = Number(step.params.zoom || 0.85)
-              const panX = Number(step.params.panX || 0)
-              const panY = Number(step.params.panY || 0)
-              applyCropToRect(
-                node as RectangleNode,
-                imgFill.imageHash,
-                Math.round(node.width),
-                Math.round(node.height),
-                imgSize.width,
-                imgSize.height,
-                { zoom, panX, panY },
-              )
+              applyCropToRect(node as RectangleNode, imgFill.imageHash,
+                Math.round(node.width), Math.round(node.height), imgSize.width, imgSize.height,
+                { zoom: Number(step.params.zoom || 0.85), panX: Number(step.params.panX || 0), panY: Number(step.params.panY || 0) })
             }
           }
         }
         break
       }
-      default:
-        break
+      default: break
     }
   }
 }
@@ -465,151 +678,14 @@ function isDescendantOf(node: BaseNode, ancestor: FrameNode): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Composition QA
-// ---------------------------------------------------------------------------
-
-interface QAResult {
-  clippedTexts: Array<{ id: string; name: string; overflow: number }>
-  overlaps: Array<{ a: string; b: string }>
-  edgeViolations: Array<{ id: string; edge: string; distance: number }>
-  storyOcclusionWarnings: Array<{ id: string; name: string; coverageRatio: number }>
-}
-
-const SAFE_ZONES: Record<string, { top: number; bottom: number; side: number }> = {
-  '9x16': { top: 240, bottom: 492, side: 80 },
-  '4x5': { top: 180, bottom: 180, side: 80 },
-  '1x1': { top: 144, bottom: 144, side: 80 },
-}
-
-function runCompositionQA(frame: FrameNode, frameW: number, frameH: number): QAResult {
-  const result: QAResult = {
-    clippedTexts: [],
-    overlaps: [],
-    edgeViolations: [],
-    storyOcclusionWarnings: [],
-  }
-
-  const ratio = detectRatio(frameW, frameH)
-  const safeZone = ratio ? SAFE_ZONES[ratio] : { top: frameH * 0.1, bottom: frameH * 0.1, side: frameW * 0.04 }
-
-  const contentChildren: SceneNode[] = []
-
-  for (const child of frame.children) {
-    if (child.type === 'TEXT') {
-      if (child.y + child.height > frameH + 2) {
-        result.clippedTexts.push({
-          id: child.id,
-          name: child.name,
-          overflow: child.y + child.height - frameH,
-        })
-      }
-    }
-
-    const isBackground = child.width >= frameW * 0.9 && child.height >= frameH * 0.9
-    if (!isBackground) {
-      contentChildren.push(child)
-    }
-
-    if (!isBackground && child.type === 'FRAME') {
-      const overlayArea = child.width * child.height
-      const frameArea = frameW * frameH
-      const coverageRatio = overlayArea / frameArea
-      if (coverageRatio > 0.15 && child.y / frameH < 0.4) {
-        result.storyOcclusionWarnings.push({
-          id: child.id,
-          name: child.name,
-          coverageRatio,
-        })
-      }
-    }
-  }
-
-  for (let i = 0; i < contentChildren.length; i++) {
-    for (let j = i + 1; j < contentChildren.length; j++) {
-      const a = contentChildren[i]
-      const b = contentChildren[j]
-      if (rectsOverlap(a, b)) {
-        result.overlaps.push({ a: a.name, b: b.name })
-      }
-    }
-  }
-
-  const margin = safeZone.side
-  for (const child of contentChildren) {
-    if (child.x < margin) {
-      result.edgeViolations.push({ id: child.id, edge: 'left', distance: child.x })
-    }
-    if (child.y < safeZone.top) {
-      result.edgeViolations.push({ id: child.id, edge: 'top', distance: child.y })
-    }
-    if (child.x + child.width > frameW - margin) {
-      result.edgeViolations.push({ id: child.id, edge: 'right', distance: frameW - (child.x + child.width) })
-    }
-    if (child.y + child.height > frameH - safeZone.bottom) {
-      result.edgeViolations.push({ id: child.id, edge: 'bottom', distance: frameH - safeZone.bottom - (child.y + child.height) })
-    }
-  }
-
-  return result
-}
-
-function rectsOverlap(a: SceneNode, b: SceneNode): boolean {
-  return !(
-    a.x + a.width <= b.x ||
-    b.x + b.width <= a.x ||
-    a.y + a.height <= b.y ||
-    b.y + b.height <= a.y
-  )
-}
-
-// ---------------------------------------------------------------------------
-// QA auto-fixes
-// ---------------------------------------------------------------------------
-
-function applyQAFixes(frame: FrameNode, qa: QAResult, frameW: number, frameH: number): void {
-  const ratio = detectRatio(frameW, frameH)
-  const safeZone = ratio ? SAFE_ZONES[ratio] : { top: frameH * 0.1, bottom: frameH * 0.1, side: frameW * 0.04 }
-
-  for (const clip of qa.clippedTexts) {
-    const node = frame.findOne((n) => n.id === clip.id)
-    if (node && node.type === 'TEXT') {
-      node.textAutoResize = 'HEIGHT'
-      if (node.y + node.height > frameH - safeZone.bottom) {
-        node.y = Math.max(safeZone.top, frameH - safeZone.bottom - node.height)
-      }
-    }
-  }
-
-  for (const violation of qa.edgeViolations) {
-    const node = frame.findOne((n) => n.id === violation.id)
-    if (!node) continue
-
-    if (violation.edge === 'left' && node.x < safeZone.side) {
-      node.x = safeZone.side
-    }
-    if (violation.edge === 'right' && node.x + node.width > frameW - safeZone.side) {
-      node.x = Math.max(safeZone.side, frameW - safeZone.side - node.width)
-    }
-    if (violation.edge === 'top' && node.y < safeZone.top) {
-      node.y = safeZone.top
-    }
-    if (violation.edge === 'bottom' && node.y + node.height > frameH - safeZone.bottom) {
-      node.y = Math.max(safeZone.top, frameH - safeZone.bottom - node.height)
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Image framing review (reuses the same backend reviewer as iterate.ts)
+// Image framing review
 // ---------------------------------------------------------------------------
 
 function findAllImageRects(node: SceneNode): RectangleNode[] {
   const rects: RectangleNode[] = []
   if (node.type === 'RECTANGLE') {
     const fills = (node.fills as readonly Paint[]) || []
-    if (fills.length > 0 && fills[0].type === 'IMAGE') {
-      rects.push(node as RectangleNode)
-    }
+    if (fills.length > 0 && fills[0].type === 'IMAGE') rects.push(node as RectangleNode)
   }
   if ('children' in node) {
     for (const c of (node as FrameNode).children) rects.push(...findAllImageRects(c))
@@ -618,7 +694,6 @@ function findAllImageRects(node: SceneNode): RectangleNode[] {
 }
 
 async function reviewAndFixImageFraming(
-  _frame: FrameNode,
   imageRects: RectangleNode[],
   apiBase: string,
   token: string,
@@ -628,127 +703,55 @@ async function reviewAndFixImageFraming(
       const fills = rect.fills as readonly Paint[]
       const imageFill = fills.find((f) => f.type === 'IMAGE') as ImagePaint | undefined
       if (!imageFill?.imageHash) continue
-
       const img = figma.getImageByHash(imageFill.imageHash)
       if (!img) continue
       const imgSize = await img.getSizeAsync()
-
-      const pngBytes = await rect.exportAsync({
-        format: 'PNG',
-        constraint: { type: 'SCALE', value: 0.5 },
-      })
-
+      const pngBytes = await rect.exportAsync({ format: 'PNG', constraint: { type: 'SCALE', value: 0.5 } })
       const base64 = bytesToBase64(Array.from(pngBytes))
 
       const resp = await fetch(`${apiBase}/api/plugin/iterator/review-placement`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Heimdall-Plugin-Token': token,
-        },
+        headers: { 'Content-Type': 'application/json', 'X-Heimdall-Plugin-Token': token },
         body: JSON.stringify({
-          previewImageBase64: base64,
-          mimeType: 'image/png',
-          rectWidth: Math.round(rect.width),
-          rectHeight: Math.round(rect.height),
-          imageWidth: imgSize.width,
-          imageHeight: imgSize.height,
+          previewImageBase64: base64, mimeType: 'image/png',
+          rectWidth: Math.round(rect.width), rectHeight: Math.round(rect.height),
+          imageWidth: imgSize.width, imageHeight: imgSize.height,
           context: 'This image was resized as part of a format derivation. Check if the crop still shows the subject well.',
         }),
       })
-
       if (resp.ok) {
         const result = await resp.json()
         if (result.action === 'adjust' && (result.confidence === 'high' || result.confidence === 'medium')) {
-          applyCropToRect(
-            rect,
-            imageFill.imageHash,
-            Math.round(rect.width),
-            Math.round(rect.height),
-            imgSize.width,
-            imgSize.height,
-            { zoom: 1 + result.zoomDelta, panX: result.panX, panY: result.panY },
-          )
+          applyCropToRect(rect, imageFill.imageHash,
+            Math.round(rect.width), Math.round(rect.height), imgSize.width, imgSize.height,
+            { zoom: 1 + result.zoomDelta, panX: result.panX, panY: result.panY })
         }
       }
-    } catch {
-      // Review failed for this image, keep current framing
-    }
+    } catch { /* keep current framing */ }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Crop / image-transform helpers (same as iterate.ts)
+// Crop helpers
 // ---------------------------------------------------------------------------
 
-interface CropParams {
-  zoom: number
-  panX: number
-  panY: number
-}
+interface CropParams { zoom: number; panX: number; panY: number }
+interface CropAdjustmentMsg { rectId: string; imageHash: string; rectWidth: number; rectHeight: number; imageWidth: number; imageHeight: number; zoomDelta: number; panX: number; panY: number }
 
-interface CropAdjustmentMsg {
-  rectId: string
-  imageHash: string
-  rectWidth: number
-  rectHeight: number
-  imageWidth: number
-  imageHeight: number
-  zoomDelta: number
-  panX: number
-  panY: number
-}
-
-function buildImageTransform(
-  rectW: number,
-  rectH: number,
-  imgW: number,
-  imgH: number,
-  params: CropParams,
-): Transform {
-  const rectAR = rectW / rectH
-  const imgAR = imgW / imgH
-
-  let baseScaleX: number
-  let baseScaleY: number
-  if (imgAR > rectAR) {
-    baseScaleY = 1
-    baseScaleX = rectAR / imgAR
-  } else {
-    baseScaleX = 1
-    baseScaleY = imgAR / rectAR
-  }
-
+function buildImageTransform(rectW: number, rectH: number, imgW: number, imgH: number, params: CropParams): Transform {
+  const rectAR = rectW / rectH, imgAR = imgW / imgH
+  let bsx: number, bsy: number
+  if (imgAR > rectAR) { bsy = 1; bsx = rectAR / imgAR } else { bsx = 1; bsy = imgAR / rectAR }
   const zoom = Math.max(0.3, Math.min(1, params.zoom))
   const t = 1 - zoom
-  const sx = baseScaleX + (1 - baseScaleX) * t
-  const sy = baseScaleY + (1 - baseScaleY) * t
-
-  const tx = (1 - sx) * 0.5 + params.panX * sx
-  const ty = (1 - sy) * 0.5 + params.panY * sy
-
-  const clampedTx = Math.max(0, Math.min(1 - sx, tx))
-  const clampedTy = Math.max(0, Math.min(1 - sy, ty))
-
-  return [[sx, 0, clampedTx], [0, sy, clampedTy]]
+  const sx = bsx + (1 - bsx) * t, sy = bsy + (1 - bsy) * t
+  const tx = Math.max(0, Math.min(1 - sx, (1 - sx) * 0.5 + params.panX * sx))
+  const ty = Math.max(0, Math.min(1 - sy, (1 - sy) * 0.5 + params.panY * sy))
+  return [[sx, 0, tx], [0, sy, ty]]
 }
 
-function applyCropToRect(
-  rect: RectangleNode,
-  imageHash: string,
-  rectW: number,
-  rectH: number,
-  imgW: number,
-  imgH: number,
-  params: CropParams,
-): void {
-  const transform = buildImageTransform(rectW, rectH, imgW, imgH, params)
-  rect.fills = [{
-    type: 'IMAGE',
-    imageHash,
-    scaleMode: 'CROP',
-    imageTransform: transform,
-  }]
+function applyCropToRect(rect: RectangleNode, imageHash: string, rectW: number, rectH: number, imgW: number, imgH: number, params: CropParams): void {
+  rect.fills = [{ type: 'IMAGE', imageHash, scaleMode: 'CROP', imageTransform: buildImageTransform(rectW, rectH, imgW, imgH, params) }]
 }
 
 // ---------------------------------------------------------------------------
@@ -760,9 +763,7 @@ function findNodeByName(root: FrameNode, name: string): SceneNode | null {
   function walk(node: SceneNode) {
     if (found) return
     if (node.name === name) { found = node; return }
-    if ('children' in node) {
-      for (const child of (node as FrameNode).children) walk(child)
-    }
+    if ('children' in node) { for (const child of (node as FrameNode).children) walk(child) }
   }
   walk(root)
   return found
@@ -770,48 +771,27 @@ function findNodeByName(root: FrameNode, name: string): SceneNode | null {
 
 function extractLayerSummary(frame: FrameNode) {
   function mapNode(c: SceneNode): Record<string, unknown> {
-    const node: Record<string, unknown> = {
-      id: c.id,
-      name: c.name,
-      type: c.type,
-      x: Math.round(c.x),
-      y: Math.round(c.y),
-      width: Math.round(c.width),
-      height: Math.round(c.height),
+    const n: Record<string, unknown> = {
+      id: c.id, name: c.name, type: c.type,
+      x: Math.round(c.x), y: Math.round(c.y),
+      width: Math.round(c.width), height: Math.round(c.height),
       visible: c.visible !== false,
     }
-    if (c.type === 'TEXT') {
-      node.characters = (c as TextNode).characters
-      node.fontSize = (c as TextNode).fontSize
-    }
-    if ('children' in c && (c as FrameNode).children.length > 0) {
-      node.children = (c as FrameNode).children.map(mapNode)
-    }
+    if (c.type === 'TEXT') { n.characters = (c as TextNode).characters; n.fontSize = (c as TextNode).fontSize }
+    if ('children' in c && (c as FrameNode).children.length > 0) n.children = (c as FrameNode).children.map(mapNode)
     if (c.type === 'RECTANGLE') {
       const fills = (c.fills as readonly Paint[]) || []
-      if (fills.length > 0 && fills[0].type === 'IMAGE') {
-        node.hasImage = true
-      }
+      if (fills.length > 0 && fills[0].type === 'IMAGE') n.hasImage = true
     }
-    return node
+    return n
   }
-
-  const children = frame.children.map(mapNode)
-  return {
-    id: frame.id,
-    name: frame.name,
-    width: Math.round(frame.width),
-    height: Math.round(frame.height),
-    childCount: children.length,
-    children,
-  }
+  return { id: frame.id, name: frame.name, width: Math.round(frame.width), height: Math.round(frame.height), childCount: frame.children.length, children: frame.children.map(mapNode) }
 }
 
 function bytesToBase64(byteArray: number[]): string {
   let raw = ''
   for (let ci = 0; ci < byteArray.length; ci += 8192) {
-    const chunk = byteArray.slice(ci, ci + 8192)
-    raw += String.fromCharCode.apply(null, chunk)
+    raw += String.fromCharCode.apply(null, byteArray.slice(ci, ci + 8192))
   }
   return btoa(raw)
 }
@@ -820,7 +800,7 @@ function bytesToBase64(byteArray: number[]): string {
 // UI builder
 // ---------------------------------------------------------------------------
 
-function buildUI(frame: FrameNode, sourceRatio: string | null, _fileKey: string): string {
+function buildUI(frame: FrameNode, sourceRatio: string | null): string {
   return `
 <!DOCTYPE html>
 <html>
@@ -839,9 +819,6 @@ function buildUI(frame: FrameNode, sourceRatio: string | null, _fileKey: string)
     .progress { margin-top: 8px; font-size: 11px; color: #aaa; }
     .status { padding: 8px 12px; background: #2a2a2a; border-radius: 6px; margin-top: 12px; white-space: pre-wrap; font-size: 11px; line-height: 1.5; }
     .qa-line { font-size: 11px; color: #888; padding: 2px 0; }
-    .qa-pass { color: #4ade80; }
-    .qa-warn { color: #fbbf24; }
-    .qa-fail { color: #f87171; }
   </style>
 </head>
 <body>
@@ -857,12 +834,9 @@ function buildUI(frame: FrameNode, sourceRatio: string | null, _fileKey: string)
   <div id="qa-results"></div>
   <div id="status" class="status" style="display:none;"></div>
   <script>
-    var sourceRatio = '${sourceRatio || ''}';
-
     window.onmessage = function(event) {
       var msg = event.data.pluginMessage;
       if (!msg) return;
-
       if (msg.type === 'progress') {
         var el = document.getElementById('progress');
         el.style.display = 'block';
@@ -871,11 +845,11 @@ function buildUI(frame: FrameNode, sourceRatio: string | null, _fileKey: string)
       if (msg.type === 'ratio-complete') {
         var qaDiv = document.getElementById('qa-results');
         var qa = msg.qaResult;
-        var lines = ['— ' + msg.ratio + ' QA:'];
-        lines.push(qa.clippedTexts === 0 ? '  Text clipping: PASS' : '  Text clipping: ' + qa.clippedTexts + ' issue(s)');
-        lines.push(qa.overlaps === 0 ? '  Overlap: PASS' : '  Overlap: ' + qa.overlaps + ' issue(s)');
-        lines.push(qa.edgeViolations === 0 ? '  Safe zone: PASS' : '  Safe zone: ' + qa.edgeViolations + ' issue(s)');
-        lines.push(qa.storyOcclusionWarnings === 0 ? '  Story occlusion: PASS' : '  Story occlusion: ' + qa.storyOcclusionWarnings + ' warning(s)');
+        var lines = ['— ' + msg.ratio + ': ' + qa.total + ' issue(s)'];
+        if (qa.clippedTexts) lines.push('  Text clip: ' + qa.clippedTexts);
+        if (qa.overlaps) lines.push('  Overlap: ' + qa.overlaps);
+        if (qa.edgeViolations) lines.push('  Edge: ' + qa.edgeViolations);
+        if (qa.storyOcclusionWarnings) lines.push('  Occlusion: ' + qa.storyOcclusionWarnings);
         var div = document.createElement('div');
         div.className = 'qa-line';
         div.textContent = lines.join('\\n');
@@ -884,9 +858,9 @@ function buildUI(frame: FrameNode, sourceRatio: string | null, _fileKey: string)
       }
       if (msg.type === 'derive-complete') {
         document.getElementById('progress').style.display = 'none';
-        var statusEl = document.getElementById('status');
-        statusEl.style.display = 'block';
-        statusEl.textContent = 'Done! Created ' + msg.count + ' resized format(s).';
+        var s = document.getElementById('status');
+        s.style.display = 'block';
+        s.textContent = 'Done! Created ' + msg.count + ' resized format(s).';
         document.getElementById('btn-derive').disabled = false;
         document.getElementById('btn-derive').textContent = 'Resize to Selected Formats';
       }
@@ -896,24 +870,21 @@ function buildUI(frame: FrameNode, sourceRatio: string | null, _fileKey: string)
         el.textContent = msg.text;
       }
     };
-
     document.getElementById('btn-derive').addEventListener('click', function() {
-      var checkboxes = document.querySelectorAll('.targets input[type="checkbox"]:checked:not(:disabled)');
+      var cbs = document.querySelectorAll('.targets input[type="checkbox"]:checked:not(:disabled)');
       var selected = [];
-      checkboxes.forEach(function(cb) { selected.push(cb.value); });
+      cbs.forEach(function(cb) { selected.push(cb.value); });
       if (selected.length === 0) {
         var el = document.getElementById('status');
         el.style.display = 'block';
         el.textContent = 'Select at least one target format.';
         return;
       }
-      var btn = document.getElementById('btn-derive');
-      btn.disabled = true;
-      btn.textContent = 'Resizing...';
+      document.getElementById('btn-derive').disabled = true;
+      document.getElementById('btn-derive').textContent = 'Resizing...';
       document.getElementById('qa-results').innerHTML = '';
       parent.postMessage({ pluginMessage: { type: 'start-derive', targetRatios: selected } }, '*');
     });
-
     parent.postMessage({ pluginMessage: { type: 'ready' } }, '*');
   </script>
 </body>

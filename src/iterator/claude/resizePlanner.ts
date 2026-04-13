@@ -59,7 +59,7 @@ Return ONLY a JSON object in this shape:
   "mode": "layered-iteration",
   "sourceDescription": "brief description of the ad",
   "steps": [
-    { "action": "move|scale|reflow|crop-shift", "targetNodeName": "node name", "params": { ... }, "rationale": "why" }
+    { "action": "move|scale|reflow|crop-shift", "targetNodeName": "node name", "targetNodeId": "node id if known", "params": { ... }, "rationale": "why" }
   ],
   "targetRatios": ["target ratio"],
   "confidence": "high|medium|low",

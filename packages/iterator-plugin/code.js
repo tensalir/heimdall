@@ -1027,6 +1027,7 @@
     "4x5": { w: 1440, h: 1800 },
     "1x1": { w: 1440, h: 1440 }
   };
+  var PLACEMENT_GAP = 80;
   function detectRatio(w, h) {
     for (const [key, dim] of Object.entries(CANONICAL_SIZES)) {
       if (Math.abs(w - dim.w) <= 2 && Math.abs(h - dim.h) <= 2) return key;
@@ -1053,7 +1054,7 @@
     }
     const sourceRatio = detectRatio(frame.width, frame.height);
     const fileKey = figma.fileKey || "";
-    const html = buildUI2(frame, sourceRatio, fileKey);
+    const html = buildUI2(frame, sourceRatio);
     figma.showUI(html, { width: 440, height: 520 });
     figma.ui.onmessage = async (msg) => {
       if (msg.type === "ready") {
@@ -1095,33 +1096,25 @@
     const srcW = Math.round(sourceFrame.width);
     const srcH = Math.round(sourceFrame.height);
     const sourceRatio = detectRatio(srcW, srcH);
+    let placementCursorX = sourceFrame.x + sourceFrame.width + PLACEMENT_GAP;
     for (let i = 0; i < targetRatios.length; i++) {
       const ratio = targetRatios[i];
       const target = CANONICAL_SIZES[ratio];
       if (!target) continue;
-      figma.ui.postMessage({
-        type: "progress",
-        text: `Resizing to ${ratio} (${i + 1}/${targetRatios.length})...`,
-        step: "cloning"
-      });
+      figma.ui.postMessage({ type: "progress", text: `Resizing to ${ratio} (${i + 1}/${targetRatios.length})...`, step: "cloning" });
       const clone = sourceFrame.clone();
       clone.name = sourceFrame.name.replace(/\d+x\d+/, ratio) + (sourceFrame.name.includes(ratio) ? "" : `-${ratio}`);
-      clone.x = sourceFrame.x + (sourceFrame.width + 80) * (i + 1);
       clone.resize(target.w, target.h);
-      applyRecursiveProportionalBaseline(clone, srcW, srcH, target.w, target.h);
-      figma.ui.postMessage({
-        type: "progress",
-        text: `Planning layout for ${ratio}...`,
-        step: "planning"
-      });
+      forceBackgroundCoverage(clone, target.w, target.h);
+      applyContentBaseline(clone, srcW, srcH, target.w, target.h);
+      await reflowAllText(clone, srcW, srcH, target.w, target.h);
+      removeNestedDerivedFrames(clone);
+      figma.ui.postMessage({ type: "progress", text: `Planning layout for ${ratio}...`, step: "planning" });
       let editPlan = null;
       try {
         const resp = await fetch(`${apiBase}/api/plugin/iterator/derive`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Heimdall-Plugin-Token": token
-          },
+          headers: { "Content-Type": "application/json", "X-Heimdall-Plugin-Token": token },
           body: JSON.stringify({
             sourceFileKey: fileKey,
             sourceFrameId: sourceFrame.id,
@@ -1138,56 +1131,277 @@
         }
       } catch (e) {
       }
-      figma.ui.postMessage({
-        type: "progress",
-        text: `Applying layout for ${ratio}...`,
-        step: "applying"
-      });
       if (editPlan && editPlan.steps && editPlan.steps.length > 0) {
-        await applyEditPlan(clone, editPlan.steps, srcW, srcH, target.w, target.h);
+        figma.ui.postMessage({ type: "progress", text: `Applying layout for ${ratio}...`, step: "applying" });
+        await applyEditPlan(clone, editPlan.steps, target.w, target.h);
       }
-      figma.ui.postMessage({
-        type: "progress",
-        text: `Running QA on ${ratio}...`,
-        step: "qa"
-      });
-      const qaResult = runCompositionQA(clone, target.w, target.h);
-      if (qaResult.clippedTexts.length > 0 || qaResult.edgeViolations.length > 0) {
+      figma.ui.postMessage({ type: "progress", text: `Running QA on ${ratio}...`, step: "qa" });
+      let qaResult = runFullSubtreeQA(clone, target.w, target.h);
+      if (qaResult.issues.length > 0) {
         applyQAFixes(clone, qaResult, target.w, target.h);
       }
-      removeNestedDerivedFrames(clone);
       const imageRects = findAllImageRects(clone);
       if (imageRects.length > 0) {
-        figma.ui.postMessage({
-          type: "progress",
-          text: `Reviewing ${imageRects.length} image(s) in ${ratio}...`,
-          step: "image-review"
-        });
-        await reviewAndFixImageFraming(clone, imageRects, apiBase, token);
+        figma.ui.postMessage({ type: "progress", text: `Reviewing ${imageRects.length} image(s) in ${ratio}...`, step: "image-review" });
+        await reviewAndFixImageFraming(imageRects, apiBase, token);
       }
+      qaResult = runFullSubtreeQA(clone, target.w, target.h);
+      if (qaResult.issues.length > 0) {
+        applyQAFixes(clone, qaResult, target.w, target.h);
+      }
+      placementCursorX = placeCloneWithoutOverlap(clone, sourceFrame, placementCursorX);
       figma.currentPage.selection = [clone];
       figma.viewport.scrollAndZoomIntoView([clone]);
       figma.ui.postMessage({
         type: "ratio-complete",
         ratio,
         qaResult: {
-          clippedTexts: qaResult.clippedTexts.length,
-          overlaps: qaResult.overlaps.length,
-          edgeViolations: qaResult.edgeViolations.length,
-          storyOcclusionWarnings: qaResult.storyOcclusionWarnings.length
+          total: qaResult.issues.length,
+          clippedTexts: qaResult.issues.filter((i2) => i2.type === "text-clip").length,
+          overlaps: qaResult.issues.filter((i2) => i2.type === "overlap").length,
+          edgeViolations: qaResult.issues.filter((i2) => i2.type === "edge").length,
+          storyOcclusionWarnings: qaResult.issues.filter((i2) => i2.type === "occlusion").length
         }
       });
     }
-    figma.ui.postMessage({
-      type: "derive-complete",
-      count: targetRatios.length
-    });
+    figma.ui.postMessage({ type: "derive-complete", count: targetRatios.length });
+  }
+  function placeCloneWithoutOverlap(clone, source, cursorX) {
+    const page = figma.currentPage;
+    const cloneW = Math.round(clone.width);
+    const cloneH = Math.round(clone.height);
+    const sourceY = source.y;
+    const obstacles = [];
+    for (const child of page.children) {
+      if (child.id === clone.id) continue;
+      if (child.type !== "FRAME" && child.type !== "COMPONENT" && child.type !== "SECTION") continue;
+      obstacles.push({ x: child.x, y: child.y, w: Math.round(child.width), h: Math.round(child.height) });
+    }
+    let candidateX = cursorX;
+    const candidateY = sourceY;
+    let attempts = 0;
+    const maxAttempts = 50;
+    while (attempts < maxAttempts) {
+      const candidate = { x: candidateX, y: candidateY, w: cloneW, h: cloneH };
+      const hit = obstacles.find((o) => rectsIntersect(candidate, o));
+      if (!hit) break;
+      candidateX = hit.x + hit.w + PLACEMENT_GAP;
+      attempts++;
+    }
+    clone.x = candidateX;
+    clone.y = candidateY;
+    return candidateX + cloneW + PLACEMENT_GAP;
+  }
+  function rectsIntersect(a, b) {
+    return !(a.x >= b.x + b.w || b.x >= a.x + a.w || a.y >= b.y + b.h || b.y >= a.y + a.h);
+  }
+  function forceBackgroundCoverage(frame, frameW, frameH) {
+    for (const child of frame.children) {
+      const isBgCandidate = (child.type === "RECTANGLE" || child.type === "FRAME") && child.width >= frameW * 0.5 && child.height >= frameH * 0.3;
+      if (!isBgCandidate) continue;
+      child.x = 0;
+      child.y = 0;
+      if ("resize" in child) {
+        child.resize(frameW, frameH);
+      }
+      if (child.type === "RECTANGLE") {
+        const fills = child.fills || [];
+        const imgFill = fills.find((f) => f.type === "IMAGE");
+        if (imgFill == null ? void 0 : imgFill.imageHash) {
+          child.fills = [{
+            type: "IMAGE",
+            imageHash: imgFill.imageHash,
+            scaleMode: "FILL"
+          }];
+        }
+      }
+      break;
+    }
+  }
+  function applyContentBaseline(frame, srcW, srcH, tgtW, tgtH) {
+    const scaleX = tgtW / srcW;
+    const scaleY = tgtH / srcH;
+    for (const child of frame.children) {
+      if (isBackgroundLayer(child, tgtW, tgtH)) continue;
+      scaleContentNode(child, scaleX, scaleY, tgtW, tgtH);
+    }
+  }
+  function isBackgroundLayer(node, frameW, frameH) {
+    return (node.type === "RECTANGLE" || node.type === "FRAME") && node.width >= frameW * 0.9 && node.height >= frameH * 0.9;
+  }
+  function scaleContentNode(node, scaleX, scaleY, parentW, parentH) {
+    node.x = Math.round(node.x * scaleX);
+    node.y = Math.round(node.y * scaleY);
+    if (node.type === "TEXT") return;
+    if ("resize" in node) {
+      const newW = Math.max(1, Math.round(node.width * scaleX));
+      const newH = Math.max(1, Math.round(node.height * scaleY));
+      node.resize(newW, newH);
+    }
+    if (node.x + node.width > parentW) {
+      node.x = Math.max(0, parentW - node.width);
+    }
+    if (node.y + node.height > parentH) {
+      node.y = Math.max(0, parentH - node.height);
+    }
+    if ("children" in node && node.type !== "INSTANCE") {
+      const childFrame = node;
+      const innerScaleX = childFrame.width > 0 ? childFrame.width / (childFrame.width / scaleX) : 1;
+      const innerScaleY = childFrame.height > 0 ? childFrame.height / (childFrame.height / scaleY) : 1;
+      for (const child of childFrame.children) {
+        scaleContentNode(child, innerScaleX, innerScaleY, childFrame.width, childFrame.height);
+      }
+    }
+  }
+  async function reflowAllText(frame, srcW, srcH, tgtW, tgtH) {
+    const fontScale = Math.min(tgtW / srcW, tgtH / srcH);
+    const allText = findAllTextNodes(frame);
+    for (const textNode of allText) {
+      try {
+        const fontName = textNode.fontName;
+        if (fontName !== figma.mixed) {
+          await figma.loadFontAsync(fontName);
+        }
+        if (fontScale < 0.85 && textNode.fontSize !== figma.mixed) {
+          const currentSize = textNode.fontSize;
+          const newSize = Math.max(12, Math.round(currentSize * fontScale));
+          if (newSize < currentSize) {
+            textNode.fontSize = newSize;
+          }
+        }
+        textNode.textAutoResize = "HEIGHT";
+        const maxWidth = tgtW * 0.88;
+        if (textNode.width > maxWidth) {
+          textNode.resize(Math.round(maxWidth), textNode.height);
+        }
+      } catch (e) {
+      }
+    }
+  }
+  function findAllTextNodes(node) {
+    const result = [];
+    if (node.type === "TEXT") result.push(node);
+    if ("children" in node) {
+      for (const child of node.children) {
+        result.push(...findAllTextNodes(child));
+      }
+    }
+    return result;
+  }
+  var SAFE_ZONES = {
+    "9x16": { top: 240, bottom: 492, side: 80 },
+    "4x5": { top: 180, bottom: 180, side: 80 },
+    "1x1": { top: 144, bottom: 144, side: 80 }
+  };
+  function runFullSubtreeQA(frame, frameW, frameH) {
+    const issues = [];
+    const ratio = detectRatio(frameW, frameH);
+    const safeZone = ratio ? SAFE_ZONES[ratio] : { top: frameH * 0.1, bottom: frameH * 0.1, side: frameW * 0.04 };
+    const allText = findAllTextNodes(frame);
+    for (const t of allText) {
+      const absY = getAbsoluteY(t, frame);
+      const absX = getAbsoluteX(t, frame);
+      if (absY + t.height > frameH + 2) {
+        issues.push({ type: "text-clip", id: t.id, name: t.name, detail: `vertical overflow by ${Math.round(absY + t.height - frameH)}px` });
+      }
+      if (absX + t.width > frameW + 2) {
+        issues.push({ type: "text-hclip", id: t.id, name: t.name, detail: `horizontal overflow by ${Math.round(absX + t.width - frameW)}px` });
+      }
+    }
+    const contentChildren = [];
+    for (const child of frame.children) {
+      if (!isBackgroundLayer(child, frameW, frameH)) {
+        contentChildren.push(child);
+      }
+    }
+    for (let i = 0; i < contentChildren.length; i++) {
+      for (let j = i + 1; j < contentChildren.length; j++) {
+        const a = contentChildren[i], b = contentChildren[j];
+        if (!(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y)) {
+          issues.push({ type: "overlap", id: a.id, name: `${a.name} x ${b.name}`, detail: "content overlap" });
+        }
+      }
+    }
+    for (const child of contentChildren) {
+      if (child.x < safeZone.side) issues.push({ type: "edge", id: child.id, name: child.name, detail: "left" });
+      if (child.y < safeZone.top) issues.push({ type: "edge", id: child.id, name: child.name, detail: "top" });
+      if (child.x + child.width > frameW - safeZone.side) issues.push({ type: "edge", id: child.id, name: child.name, detail: "right" });
+      if (child.y + child.height > frameH - safeZone.bottom) issues.push({ type: "edge", id: child.id, name: child.name, detail: "bottom" });
+    }
+    let hasBg = false;
+    for (const child of frame.children) {
+      if (isBackgroundLayer(child, frameW, frameH)) {
+        hasBg = true;
+        break;
+      }
+    }
+    if (!hasBg) {
+      issues.push({ type: "bg-gap", id: frame.id, name: frame.name, detail: "no full-bleed background detected" });
+    }
+    for (const child of contentChildren) {
+      if (child.type === "FRAME") {
+        const coverageRatio = child.width * child.height / (frameW * frameH);
+        if (coverageRatio > 0.15 && child.y / frameH < 0.4) {
+          issues.push({ type: "occlusion", id: child.id, name: child.name, detail: `${Math.round(coverageRatio * 100)}% coverage in upper zone` });
+        }
+      }
+    }
+    return { issues };
+  }
+  function getAbsoluteY(node, ancestor) {
+    let y = node.y;
+    let current = node.parent;
+    while (current && current.id !== ancestor.id) {
+      if ("y" in current) y += current.y;
+      current = current.parent;
+    }
+    return y;
+  }
+  function getAbsoluteX(node, ancestor) {
+    let x = node.x;
+    let current = node.parent;
+    while (current && current.id !== ancestor.id) {
+      if ("x" in current) x += current.x;
+      current = current.parent;
+    }
+    return x;
+  }
+  function applyQAFixes(frame, qa, frameW, frameH) {
+    const ratio = detectRatio(frameW, frameH);
+    const safeZone = ratio ? SAFE_ZONES[ratio] : { top: frameH * 0.1, bottom: frameH * 0.1, side: frameW * 0.04 };
+    for (const issue of qa.issues) {
+      if (issue.type === "text-clip" || issue.type === "text-hclip") {
+        const node = frame.findOne((n) => n.id === issue.id);
+        if (node && node.type === "TEXT") {
+          node.textAutoResize = "HEIGHT";
+          if (node.width > frameW * 0.9) {
+            node.resize(Math.round(frameW * 0.85), node.height);
+          }
+          const absY = getAbsoluteY(node, frame);
+          if (absY + node.height > frameH - safeZone.bottom) {
+            node.y = Math.max(0, node.y - (absY + node.height - (frameH - safeZone.bottom)));
+          }
+        }
+      }
+      if (issue.type === "edge") {
+        const node = frame.findOne((n) => n.id === issue.id);
+        if (!node) continue;
+        if (issue.detail === "left" && node.x < safeZone.side) node.x = safeZone.side;
+        if (issue.detail === "right" && node.x + node.width > frameW - safeZone.side) {
+          node.x = Math.max(safeZone.side, frameW - safeZone.side - node.width);
+        }
+        if (issue.detail === "top" && node.y < safeZone.top) node.y = safeZone.top;
+        if (issue.detail === "bottom" && node.y + node.height > frameH - safeZone.bottom) {
+          node.y = Math.max(safeZone.top, frameH - safeZone.bottom - node.height);
+        }
+      }
+    }
   }
   function hasNestedDerivedFrames(frame) {
+    const parentRatio = detectRatio(frame.width, frame.height);
     for (const child of frame.children) {
-      if (child.type === "FRAME" && detectRatio(child.width, child.height) !== null) {
+      if (child.type === "FRAME") {
         const childRatio = detectRatio(child.width, child.height);
-        const parentRatio = detectRatio(frame.width, frame.height);
         if (childRatio && childRatio !== parentRatio) return true;
       }
     }
@@ -1199,71 +1413,24 @@
     for (const child of frame.children) {
       if (child.type === "FRAME") {
         const childRatio = detectRatio(child.width, child.height);
-        if (childRatio && childRatio !== parentRatio) {
-          toRemove.push(child);
-        }
+        if (childRatio && childRatio !== parentRatio) toRemove.push(child);
       }
     }
-    for (const node of toRemove) {
-      node.remove();
-    }
+    for (const node of toRemove) node.remove();
   }
-  function applyRecursiveProportionalBaseline(frame, srcW, srcH, tgtW, tgtH) {
-    const scaleX = tgtW / srcW;
-    const scaleY = tgtH / srcH;
-    for (const child of frame.children) {
-      scaleNodeRecursive(child, scaleX, scaleY, tgtW, tgtH);
-    }
-  }
-  function scaleNodeRecursive(node, scaleX, scaleY, frameW, frameH) {
-    node.x = Math.round(node.x * scaleX);
-    node.y = Math.round(node.y * scaleY);
-    const isFullBleed = node.width >= frameW / scaleX * 0.9;
-    if (isFullBleed && "resize" in node) {
-      node.resize(frameW, Math.round(node.height * scaleY));
-    } else if ("resize" in node && node.type !== "TEXT") {
-      const uniformScale = Math.min(scaleX, scaleY);
-      const newW = Math.round(node.width * uniformScale);
-      const newH = Math.round(node.height * uniformScale);
-      if (newW > 0 && newH > 0) {
-        node.resize(newW, newH);
-      }
-    }
-    if (node.type === "TEXT") {
-      const textNode = node;
-      textNode.textAutoResize = "HEIGHT";
-      if (textNode.width > frameW * 0.9) {
-        textNode.resize(Math.round(frameW * 0.85), textNode.height);
-      }
-    }
-    if ("children" in node && node.type !== "INSTANCE") {
-      const childFrame = node;
-      for (const child of childFrame.children) {
-        const parentScaleX = isFullBleed ? 1 : scaleX === scaleY ? 1 : scaleX;
-        const parentScaleY = isFullBleed ? scaleY : scaleX === scaleY ? 1 : scaleY;
-        scaleNodeRecursive(child, parentScaleX, parentScaleY, childFrame.width, childFrame.height);
-      }
-    }
-  }
-  async function applyEditPlan(frame, steps, srcW, srcH, tgtW, tgtH) {
+  async function applyEditPlan(frame, steps, tgtW, tgtH) {
     for (const step of steps) {
       let node = null;
       if (step.targetNodeId) {
         const byId = await figma.getNodeByIdAsync(step.targetNodeId);
-        if (byId && isDescendantOf(byId, frame)) {
-          node = byId;
-        }
+        if (byId && isDescendantOf(byId, frame)) node = byId;
       }
-      if (!node && step.targetNodeName) {
-        node = findNodeByName(frame, step.targetNodeName);
-      }
+      if (!node && step.targetNodeName) node = findNodeByName(frame, step.targetNodeName);
       if (!node) continue;
       switch (step.action) {
         case "move": {
-          const dx = Number(step.params.dx || 0);
-          const dy = Number(step.params.dy || 0);
-          const x = step.params.x;
-          const y = step.params.y;
+          const dx = Number(step.params.dx || 0), dy = Number(step.params.dy || 0);
+          const x = step.params.x, y = step.params.y;
           if (x !== void 0) node.x = x;
           else node.x = node.x + dx;
           if (y !== void 0) node.y = y;
@@ -1272,30 +1439,19 @@
         }
         case "scale": {
           const factor = Number(step.params.factor || 1);
-          const factorX = Number(step.params.factorX || factor);
-          const factorY = Number(step.params.factorY || factor);
-          if ("resize" in node) {
-            node.resize(
-              Math.round(node.width * factorX),
-              Math.round(node.height * factorY)
-            );
-          }
+          const fx = Number(step.params.factorX || factor), fy = Number(step.params.factorY || factor);
+          if ("resize" in node) node.resize(Math.round(node.width * fx), Math.round(node.height * fy));
           break;
         }
         case "reflow": {
           if (node.type === "TEXT") {
-            const textNode = node;
             try {
-              await figma.loadFontAsync(textNode.fontName);
-              textNode.textAutoResize = "HEIGHT";
+              await figma.loadFontAsync(node.fontName);
+              node.textAutoResize = "HEIGHT";
               const maxWidth = Number(step.params.maxWidth || tgtW * 0.85);
-              if (textNode.width > maxWidth) {
-                textNode.resize(maxWidth, textNode.height);
-              }
-              const newFontSize = step.params.fontSize;
-              if (newFontSize) {
-                textNode.fontSize = newFontSize;
-              }
+              if (node.width > maxWidth) node.resize(maxWidth, node.height);
+              const fontSize = step.params.fontSize;
+              if (fontSize) node.fontSize = fontSize;
             } catch (e) {
             }
           }
@@ -1309,9 +1465,6 @@
               const img = figma.getImageByHash(imgFill.imageHash);
               if (img) {
                 const imgSize = await img.getSizeAsync();
-                const zoom = Number(step.params.zoom || 0.85);
-                const panX = Number(step.params.panX || 0);
-                const panY = Number(step.params.panY || 0);
                 applyCropToRect2(
                   node,
                   imgFill.imageHash,
@@ -1319,7 +1472,7 @@
                   Math.round(node.height),
                   imgSize.width,
                   imgSize.height,
-                  { zoom, panX, panY }
+                  { zoom: Number(step.params.zoom || 0.85), panX: Number(step.params.panX || 0), panY: Number(step.params.panY || 0) }
                 );
               }
             }
@@ -1339,120 +1492,18 @@
     }
     return false;
   }
-  var SAFE_ZONES = {
-    "9x16": { top: 240, bottom: 492, side: 80 },
-    "4x5": { top: 180, bottom: 180, side: 80 },
-    "1x1": { top: 144, bottom: 144, side: 80 }
-  };
-  function runCompositionQA(frame, frameW, frameH) {
-    const result = {
-      clippedTexts: [],
-      overlaps: [],
-      edgeViolations: [],
-      storyOcclusionWarnings: []
-    };
-    const ratio = detectRatio(frameW, frameH);
-    const safeZone = ratio ? SAFE_ZONES[ratio] : { top: frameH * 0.1, bottom: frameH * 0.1, side: frameW * 0.04 };
-    const contentChildren = [];
-    for (const child of frame.children) {
-      if (child.type === "TEXT") {
-        if (child.y + child.height > frameH + 2) {
-          result.clippedTexts.push({
-            id: child.id,
-            name: child.name,
-            overflow: child.y + child.height - frameH
-          });
-        }
-      }
-      const isBackground = child.width >= frameW * 0.9 && child.height >= frameH * 0.9;
-      if (!isBackground) {
-        contentChildren.push(child);
-      }
-      if (!isBackground && child.type === "FRAME") {
-        const overlayArea = child.width * child.height;
-        const frameArea = frameW * frameH;
-        const coverageRatio = overlayArea / frameArea;
-        if (coverageRatio > 0.15 && child.y / frameH < 0.4) {
-          result.storyOcclusionWarnings.push({
-            id: child.id,
-            name: child.name,
-            coverageRatio
-          });
-        }
-      }
-    }
-    for (let i = 0; i < contentChildren.length; i++) {
-      for (let j = i + 1; j < contentChildren.length; j++) {
-        const a = contentChildren[i];
-        const b = contentChildren[j];
-        if (rectsOverlap(a, b)) {
-          result.overlaps.push({ a: a.name, b: b.name });
-        }
-      }
-    }
-    const margin = safeZone.side;
-    for (const child of contentChildren) {
-      if (child.x < margin) {
-        result.edgeViolations.push({ id: child.id, edge: "left", distance: child.x });
-      }
-      if (child.y < safeZone.top) {
-        result.edgeViolations.push({ id: child.id, edge: "top", distance: child.y });
-      }
-      if (child.x + child.width > frameW - margin) {
-        result.edgeViolations.push({ id: child.id, edge: "right", distance: frameW - (child.x + child.width) });
-      }
-      if (child.y + child.height > frameH - safeZone.bottom) {
-        result.edgeViolations.push({ id: child.id, edge: "bottom", distance: frameH - safeZone.bottom - (child.y + child.height) });
-      }
-    }
-    return result;
-  }
-  function rectsOverlap(a, b) {
-    return !(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y);
-  }
-  function applyQAFixes(frame, qa, frameW, frameH) {
-    const ratio = detectRatio(frameW, frameH);
-    const safeZone = ratio ? SAFE_ZONES[ratio] : { top: frameH * 0.1, bottom: frameH * 0.1, side: frameW * 0.04 };
-    for (const clip of qa.clippedTexts) {
-      const node = frame.findOne((n) => n.id === clip.id);
-      if (node && node.type === "TEXT") {
-        node.textAutoResize = "HEIGHT";
-        if (node.y + node.height > frameH - safeZone.bottom) {
-          node.y = Math.max(safeZone.top, frameH - safeZone.bottom - node.height);
-        }
-      }
-    }
-    for (const violation of qa.edgeViolations) {
-      const node = frame.findOne((n) => n.id === violation.id);
-      if (!node) continue;
-      if (violation.edge === "left" && node.x < safeZone.side) {
-        node.x = safeZone.side;
-      }
-      if (violation.edge === "right" && node.x + node.width > frameW - safeZone.side) {
-        node.x = Math.max(safeZone.side, frameW - safeZone.side - node.width);
-      }
-      if (violation.edge === "top" && node.y < safeZone.top) {
-        node.y = safeZone.top;
-      }
-      if (violation.edge === "bottom" && node.y + node.height > frameH - safeZone.bottom) {
-        node.y = Math.max(safeZone.top, frameH - safeZone.bottom - node.height);
-      }
-    }
-  }
   function findAllImageRects(node) {
     const rects = [];
     if (node.type === "RECTANGLE") {
       const fills = node.fills || [];
-      if (fills.length > 0 && fills[0].type === "IMAGE") {
-        rects.push(node);
-      }
+      if (fills.length > 0 && fills[0].type === "IMAGE") rects.push(node);
     }
     if ("children" in node) {
       for (const c of node.children) rects.push(...findAllImageRects(c));
     }
     return rects;
   }
-  async function reviewAndFixImageFraming(_frame, imageRects, apiBase, token) {
+  async function reviewAndFixImageFraming(imageRects, apiBase, token) {
     for (const rect of imageRects) {
       try {
         const fills = rect.fills;
@@ -1461,17 +1512,11 @@
         const img = figma.getImageByHash(imageFill.imageHash);
         if (!img) continue;
         const imgSize = await img.getSizeAsync();
-        const pngBytes = await rect.exportAsync({
-          format: "PNG",
-          constraint: { type: "SCALE", value: 0.5 }
-        });
+        const pngBytes = await rect.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: 0.5 } });
         const base64 = bytesToBase64(Array.from(pngBytes));
         const resp = await fetch(`${apiBase}/api/plugin/iterator/review-placement`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Heimdall-Plugin-Token": token
-          },
+          headers: { "Content-Type": "application/json", "X-Heimdall-Plugin-Token": token },
           body: JSON.stringify({
             previewImageBase64: base64,
             mimeType: "image/png",
@@ -1501,35 +1546,24 @@
     }
   }
   function buildImageTransform2(rectW, rectH, imgW, imgH, params) {
-    const rectAR = rectW / rectH;
-    const imgAR = imgW / imgH;
-    let baseScaleX;
-    let baseScaleY;
+    const rectAR = rectW / rectH, imgAR = imgW / imgH;
+    let bsx, bsy;
     if (imgAR > rectAR) {
-      baseScaleY = 1;
-      baseScaleX = rectAR / imgAR;
+      bsy = 1;
+      bsx = rectAR / imgAR;
     } else {
-      baseScaleX = 1;
-      baseScaleY = imgAR / rectAR;
+      bsx = 1;
+      bsy = imgAR / rectAR;
     }
     const zoom = Math.max(0.3, Math.min(1, params.zoom));
     const t = 1 - zoom;
-    const sx = baseScaleX + (1 - baseScaleX) * t;
-    const sy = baseScaleY + (1 - baseScaleY) * t;
-    const tx = (1 - sx) * 0.5 + params.panX * sx;
-    const ty = (1 - sy) * 0.5 + params.panY * sy;
-    const clampedTx = Math.max(0, Math.min(1 - sx, tx));
-    const clampedTy = Math.max(0, Math.min(1 - sy, ty));
-    return [[sx, 0, clampedTx], [0, sy, clampedTy]];
+    const sx = bsx + (1 - bsx) * t, sy = bsy + (1 - bsy) * t;
+    const tx = Math.max(0, Math.min(1 - sx, (1 - sx) * 0.5 + params.panX * sx));
+    const ty = Math.max(0, Math.min(1 - sy, (1 - sy) * 0.5 + params.panY * sy));
+    return [[sx, 0, tx], [0, sy, ty]];
   }
   function applyCropToRect2(rect, imageHash, rectW, rectH, imgW, imgH, params) {
-    const transform = buildImageTransform2(rectW, rectH, imgW, imgH, params);
-    rect.fills = [{
-      type: "IMAGE",
-      imageHash,
-      scaleMode: "CROP",
-      imageTransform: transform
-    }];
+    rect.fills = [{ type: "IMAGE", imageHash, scaleMode: "CROP", imageTransform: buildImageTransform2(rectW, rectH, imgW, imgH, params) }];
   }
   function findNodeByName(root, name) {
     let found = null;
@@ -1548,7 +1582,7 @@
   }
   function extractLayerSummary2(frame) {
     function mapNode(c) {
-      const node = {
+      const n = {
         id: c.id,
         name: c.name,
         type: c.type,
@@ -1559,39 +1593,26 @@
         visible: c.visible !== false
       };
       if (c.type === "TEXT") {
-        node.characters = c.characters;
-        node.fontSize = c.fontSize;
+        n.characters = c.characters;
+        n.fontSize = c.fontSize;
       }
-      if ("children" in c && c.children.length > 0) {
-        node.children = c.children.map(mapNode);
-      }
+      if ("children" in c && c.children.length > 0) n.children = c.children.map(mapNode);
       if (c.type === "RECTANGLE") {
         const fills = c.fills || [];
-        if (fills.length > 0 && fills[0].type === "IMAGE") {
-          node.hasImage = true;
-        }
+        if (fills.length > 0 && fills[0].type === "IMAGE") n.hasImage = true;
       }
-      return node;
+      return n;
     }
-    const children = frame.children.map(mapNode);
-    return {
-      id: frame.id,
-      name: frame.name,
-      width: Math.round(frame.width),
-      height: Math.round(frame.height),
-      childCount: children.length,
-      children
-    };
+    return { id: frame.id, name: frame.name, width: Math.round(frame.width), height: Math.round(frame.height), childCount: frame.children.length, children: frame.children.map(mapNode) };
   }
   function bytesToBase64(byteArray) {
     let raw = "";
     for (let ci = 0; ci < byteArray.length; ci += 8192) {
-      const chunk = byteArray.slice(ci, ci + 8192);
-      raw += String.fromCharCode.apply(null, chunk);
+      raw += String.fromCharCode.apply(null, byteArray.slice(ci, ci + 8192));
     }
     return btoa(raw);
   }
-  function buildUI2(frame, sourceRatio, _fileKey) {
+  function buildUI2(frame, sourceRatio) {
     return `
 <!DOCTYPE html>
 <html>
@@ -1610,9 +1631,6 @@
     .progress { margin-top: 8px; font-size: 11px; color: #aaa; }
     .status { padding: 8px 12px; background: #2a2a2a; border-radius: 6px; margin-top: 12px; white-space: pre-wrap; font-size: 11px; line-height: 1.5; }
     .qa-line { font-size: 11px; color: #888; padding: 2px 0; }
-    .qa-pass { color: #4ade80; }
-    .qa-warn { color: #fbbf24; }
-    .qa-fail { color: #f87171; }
   </style>
 </head>
 <body>
@@ -1628,12 +1646,9 @@
   <div id="qa-results"></div>
   <div id="status" class="status" style="display:none;"></div>
   <script>
-    var sourceRatio = '${sourceRatio || ""}';
-
     window.onmessage = function(event) {
       var msg = event.data.pluginMessage;
       if (!msg) return;
-
       if (msg.type === 'progress') {
         var el = document.getElementById('progress');
         el.style.display = 'block';
@@ -1642,11 +1657,11 @@
       if (msg.type === 'ratio-complete') {
         var qaDiv = document.getElementById('qa-results');
         var qa = msg.qaResult;
-        var lines = ['\u2014 ' + msg.ratio + ' QA:'];
-        lines.push(qa.clippedTexts === 0 ? '  Text clipping: PASS' : '  Text clipping: ' + qa.clippedTexts + ' issue(s)');
-        lines.push(qa.overlaps === 0 ? '  Overlap: PASS' : '  Overlap: ' + qa.overlaps + ' issue(s)');
-        lines.push(qa.edgeViolations === 0 ? '  Safe zone: PASS' : '  Safe zone: ' + qa.edgeViolations + ' issue(s)');
-        lines.push(qa.storyOcclusionWarnings === 0 ? '  Story occlusion: PASS' : '  Story occlusion: ' + qa.storyOcclusionWarnings + ' warning(s)');
+        var lines = ['\u2014 ' + msg.ratio + ': ' + qa.total + ' issue(s)'];
+        if (qa.clippedTexts) lines.push('  Text clip: ' + qa.clippedTexts);
+        if (qa.overlaps) lines.push('  Overlap: ' + qa.overlaps);
+        if (qa.edgeViolations) lines.push('  Edge: ' + qa.edgeViolations);
+        if (qa.storyOcclusionWarnings) lines.push('  Occlusion: ' + qa.storyOcclusionWarnings);
         var div = document.createElement('div');
         div.className = 'qa-line';
         div.textContent = lines.join('\\n');
@@ -1655,9 +1670,9 @@
       }
       if (msg.type === 'derive-complete') {
         document.getElementById('progress').style.display = 'none';
-        var statusEl = document.getElementById('status');
-        statusEl.style.display = 'block';
-        statusEl.textContent = 'Done! Created ' + msg.count + ' resized format(s).';
+        var s = document.getElementById('status');
+        s.style.display = 'block';
+        s.textContent = 'Done! Created ' + msg.count + ' resized format(s).';
         document.getElementById('btn-derive').disabled = false;
         document.getElementById('btn-derive').textContent = 'Resize to Selected Formats';
       }
@@ -1667,24 +1682,21 @@
         el.textContent = msg.text;
       }
     };
-
     document.getElementById('btn-derive').addEventListener('click', function() {
-      var checkboxes = document.querySelectorAll('.targets input[type="checkbox"]:checked:not(:disabled)');
+      var cbs = document.querySelectorAll('.targets input[type="checkbox"]:checked:not(:disabled)');
       var selected = [];
-      checkboxes.forEach(function(cb) { selected.push(cb.value); });
+      cbs.forEach(function(cb) { selected.push(cb.value); });
       if (selected.length === 0) {
         var el = document.getElementById('status');
         el.style.display = 'block';
         el.textContent = 'Select at least one target format.';
         return;
       }
-      var btn = document.getElementById('btn-derive');
-      btn.disabled = true;
-      btn.textContent = 'Resizing...';
+      document.getElementById('btn-derive').disabled = true;
+      document.getElementById('btn-derive').textContent = 'Resizing...';
       document.getElementById('qa-results').innerHTML = '';
       parent.postMessage({ pluginMessage: { type: 'start-derive', targetRatios: selected } }, '*');
     });
-
     parent.postMessage({ pluginMessage: { type: 'ready' } }, '*');
   <\/script>
 </body>
