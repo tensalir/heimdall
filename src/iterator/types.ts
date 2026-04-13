@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { CreativeContextPack } from '../creativeMemory/types.js'
 
 export type IteratorMode = 'layered-iteration' | 'ai-bg-plus-layers' | 'flat-ai-variants' | 'briefing-to-ad'
 
@@ -14,7 +15,10 @@ export const AnalyzeRequestSchema = z.object({
   layerData: z.record(z.unknown()).optional(),
 })
 
-export type AnalyzeRequest = z.infer<typeof AnalyzeRequestSchema>
+export type AnalyzeRequest = z.infer<typeof AnalyzeRequestSchema> & {
+  /** Injected at runtime by the orchestrator — never sent from the client */
+  creativeContext?: CreativeContextPack
+}
 
 export interface StoryPreservation {
   storySubject: string
@@ -109,6 +113,7 @@ export interface IteratorGeneratedAsset {
 
 export interface PlacementReviewRequest {
   previewImageBase64: string
+  sourceImageBase64?: string
   mimeType: string
   rectWidth: number
   rectHeight: number

@@ -11,11 +11,11 @@ import type { PlacementReviewRequest, CropAdjustment } from '../types.js'
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 const REVIEW_MODEL = 'gemini-2.5-flash-preview-05-20'
 
-const REVIEW_PROMPT = `You are an art director reviewing a portrait photo placed inside an ad frame.
+const REVIEW_PROMPT = `You are a senior art director at a performance marketing agency reviewing portrait lifestyle photos placed inside ad tiles.
 
-The image has been placed using "cover" (FILL) mode, which means it fills the rectangle completely but crops the edges. Your job is to evaluate whether the person's face is clearly visible and well-framed, or whether the image needs to be zoomed out (showing more of the image) or panned to center the face better.
+Your job is to judge whether the current crop shows enough of the person's face and upper body, and whether the source image has more usable headroom that should be revealed. Think like a designer who immediately notices when a crop is too tight and zooms out.
 
-Evaluate the placed image and respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
+Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 
 {
   "action": "keep" or "adjust",
@@ -26,13 +26,14 @@ Evaluate the placed image and respond with ONLY a JSON object (no markdown, no e
   "reason": "brief explanation"
 }
 
-Guidelines:
-- If the face is fully visible with forehead, chin, and both eyes clearly showing, respond with action "keep"
-- If the face is cropped (forehead cut off, chin missing, only partial face visible), respond with action "adjust"
-- zoomDelta of -0.15 is a moderate zoom-out; -0.3 is aggressive
+Art direction guidelines:
+- Default toward "adjust" if any of these are true: forehead is cut off, top of hair is missing, only partial face visible, face fills the entire tile with no breathing room, or the source image clearly contains more face/body that is being cropped away
+- Prefer showing: full forehead, eyes, nose, mouth, and enough chin/jaw to read the expression — plus some breathing room above the head
+- For portrait lifestyle tiles in ads, a slightly wider crop is almost always better than a tighter one — viewers need to read the person's mood and context at a glance
+- zoomDelta of -0.15 is a moderate zoom-out; -0.25 is a comfortable wider view; -0.35 is aggressive
 - panX/panY shift the visible window; use small values (0.05-0.15) for subtle repositioning
-- Be conservative: only suggest adjustments when the face is clearly too cropped
-- For sleeping/resting poses, the full face doesn't need to be perfectly centered but should be recognizable`
+- For sleeping/resting poses, the face can be slightly off-center but should still be clearly recognizable
+- Only respond "keep" if the face is already well-framed with visible headroom and the source image would not improve the crop`
 
 export async function reviewPlacement(
   request: PlacementReviewRequest,
@@ -50,16 +51,33 @@ export async function reviewPlacement(
 
   const sizeNote = `\nThe target rectangle is ${request.rectWidth}x${request.rectHeight}px. The source image is ${request.imageWidth}x${request.imageHeight}px.`
 
+  const imageParts: Array<Record<string, unknown>> = []
+
+  if (request.sourceImageBase64) {
+    imageParts.push({
+      inlineData: {
+        mimeType: request.mimeType,
+        data: request.sourceImageBase64,
+      },
+    })
+  }
+
+  imageParts.push({
+    inlineData: {
+      mimeType: request.mimeType,
+      data: request.previewImageBase64,
+    },
+  })
+
+  const sourceNote = request.sourceImageBase64
+    ? '\n\nYou are seeing two images: the FIRST is the full uncropped source image (what we have to work with), and the SECOND is how it currently appears cropped inside the ad tile. Compare them to judge whether the crop is too tight.'
+    : ''
+
   const body = {
     contents: [{
       parts: [
-        { text: REVIEW_PROMPT + sizeNote + contextNote },
-        {
-          inlineData: {
-            mimeType: request.mimeType,
-            data: request.previewImageBase64,
-          },
-        },
+        { text: REVIEW_PROMPT + sizeNote + sourceNote + contextNote },
+        ...imageParts,
       ],
     }],
     generationConfig: {

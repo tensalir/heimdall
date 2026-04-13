@@ -20,6 +20,7 @@ export const maxDuration = 30
 
 const ReviewRequestSchema = z.object({
   previewImageBase64: z.string(),
+  sourceImageBase64: z.string().optional(),
   mimeType: z.string().default('image/png'),
   rectWidth: z.number().positive(),
   rectHeight: z.number().positive(),

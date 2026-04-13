@@ -162,16 +162,20 @@
               }
               const targetRect = findImageRectInClone(variantFrame, rectName);
               if (!targetRect) continue;
-              targetRect.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
+              const rw = Math.round(targetRect.width);
+              const rh = Math.round(targetRect.height);
+              const iw = imageSize.width;
+              const ih = imageSize.height;
+              applyCropToRect(targetRect, image.hash, rw, rh, iw, ih, { zoom: 0.85, panX: 0, panY: 0 });
               const generatedName = `generated-${img.name || "image-" + imagesPlaced}`;
               targetRect.name = generatedName;
               placedRects.push({
                 rectId: targetRect.id,
                 imageHash: image.hash,
-                rectWidth: Math.round(targetRect.width),
-                rectHeight: Math.round(targetRect.height),
-                imageWidth: imageSize.width,
-                imageHeight: imageSize.height,
+                rectWidth: rw,
+                rectHeight: rh,
+                imageWidth: iw,
+                imageHeight: ih,
                 name: generatedName
               });
               imagesPlaced++;
@@ -210,12 +214,16 @@
               } catch (e) {
               }
             }
+            const failureSummary = msg.failureSummary || "";
+            const totalExpected = msg.totalExpected || images.length;
             figma.ui.postMessage({
               type: "variant-placed",
               cloneId,
               imagesPlaced,
               copyApplied,
-              previews
+              previews,
+              failureSummary,
+              totalExpected
             });
           } else {
             figma.ui.postMessage({
@@ -285,6 +293,7 @@
                 format: "PNG",
                 constraint: { type: "SCALE", value: 0.5 }
               });
+              const sourceImageBytes = await img.getBytesAsync();
               previews.push({
                 rectId: rect.id,
                 imageHash: imageFill.imageHash,
@@ -293,6 +302,7 @@
                 imageWidth: imgSize.width,
                 imageHeight: imgSize.height,
                 previewBytes: Array.from(pngBytes),
+                sourceBytes: Array.from(sourceImageBytes),
                 mimeType: "image/png"
               });
             } catch (e) {
@@ -563,11 +573,12 @@
 
     async function runPlacementReview(msg) {
       try {
+        var failNote = msg.failureSummary ? '\\n' + msg.failureSummary : '';
         var previews = msg.previews || [];
         if (previews.length === 0) {
           var el = document.getElementById('status');
           el.style.display = 'block';
-          el.textContent = 'Variant created! ' + msg.imagesPlaced + ' images replaced, ' + msg.copyApplied + ' copy changes applied.';
+          el.textContent = msg.imagesPlaced + ' of ' + (msg.totalExpected || '?') + ' images placed, ' + msg.copyApplied + ' copy changes.' + (failNote ? '\\n' + msg.failureSummary : '');
           return;
         }
 
@@ -641,6 +652,15 @@
       }
     }
 
+    function bytesToBase64(byteArray) {
+      var raw = '';
+      for (var ci = 0; ci < byteArray.length; ci += 8192) {
+        var chunk = byteArray.slice(ci, ci + 8192);
+        raw += String.fromCharCode.apply(null, chunk);
+      }
+      return btoa(raw);
+    }
+
     async function runSmartReframe(msg) {
       try {
         var previews = msg.previews || [];
@@ -660,13 +680,8 @@
           var preview = previews[i];
           try {
             setProgress('Reviewing image ' + (i + 1) + ' of ' + previews.length + '...');
-            var base64 = '';
-            var bytes = preview.previewBytes;
-            for (var ci = 0; ci < bytes.length; ci += 8192) {
-              var chunk = bytes.slice(ci, ci + 8192);
-              base64 += String.fromCharCode.apply(null, chunk);
-            }
-            base64 = btoa(base64);
+            var previewB64 = bytesToBase64(preview.previewBytes);
+            var sourceB64 = preview.sourceBytes ? bytesToBase64(preview.sourceBytes) : undefined;
 
             var reviewResp = await fetch(API_BASE + '/api/plugin/iterator/review-placement', {
               method: 'POST',
@@ -675,13 +690,14 @@
                 'X-Heimdall-Plugin-Token': TOKEN
               },
               body: JSON.stringify({
-                previewImageBase64: base64,
+                previewImageBase64: previewB64,
+                sourceImageBase64: sourceB64,
                 mimeType: preview.mimeType,
                 rectWidth: preview.rectWidth,
                 rectHeight: preview.rectHeight,
                 imageWidth: preview.imageWidth,
                 imageHeight: preview.imageHeight,
-                context: 'Portrait lifestyle photo in a performance ad. Please evaluate if the face is too tightly cropped and recommend zooming out to show more of the person.'
+                context: 'Portrait lifestyle photo in a performance ad tile. Compare the full source image against the current crop and recommend zooming out if more face/headroom is available.'
               })
             });
 
@@ -852,26 +868,34 @@
         var result = await resp.json();
         setProgress('Step 3/6: Downloading generated images...');
 
-        // Fetch each generated image as bytes
+        // Fetch each generated image as bytes, tracking failures explicitly
         var imagePayloads = [];
+        var failedTiles = [];
         for (var j = 0; j < result.imageResults.length; j++) {
           var imgResult = result.imageResults[j];
-          if (imgResult.url) {
-            try {
-              setProgress('Step 3/6: Downloading image ' + (j + 1) + '/' + result.imageResults.length + '...');
-              var imgResp = await fetch(imgResult.url);
-              if (imgResp.ok) {
-                var buf = await imgResp.arrayBuffer();
-                imagePayloads.push({
-                  nodeId: imgResult.nodeId,
-                  bytes: Array.from(new Uint8Array(buf)),
-                  name: 'variant-image-' + j
-                });
-              }
-            } catch (imgErr) {
-              // Image download failed, skip
-            }
+          if (!imgResult.url) {
+            failedTiles.push('Tile ' + (j + 1) + ': ' + (imgResult.error || 'generation failed'));
+            continue;
           }
+          try {
+            setProgress('Step 3/6: Downloading image ' + (j + 1) + '/' + result.imageResults.length + '...');
+            var imgResp = await fetch(imgResult.url);
+            if (imgResp.ok) {
+              var buf = await imgResp.arrayBuffer();
+              imagePayloads.push({
+                nodeId: imgResult.nodeId,
+                bytes: Array.from(new Uint8Array(buf)),
+                name: 'variant-image-' + j
+              });
+            } else {
+              failedTiles.push('Tile ' + (j + 1) + ': download failed (' + imgResp.status + ')');
+            }
+          } catch (imgErr) {
+            failedTiles.push('Tile ' + (j + 1) + ': ' + (imgErr.message || 'download error'));
+          }
+        }
+        if (failedTiles.length > 0) {
+          setProgress('Warning: ' + failedTiles.length + ' tile(s) failed. ' + imagePayloads.length + ' loaded.');
         }
 
         setProgress('Step 4/6: Preparing copy changes...');
@@ -904,6 +928,9 @@
           }
         }
 
+        var failureSummary = failedTiles.length > 0
+          ? failedTiles.length + ' of ' + result.imageResults.length + ' tile(s) failed: ' + failedTiles.join('; ')
+          : '';
         setProgress('Step 5/6: Applying images and copy to variant...');
 
         // Send to main thread for application on the existing clone
@@ -911,7 +938,9 @@
           type: 'apply-variant',
           cloneId: pendingCloneId,
           images: imagePayloads,
-          copyChanges: copyChanges
+          copyChanges: copyChanges,
+          failureSummary: failureSummary,
+          totalExpected: result.imageResults.length
         }}, '*');
 
       } catch (err) {
