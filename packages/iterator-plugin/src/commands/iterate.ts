@@ -119,21 +119,41 @@ export function runIterate(): void {
         // Apply images
         const images = (msg.images || []) as Array<{ nodeId: string; bytes: number[]; name: string }>
         let imagesPlaced = 0
+        const debugImgLog: string[] = []
 
         for (const img of images) {
-          if (!img.bytes || img.bytes.length === 0) continue
+          // #region agent log H3
+          debugImgLog.push(`img nodeId=${img.nodeId} bytesLen=${img.bytes?.length || 0}`)
+          // #endregion
+          if (!img.bytes || img.bytes.length === 0) { debugImgLog.push('  SKIP: empty bytes'); continue }
 
           const bytes = new Uint8Array(img.bytes)
-          const image = figma.createImage(bytes)
+          try {
+            const image = figma.createImage(bytes)
+            // #region agent log H5
+            debugImgLog.push(`  createImage hash=${image.hash}`)
+            // #endregion
 
-          const originalNode = await figma.getNodeByIdAsync(img.nodeId)
-          if (!originalNode) continue
+            const originalNode = await figma.getNodeByIdAsync(img.nodeId)
+            // #region agent log H4
+            debugImgLog.push(`  originalNode=${originalNode ? originalNode.name : 'NOT FOUND'}`)
+            // #endregion
+            if (!originalNode) { debugImgLog.push('  SKIP: original not found'); continue }
 
-          const targetRect = findImageRectInClone(variantFrame, originalNode.name)
-          if (!targetRect) continue
+            const targetRect = findImageRectInClone(variantFrame, originalNode.name)
+            // #region agent log H4
+            debugImgLog.push(`  targetRect=${targetRect ? targetRect.id + ':' + targetRect.name : 'NOT FOUND'}`)
+            // #endregion
+            if (!targetRect) { debugImgLog.push('  SKIP: rect not found in clone'); continue }
 
-          targetRect.fills = [{ type: 'IMAGE', imageHash: image.hash, scaleMode: 'FILL' }]
-          imagesPlaced++
+            targetRect.fills = [{ type: 'IMAGE', imageHash: image.hash, scaleMode: 'FILL' }]
+            imagesPlaced++
+            debugImgLog.push('  PLACED OK')
+          } catch (imgErr) {
+            // #region agent log H5
+            debugImgLog.push(`  ERROR: ${(imgErr as Error).message}`)
+            // #endregion
+          }
         }
 
         // Apply copy changes
@@ -159,7 +179,7 @@ export function runIterate(): void {
 
         figma.ui.postMessage({
           type: 'status',
-          text: 'Done! ' + imagesPlaced + ' images replaced, ' + copyApplied + ' copy changes applied.',
+          text: 'Done! ' + imagesPlaced + ' images replaced, ' + copyApplied + ' copy changes applied.\n\n[DEBUG main thread]\n' + debugImgLog.join('\n'),
         })
       } catch (err) {
         figma.ui.postMessage({
@@ -354,7 +374,13 @@ function buildUI(frameId: string, frameName: string): string {
         }
 
         var result = await resp.json();
-        setProgress('Step 3/5: Downloading generated images...');
+        // #region agent log H1
+        var debugLines = ['[DEBUG] imageResults: ' + result.imageResults.length];
+        for (var d = 0; d < result.imageResults.length; d++) {
+          debugLines.push('  [' + d + '] nodeId=' + result.imageResults[d].nodeId + ' url=' + (result.imageResults[d].url ? result.imageResults[d].url.substring(0, 80) + '...' : 'NULL') + ' error=' + (result.imageResults[d].error || 'none'));
+        }
+        // #endregion
+        setProgress('Step 3/5: Downloading generated images...\\n' + debugLines.join('\\n'));
 
         // Fetch each generated image as bytes
         var imagePayloads = [];
@@ -364,8 +390,14 @@ function buildUI(frameId: string, frameName: string): string {
             try {
               setProgress('Step 3/5: Downloading image ' + (j + 1) + '/' + result.imageResults.length + '...');
               var imgResp = await fetch(imgResult.url);
+              // #region agent log H2 H3
+              debugLines.push('  fetch[' + j + '] status=' + imgResp.status + ' ok=' + imgResp.ok);
+              // #endregion
               if (imgResp.ok) {
                 var buf = await imgResp.arrayBuffer();
+                // #region agent log H3
+                debugLines.push('  bytes[' + j + '] length=' + buf.byteLength);
+                // #endregion
                 imagePayloads.push({
                   nodeId: imgResult.nodeId,
                   bytes: Array.from(new Uint8Array(buf)),
@@ -373,10 +405,15 @@ function buildUI(frameId: string, frameName: string): string {
                 });
               }
             } catch (imgErr) {
-              // Skip failed image downloads
+              // #region agent log H2
+              debugLines.push('  fetchError[' + j + ']: ' + (imgErr.message || imgErr));
+              // #endregion
             }
           }
         }
+        // #region agent log summary
+        debugLines.push('[DEBUG] imagePayloads ready: ' + imagePayloads.length);
+        // #endregion
 
         setProgress('Step 4/5: Preparing copy changes...');
 
@@ -408,7 +445,7 @@ function buildUI(frameId: string, frameName: string): string {
           }
         }
 
-        setProgress('Step 5/5: Applying images and copy to variant...');
+        setProgress('Step 5/5: Applying images and copy to variant...\\n' + debugLines.join('\\n'));
 
         // Send to main thread for application on the existing clone
         parent.postMessage({ pluginMessage: {
