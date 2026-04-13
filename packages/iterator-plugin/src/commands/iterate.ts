@@ -3,10 +3,82 @@
  *
  * Inspects the selected frame, extracts its layer structure,
  * sends it to the Iterator backend for full variant generation,
- * then clones the frame and applies new images + copy.
+ * then clones the frame, applies new images + copy, and runs
+ * an automatic face-visibility review loop to adjust crop/zoom.
  */
 
 import { getApiBase, getPluginToken } from '../constants'
+
+// ---------------------------------------------------------------------------
+// Crop / image-transform helpers
+// ---------------------------------------------------------------------------
+
+interface CropParams {
+  zoom: number
+  panX: number
+  panY: number
+}
+
+/**
+ * Build a Figma imageTransform matrix for CROP mode.
+ *
+ * The transform is a 2x3 affine matrix [[sx, 0, tx], [0, sy, ty]] that maps
+ * normalized image coordinates (0-1) to the rectangle viewport.
+ *
+ * zoom=1 means the image covers the rect exactly (same as FILL).
+ * zoom<1 means the image is scaled down, revealing more of it (zoom out).
+ * panX/panY shift the visible window in normalized coordinates.
+ */
+function buildImageTransform(
+  rectW: number,
+  rectH: number,
+  imgW: number,
+  imgH: number,
+  params: CropParams,
+): Transform {
+  const rectAR = rectW / rectH
+  const imgAR = imgW / imgH
+
+  let baseScaleX: number
+  let baseScaleY: number
+  if (imgAR > rectAR) {
+    baseScaleY = 1
+    baseScaleX = rectAR / imgAR
+  } else {
+    baseScaleX = 1
+    baseScaleY = imgAR / rectAR
+  }
+
+  const zoom = Math.max(0.3, Math.min(1, params.zoom))
+  const sx = baseScaleX * zoom
+  const sy = baseScaleY * zoom
+
+  const tx = (1 - sx) * 0.5 + params.panX * sx
+  const ty = (1 - sy) * 0.5 + params.panY * sy
+
+  const clampedTx = Math.max(0, Math.min(1 - sx, tx))
+  const clampedTy = Math.max(0, Math.min(1 - sy, ty))
+
+  return [[sx, 0, clampedTx], [0, sy, clampedTy]]
+}
+
+function applyCropToRect(
+  rect: RectangleNode,
+  imageHash: string,
+  rectW: number,
+  rectH: number,
+  imgW: number,
+  imgH: number,
+  params: CropParams,
+): void {
+  const transform = buildImageTransform(rectW, rectH, imgW, imgH, params)
+  rect.fills = [{
+    type: 'IMAGE',
+    imageHash,
+    scaleMode: 'CROP',
+    imageTransform: transform,
+  }]
+}
 
 /**
  * Walk up from a node to find the nearest ancestor frame whose name
@@ -116,9 +188,18 @@ export function runIterate(): void {
         const genLabel = variantFrame.children.find((c) => c.type === 'TEXT' && c.name === 'Generating variant...')
         if (genLabel) genLabel.remove()
 
-        // Apply images
+        // Apply images and collect placement metadata for review
         const images = (msg.images || []) as Array<{ nodeId: string; bytes: number[]; name: string }>
         let imagesPlaced = 0
+        const placedRects: Array<{
+          rectId: string
+          imageHash: string
+          rectWidth: number
+          rectHeight: number
+          imageWidth: number
+          imageHeight: number
+          name: string
+        }> = []
 
         for (const img of images) {
           if (!img.bytes || img.bytes.length === 0) continue
@@ -126,6 +207,7 @@ export function runIterate(): void {
           const bytes = new Uint8Array(img.bytes)
           try {
             const image = figma.createImage(bytes)
+            const imageSize = await image.getSizeAsync()
 
             const originalNode = await figma.getNodeByIdAsync(img.nodeId)
             if (!originalNode) continue
@@ -140,7 +222,18 @@ export function runIterate(): void {
             if (!targetRect) continue
 
             targetRect.fills = [{ type: 'IMAGE', imageHash: image.hash, scaleMode: 'FILL' }]
-            targetRect.name = `generated-${img.name || 'image-' + imagesPlaced}`
+            const generatedName = `generated-${img.name || 'image-' + imagesPlaced}`
+            targetRect.name = generatedName
+
+            placedRects.push({
+              rectId: targetRect.id,
+              imageHash: image.hash,
+              rectWidth: Math.round(targetRect.width),
+              rectHeight: Math.round(targetRect.height),
+              imageWidth: imageSize.width,
+              imageHeight: imageSize.height,
+              name: generatedName,
+            })
             imagesPlaced++
           } catch {
             // Image creation failed, skip
@@ -168,14 +261,101 @@ export function runIterate(): void {
         figma.currentPage.selection = [variantFrame]
         figma.viewport.scrollAndZoomIntoView([variantFrame])
 
-        figma.ui.postMessage({
-          type: 'status',
-          text: 'Variant created! ' + imagesPlaced + ' images replaced, ' + copyApplied + ' copy changes applied.',
-        })
+        if (placedRects.length > 0) {
+          // Export previews for the placed image rects so the UI can request a review
+          const previews: Array<{
+            rectId: string
+            imageHash: string
+            rectWidth: number
+            rectHeight: number
+            imageWidth: number
+            imageHeight: number
+            name: string
+            previewBytes: number[]
+            mimeType: string
+          }> = []
+
+          for (const pr of placedRects) {
+            try {
+              const rectNode = await figma.getNodeByIdAsync(pr.rectId)
+              if (!rectNode) continue
+              const pngBytes = await (rectNode as RectangleNode).exportAsync({
+                format: 'PNG',
+                constraint: { type: 'SCALE', value: 0.5 },
+              })
+              previews.push({
+                ...pr,
+                previewBytes: Array.from(pngBytes),
+                mimeType: 'image/png',
+              })
+            } catch {
+              // Export failed for this rect, skip review for it
+            }
+          }
+
+          figma.ui.postMessage({
+            type: 'variant-placed',
+            cloneId,
+            imagesPlaced,
+            copyApplied,
+            previews,
+          })
+        } else {
+          figma.ui.postMessage({
+            type: 'status',
+            text: 'Variant created! ' + imagesPlaced + ' images replaced, ' + copyApplied + ' copy changes applied.',
+          })
+        }
       } catch (err) {
         figma.ui.postMessage({
           type: 'status',
           text: `Error: ${(err as Error).message}`,
+        })
+      }
+    }
+
+    if (msg.type === 'apply-crop-adjustments') {
+      try {
+        const adjustments = (msg.adjustments || []) as Array<{
+          rectId: string
+          imageHash: string
+          rectWidth: number
+          rectHeight: number
+          imageWidth: number
+          imageHeight: number
+          zoomDelta: number
+          panX: number
+          panY: number
+        }>
+        let adjusted = 0
+
+        for (const adj of adjustments) {
+          const node = await figma.getNodeByIdAsync(adj.rectId)
+          if (!node || node.type !== 'RECTANGLE') continue
+
+          const zoom = 1 + adj.zoomDelta
+          applyCropToRect(
+            node as RectangleNode,
+            adj.imageHash,
+            adj.rectWidth,
+            adj.rectHeight,
+            adj.imageWidth,
+            adj.imageHeight,
+            { zoom, panX: adj.panX, panY: adj.panY },
+          )
+          adjusted++
+        }
+
+        figma.ui.postMessage({
+          type: 'status',
+          text: adjusted > 0
+            ? `Variant created! Auto-adjusted framing on ${adjusted} image(s).`
+            : 'Variant created! Images placed without crop adjustment.',
+        })
+      } catch (err) {
+        figma.ui.postMessage({
+          type: 'status',
+          text: `Error applying crop adjustments: ${(err as Error).message}`,
         })
       }
     }
@@ -330,11 +510,94 @@ function buildUI(frameId: string, frameName: string): string {
         pendingCloneId = msg.cloneId;
         startGeneration();
       }
+      if (msg.type === 'variant-placed') {
+        runPlacementReview(msg);
+      }
     });
+
+    async function runPlacementReview(msg) {
+      try {
+        var previews = msg.previews || [];
+        if (previews.length === 0) {
+          var el = document.getElementById('status');
+          el.style.display = 'block';
+          el.textContent = 'Variant created! ' + msg.imagesPlaced + ' images replaced, ' + msg.copyApplied + ' copy changes applied.';
+          return;
+        }
+
+        setProgress('Reviewing image framing (' + previews.length + ' images)...');
+
+        var adjustments = [];
+        for (var i = 0; i < previews.length; i++) {
+          var preview = previews[i];
+          try {
+            var base64 = '';
+            var bytes = preview.previewBytes;
+            for (var ci = 0; ci < bytes.length; ci += 8192) {
+              var chunk = bytes.slice(ci, ci + 8192);
+              base64 += String.fromCharCode.apply(null, chunk);
+            }
+            base64 = btoa(base64);
+
+            var reviewResp = await fetch(API_BASE + '/api/plugin/iterator/review-placement', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Heimdall-Plugin-Token': TOKEN
+              },
+              body: JSON.stringify({
+                previewImageBase64: base64,
+                mimeType: preview.mimeType,
+                rectWidth: preview.rectWidth,
+                rectHeight: preview.rectHeight,
+                imageWidth: preview.imageWidth,
+                imageHeight: preview.imageHeight,
+                context: 'Portrait lifestyle photo in a performance ad grid tile'
+              })
+            });
+
+            if (reviewResp.ok) {
+              var result = await reviewResp.json();
+              if (result.action === 'adjust' && (result.confidence === 'high' || result.confidence === 'medium')) {
+                adjustments.push({
+                  rectId: preview.rectId,
+                  imageHash: preview.imageHash,
+                  rectWidth: preview.rectWidth,
+                  rectHeight: preview.rectHeight,
+                  imageWidth: preview.imageWidth,
+                  imageHeight: preview.imageHeight,
+                  zoomDelta: result.zoomDelta,
+                  panX: result.panX,
+                  panY: result.panY
+                });
+              }
+            }
+          } catch (reviewErr) {
+            // Review failed for this image, keep initial placement
+          }
+        }
+
+        if (adjustments.length > 0) {
+          setProgress('Adjusting framing on ' + adjustments.length + ' image(s)...');
+          parent.postMessage({ pluginMessage: {
+            type: 'apply-crop-adjustments',
+            adjustments: adjustments
+          }}, '*');
+        } else {
+          var el = document.getElementById('status');
+          el.style.display = 'block';
+          el.textContent = 'Variant created! ' + msg.imagesPlaced + ' images replaced, ' + msg.copyApplied + ' copy changes applied.';
+        }
+      } catch (err) {
+        var el = document.getElementById('status');
+        el.style.display = 'block';
+        el.textContent = 'Variant created (review skipped): ' + (err.message || err);
+      }
+    }
 
     async function startGeneration() {
       try {
-        setProgress('Step 2/5: Sending to Iterator backend...');
+        setProgress('Step 2/6: Sending to Iterator backend...');
 
         // Recursively find image node IDs (frames named {EDIT})
         var imageNodeIds = [];
@@ -375,7 +638,7 @@ function buildUI(frameId: string, frameName: string): string {
         }
 
         var result = await resp.json();
-        setProgress('Step 3/5: Downloading generated images...');
+        setProgress('Step 3/6: Downloading generated images...');
 
         // Fetch each generated image as bytes
         var imagePayloads = [];
@@ -383,7 +646,7 @@ function buildUI(frameId: string, frameName: string): string {
           var imgResult = result.imageResults[j];
           if (imgResult.url) {
             try {
-              setProgress('Step 3/5: Downloading image ' + (j + 1) + '/' + result.imageResults.length + '...');
+              setProgress('Step 3/6: Downloading image ' + (j + 1) + '/' + result.imageResults.length + '...');
               var imgResp = await fetch(imgResult.url);
               if (imgResp.ok) {
                 var buf = await imgResp.arrayBuffer();
@@ -399,7 +662,7 @@ function buildUI(frameId: string, frameName: string): string {
           }
         }
 
-        setProgress('Step 4/5: Preparing copy changes...');
+        setProgress('Step 4/6: Preparing copy changes...');
 
         // Extract copy changes from copyPlan
         var copyChanges = [];
@@ -429,7 +692,7 @@ function buildUI(frameId: string, frameName: string): string {
           }
         }
 
-        setProgress('Step 5/5: Applying images and copy to variant...');
+        setProgress('Step 5/6: Applying images and copy to variant...');
 
         // Send to main thread for application on the existing clone
         parent.postMessage({ pluginMessage: {
@@ -452,7 +715,7 @@ function buildUI(frameId: string, frameName: string): string {
       var btn = document.getElementById('btn-variant');
       btn.disabled = true;
       btn.textContent = 'Generating variant...';
-      setProgress('Step 1/5: Creating placeholder frame...');
+      setProgress('Step 1/6: Creating placeholder frame...');
 
       // Ask main thread to clone and create grey placeholders
       parent.postMessage({ pluginMessage: { type: 'create-placeholder' } }, '*');

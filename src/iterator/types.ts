@@ -102,3 +102,39 @@ export interface IteratorGeneratedAsset {
   metadata: Record<string, unknown>
   created_at: string
 }
+
+// ---------------------------------------------------------------------------
+// Post-placement auto-framing review
+// ---------------------------------------------------------------------------
+
+export interface PlacementReviewRequest {
+  previewImageBase64: string
+  mimeType: string
+  rectWidth: number
+  rectHeight: number
+  imageWidth: number
+  imageHeight: number
+  context?: string
+}
+
+export type PlacementAction = 'keep' | 'adjust'
+
+export interface CropAdjustment {
+  action: PlacementAction
+  zoomDelta: number
+  panX: number
+  panY: number
+  confidence: 'high' | 'medium' | 'low'
+  reason: string
+}
+
+export const PLACEMENT_REVIEW_DEFAULTS: CropAdjustment = {
+  action: 'keep',
+  zoomDelta: 0,
+  panX: 0,
+  panY: 0,
+  confidence: 'high',
+  reason: 'Initial placement accepted',
+}
+
+export const MAX_REVIEW_PASSES = 2
