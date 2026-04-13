@@ -6,8 +6,8 @@
  * but targets the creative_memory_embeddings table for first-party ads.
  */
 
-import { getSupabase } from '../../lib/supabase'
-import { getQueryEmbedding } from '../../lib/evidenceClient'
+import { getSupabase } from '../../lib/supabase.js'
+import { getQueryEmbedding } from '../../lib/evidenceClient.js'
 import type {
   CreativeEmbeddingRow,
   CreativeContextCard,
