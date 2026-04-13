@@ -7,11 +7,10 @@
  * Flow:
  *  1. Plugin detects source ratio, shows checkbox UI for target formats
  *  2. User picks targets, clicks "Resize"
- *  3. Plugin clones the frame per target, resizes the clone, and extracts
- *     layer structure
- *  4. Sends structure + target ratio to backend /api/plugin/iterator/derive
- *  5. Backend returns an EditPlan per ratio with move/scale/reflow steps
- *  6. Plugin applies each step, then runs image-framing review on photos
+ *  3. Plugin captures the source layer snapshot BEFORE any mutation
+ *  4. Clones the frame per target, applies recursive proportional baseline
+ *  5. Sends source snapshot + target ratio to backend for art-directed plan
+ *  6. Plugin applies plan steps, then runs image-framing review on photos
  *  7. Runs composition QA and reports results
  */
 
@@ -51,13 +50,21 @@ export function runDeriveVariants(): void {
     return
   }
 
+  // Guard: reject frames that already contain derived EXP- children
+  const sourceFrame = frame as FrameNode
+  if (hasNestedDerivedFrames(sourceFrame)) {
+    figma.closePlugin(
+      'This frame already contains derived format frames inside it. '
+      + 'Select the original master frame instead.',
+    )
+    return
+  }
+
   const sourceRatio = detectRatio(frame.width, frame.height)
   const fileKey = (figma as unknown as { fileKey?: string }).fileKey || ''
 
   const html = buildUI(frame, sourceRatio, fileKey)
   figma.showUI(html, { width: 440, height: 520 })
-
-  const sourceFrame = frame as FrameNode
 
   figma.ui.onmessage = async (msg: { type: string; [k: string]: unknown }) => {
     if (msg.type === 'ready') {
@@ -109,6 +116,12 @@ async function handleDerive(
   const apiBase = getApiBase()
   const token = getPluginToken()
 
+  // Capture true source geometry BEFORE any mutation
+  const sourceLayerData = extractLayerSummary(sourceFrame)
+  const srcW = Math.round(sourceFrame.width)
+  const srcH = Math.round(sourceFrame.height)
+  const sourceRatio = detectRatio(srcW, srcH)
+
   for (let i = 0; i < targetRatios.length; i++) {
     const ratio = targetRatios[i]
     const target = CANONICAL_SIZES[ratio]
@@ -120,14 +133,16 @@ async function handleDerive(
       step: 'cloning',
     })
 
-    // 1. Clone and resize the frame
+    // 1. Clone the frame (as a page-level sibling, not nested)
     const clone = sourceFrame.clone()
     clone.name = sourceFrame.name.replace(/\d+x\d+/, ratio) + (sourceFrame.name.includes(ratio) ? '' : `-${ratio}`)
     clone.x = sourceFrame.x + (sourceFrame.width + 80) * (i + 1)
+
+    // 2. Resize the root frame to target dimensions
     clone.resize(target.w, target.h)
 
-    // 2. Extract layer structure of the clone (post-resize, pre-adaptation)
-    const layerData = extractLayerSummary(clone)
+    // 3. Apply recursive proportional baseline to ALL descendants
+    applyRecursiveProportionalBaseline(clone, srcW, srcH, target.w, target.h)
 
     figma.ui.postMessage({
       type: 'progress',
@@ -135,7 +150,9 @@ async function handleDerive(
       step: 'planning',
     })
 
-    // 3. Ask backend for an edit plan
+    // 4. Ask backend for an art-directed edit plan
+    //    Send the TRUE source snapshot (pre-resize) so the planner can reason
+    //    about the real master→target conversion.
     let editPlan: EditPlan | null = null
     try {
       const resp = await fetch(`${apiBase}/api/plugin/iterator/derive`, {
@@ -148,7 +165,10 @@ async function handleDerive(
           sourceFileKey: fileKey,
           sourceFrameId: sourceFrame.id,
           targetRatios: [ratio],
-          layerData,
+          sourceLayerData,
+          sourceWidth: srcW,
+          sourceHeight: srcH,
+          sourceRatio: sourceRatio || undefined,
         }),
       })
 
@@ -157,7 +177,7 @@ async function handleDerive(
         editPlan = result.editPlan || null
       }
     } catch {
-      // Backend unreachable — fall through to proportional fallback
+      // Backend unreachable — proportional baseline already applied
     }
 
     figma.ui.postMessage({
@@ -166,14 +186,12 @@ async function handleDerive(
       step: 'applying',
     })
 
-    // 4. Apply the edit plan (or proportional fallback)
+    // 5. Apply any art-directed plan steps ON TOP of the proportional baseline
     if (editPlan && editPlan.steps && editPlan.steps.length > 0) {
-      await applyEditPlan(clone, editPlan.steps, sourceFrame.width, sourceFrame.height, target.w, target.h)
-    } else {
-      applyProportionalResize(clone, sourceFrame.width, sourceFrame.height, target.w, target.h)
+      await applyEditPlan(clone, editPlan.steps, srcW, srcH, target.w, target.h)
     }
 
-    // 5. Run composition QA checks
+    // 6. Run composition QA checks
     figma.ui.postMessage({
       type: 'progress',
       text: `Running QA on ${ratio}...`,
@@ -182,12 +200,15 @@ async function handleDerive(
 
     const qaResult = runCompositionQA(clone, target.w, target.h)
 
-    // 6. Auto-fix simple QA failures
+    // 7. Auto-fix simple QA failures
     if (qaResult.clippedTexts.length > 0 || qaResult.edgeViolations.length > 0) {
       applyQAFixes(clone, qaResult, target.w, target.h)
     }
 
-    // 7. Review image framing
+    // 8. Guard: verify no nested derived frames leaked into the output
+    removeNestedDerivedFrames(clone)
+
+    // 9. Review image framing
     const imageRects = findAllImageRects(clone)
     if (imageRects.length > 0) {
       figma.ui.postMessage({
@@ -221,7 +242,106 @@ async function handleDerive(
 }
 
 // ---------------------------------------------------------------------------
-// Edit plan application
+// Contamination guards
+// ---------------------------------------------------------------------------
+
+function hasNestedDerivedFrames(frame: FrameNode): boolean {
+  for (const child of frame.children) {
+    if (child.type === 'FRAME' && detectRatio(child.width, child.height) !== null) {
+      const childRatio = detectRatio(child.width, child.height)
+      const parentRatio = detectRatio(frame.width, frame.height)
+      if (childRatio && childRatio !== parentRatio) return true
+    }
+  }
+  return false
+}
+
+function removeNestedDerivedFrames(frame: FrameNode): void {
+  const parentRatio = detectRatio(frame.width, frame.height)
+  const toRemove: SceneNode[] = []
+  for (const child of frame.children) {
+    if (child.type === 'FRAME') {
+      const childRatio = detectRatio(child.width, child.height)
+      if (childRatio && childRatio !== parentRatio) {
+        toRemove.push(child)
+      }
+    }
+  }
+  for (const node of toRemove) {
+    node.remove()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Recursive proportional baseline
+// ---------------------------------------------------------------------------
+
+function applyRecursiveProportionalBaseline(
+  frame: FrameNode,
+  srcW: number,
+  srcH: number,
+  tgtW: number,
+  tgtH: number,
+): void {
+  const scaleX = tgtW / srcW
+  const scaleY = tgtH / srcH
+
+  for (const child of frame.children) {
+    scaleNodeRecursive(child, scaleX, scaleY, tgtW, tgtH)
+  }
+}
+
+function scaleNodeRecursive(
+  node: SceneNode,
+  scaleX: number,
+  scaleY: number,
+  frameW: number,
+  frameH: number,
+): void {
+  // Scale position
+  node.x = Math.round(node.x * scaleX)
+  node.y = Math.round(node.y * scaleY)
+
+  const isFullBleed = node.width >= frameW / scaleX * 0.9
+
+  if (isFullBleed && 'resize' in node) {
+    // Full-bleed elements stretch to frame width, scale height proportionally
+    (node as FrameNode).resize(frameW, Math.round(node.height * scaleY))
+  } else if ('resize' in node && node.type !== 'TEXT') {
+    // Scale non-text elements proportionally (use uniform scale from scaleX
+    // to keep product/component instances undistorted; only scale vertically
+    // when there's a very large vertical change)
+    const uniformScale = Math.min(scaleX, scaleY)
+    const newW = Math.round(node.width * uniformScale)
+    const newH = Math.round(node.height * uniformScale)
+    if (newW > 0 && newH > 0) {
+      (node as FrameNode).resize(newW, newH)
+    }
+  }
+
+  if (node.type === 'TEXT') {
+    const textNode = node as TextNode
+    textNode.textAutoResize = 'HEIGHT'
+    if (textNode.width > frameW * 0.9) {
+      textNode.resize(Math.round(frameW * 0.85), textNode.height)
+    }
+  }
+
+  // Recurse into children
+  if ('children' in node && node.type !== 'INSTANCE') {
+    const childFrame = node as FrameNode
+    for (const child of childFrame.children) {
+      // Children inside a container use the parent's internal scale,
+      // not the root frame's scale (their coords are relative to parent)
+      const parentScaleX = isFullBleed ? 1 : (scaleX === scaleY ? 1 : scaleX)
+      const parentScaleY = isFullBleed ? scaleY : (scaleX === scaleY ? 1 : scaleY)
+      scaleNodeRecursive(child, parentScaleX, parentScaleY, childFrame.width, childFrame.height)
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Edit plan application (ID-based resolution first)
 // ---------------------------------------------------------------------------
 
 interface EditStep {
@@ -245,13 +365,18 @@ async function applyEditPlan(
   tgtW: number,
   tgtH: number,
 ): Promise<void> {
-  const scaleX = tgtW / srcW
-  const scaleY = tgtH / srcH
-
   for (const step of steps) {
-    const node = step.targetNodeName
-      ? findNodeByName(frame, step.targetNodeName)
-      : null
+    // Resolve node: try ID first, then name
+    let node: SceneNode | null = null
+    if (step.targetNodeId) {
+      const byId = await figma.getNodeByIdAsync(step.targetNodeId)
+      if (byId && isDescendantOf(byId, frame)) {
+        node = byId as SceneNode
+      }
+    }
+    if (!node && step.targetNodeName) {
+      node = findNodeByName(frame, step.targetNodeName)
+    }
 
     if (!node) continue
 
@@ -325,68 +450,18 @@ async function applyEditPlan(
         break
       }
       default:
-        // Proportional fallback for unrecognized actions
-        if ('resize' in node) {
-          node.x = Math.round(node.x * scaleX)
-          node.y = Math.round(node.y * scaleY)
-        }
         break
     }
   }
 }
 
-// ---------------------------------------------------------------------------
-// Proportional fallback — when no backend plan is available
-// ---------------------------------------------------------------------------
-
-function applyProportionalResize(
-  frame: FrameNode,
-  srcW: number,
-  srcH: number,
-  tgtW: number,
-  tgtH: number,
-): void {
-  const scaleX = tgtW / srcW
-  const scaleY = tgtH / srcH
-
-  for (const child of frame.children) {
-    repositionChild(child, scaleX, scaleY, tgtW, tgtH)
+function isDescendantOf(node: BaseNode, ancestor: FrameNode): boolean {
+  let current: BaseNode | null = node
+  while (current) {
+    if (current.id === ancestor.id) return true
+    current = current.parent
   }
-}
-
-function repositionChild(
-  node: SceneNode,
-  scaleX: number,
-  scaleY: number,
-  frameW: number,
-  frameH: number,
-): void {
-  const newX = Math.round(node.x * scaleX)
-  const newY = Math.round(node.y * scaleY)
-  node.x = newX
-  node.y = newY
-
-  const isFullBleed = node.width >= frameW / scaleX * 0.9
-  if (isFullBleed && 'resize' in node) {
-    (node as FrameNode).resize(frameW, Math.round(node.height * scaleY))
-  }
-
-  if (node.type === 'TEXT') {
-    const textNode = node as TextNode
-    textNode.textAutoResize = 'HEIGHT'
-    if (textNode.width > frameW * 0.9) {
-      textNode.resize(Math.round(frameW * 0.85), textNode.height)
-    }
-  }
-
-  // Keep content groups within frame bounds
-  const margin = frameW * 0.04
-  if (node.x + node.width > frameW - margin && !isFullBleed) {
-    node.x = Math.max(margin, frameW - node.width - margin)
-  }
-  if (node.y + node.height > frameH - margin) {
-    node.y = Math.max(margin, frameH - node.height - margin)
-  }
+  return false
 }
 
 // ---------------------------------------------------------------------------
@@ -420,7 +495,6 @@ function runCompositionQA(frame: FrameNode, frameW: number, frameH: number): QAR
   const contentChildren: SceneNode[] = []
 
   for (const child of frame.children) {
-    // Check 1: Text clipping
     if (child.type === 'TEXT') {
       if (child.y + child.height > frameH + 2) {
         result.clippedTexts.push({
@@ -431,13 +505,11 @@ function runCompositionQA(frame: FrameNode, frameW: number, frameH: number): QAR
       }
     }
 
-    // Classify: skip full-bleed backgrounds
     const isBackground = child.width >= frameW * 0.9 && child.height >= frameH * 0.9
     if (!isBackground) {
       contentChildren.push(child)
     }
 
-    // Check 5: Story-subject occlusion
     if (!isBackground && child.type === 'FRAME') {
       const overlayArea = child.width * child.height
       const frameArea = frameW * frameH
@@ -452,7 +524,6 @@ function runCompositionQA(frame: FrameNode, frameW: number, frameH: number): QAR
     }
   }
 
-  // Check 2: Element overlap (between content children only)
   for (let i = 0; i < contentChildren.length; i++) {
     for (let j = i + 1; j < contentChildren.length; j++) {
       const a = contentChildren[i]
@@ -463,7 +534,6 @@ function runCompositionQA(frame: FrameNode, frameW: number, frameH: number): QAR
     }
   }
 
-  // Check 3: Edge proximity / safe zone compliance
   const margin = safeZone.side
   for (const child of contentChildren) {
     if (child.x < margin) {
@@ -500,7 +570,6 @@ function applyQAFixes(frame: FrameNode, qa: QAResult, frameW: number, frameH: nu
   const ratio = detectRatio(frameW, frameH)
   const safeZone = ratio ? SAFE_ZONES[ratio] : { top: frameH * 0.1, bottom: frameH * 0.1, side: frameW * 0.04 }
 
-  // Fix clipped text: set auto-resize and nudge up if needed
   for (const clip of qa.clippedTexts) {
     const node = frame.findOne((n) => n.id === clip.id)
     if (node && node.type === 'TEXT') {
@@ -511,7 +580,6 @@ function applyQAFixes(frame: FrameNode, qa: QAResult, frameW: number, frameH: nu
     }
   }
 
-  // Fix edge violations: nudge content inside safe zone
   for (const violation of qa.edgeViolations) {
     const node = frame.findOne((n) => n.id === violation.id)
     if (!node) continue
@@ -550,13 +618,11 @@ function findAllImageRects(node: SceneNode): RectangleNode[] {
 }
 
 async function reviewAndFixImageFraming(
-  frame: FrameNode,
+  _frame: FrameNode,
   imageRects: RectangleNode[],
   apiBase: string,
   token: string,
 ): Promise<void> {
-  const adjustments: CropAdjustmentMsg[] = []
-
   for (const rect of imageRects) {
     try {
       const fills = rect.fills as readonly Paint[]
@@ -754,10 +820,7 @@ function bytesToBase64(byteArray: number[]): string {
 // UI builder
 // ---------------------------------------------------------------------------
 
-function buildUI(frame: FrameNode, sourceRatio: string | null, fileKey: string): string {
-  const apiBase = getApiBase()
-  const token = getPluginToken()
-
+function buildUI(frame: FrameNode, sourceRatio: string | null, _fileKey: string): string {
   return `
 <!DOCTYPE html>
 <html>

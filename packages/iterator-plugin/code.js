@@ -1044,11 +1044,17 @@
       figma.closePlugin("Please select a frame.");
       return;
     }
+    const sourceFrame = frame;
+    if (hasNestedDerivedFrames(sourceFrame)) {
+      figma.closePlugin(
+        "This frame already contains derived format frames inside it. Select the original master frame instead."
+      );
+      return;
+    }
     const sourceRatio = detectRatio(frame.width, frame.height);
     const fileKey = figma.fileKey || "";
     const html = buildUI2(frame, sourceRatio, fileKey);
     figma.showUI(html, { width: 440, height: 520 });
-    const sourceFrame = frame;
     figma.ui.onmessage = async (msg) => {
       if (msg.type === "ready") {
         const layerSummary = extractLayerSummary2(sourceFrame);
@@ -1085,6 +1091,10 @@
   async function handleDerive(sourceFrame, targetRatios, fileKey) {
     const apiBase = getApiBase();
     const token = getPluginToken();
+    const sourceLayerData = extractLayerSummary2(sourceFrame);
+    const srcW = Math.round(sourceFrame.width);
+    const srcH = Math.round(sourceFrame.height);
+    const sourceRatio = detectRatio(srcW, srcH);
     for (let i = 0; i < targetRatios.length; i++) {
       const ratio = targetRatios[i];
       const target = CANONICAL_SIZES[ratio];
@@ -1098,7 +1108,7 @@
       clone.name = sourceFrame.name.replace(/\d+x\d+/, ratio) + (sourceFrame.name.includes(ratio) ? "" : `-${ratio}`);
       clone.x = sourceFrame.x + (sourceFrame.width + 80) * (i + 1);
       clone.resize(target.w, target.h);
-      const layerData = extractLayerSummary2(clone);
+      applyRecursiveProportionalBaseline(clone, srcW, srcH, target.w, target.h);
       figma.ui.postMessage({
         type: "progress",
         text: `Planning layout for ${ratio}...`,
@@ -1116,7 +1126,10 @@
             sourceFileKey: fileKey,
             sourceFrameId: sourceFrame.id,
             targetRatios: [ratio],
-            layerData
+            sourceLayerData,
+            sourceWidth: srcW,
+            sourceHeight: srcH,
+            sourceRatio: sourceRatio || void 0
           })
         });
         if (resp.ok) {
@@ -1131,9 +1144,7 @@
         step: "applying"
       });
       if (editPlan && editPlan.steps && editPlan.steps.length > 0) {
-        await applyEditPlan(clone, editPlan.steps, sourceFrame.width, sourceFrame.height, target.w, target.h);
-      } else {
-        applyProportionalResize(clone, sourceFrame.width, sourceFrame.height, target.w, target.h);
+        await applyEditPlan(clone, editPlan.steps, srcW, srcH, target.w, target.h);
       }
       figma.ui.postMessage({
         type: "progress",
@@ -1144,6 +1155,7 @@
       if (qaResult.clippedTexts.length > 0 || qaResult.edgeViolations.length > 0) {
         applyQAFixes(clone, qaResult, target.w, target.h);
       }
+      removeNestedDerivedFrames(clone);
       const imageRects = findAllImageRects(clone);
       if (imageRects.length > 0) {
         figma.ui.postMessage({
@@ -1171,11 +1183,80 @@
       count: targetRatios.length
     });
   }
-  async function applyEditPlan(frame, steps, srcW, srcH, tgtW, tgtH) {
+  function hasNestedDerivedFrames(frame) {
+    for (const child of frame.children) {
+      if (child.type === "FRAME" && detectRatio(child.width, child.height) !== null) {
+        const childRatio = detectRatio(child.width, child.height);
+        const parentRatio = detectRatio(frame.width, frame.height);
+        if (childRatio && childRatio !== parentRatio) return true;
+      }
+    }
+    return false;
+  }
+  function removeNestedDerivedFrames(frame) {
+    const parentRatio = detectRatio(frame.width, frame.height);
+    const toRemove = [];
+    for (const child of frame.children) {
+      if (child.type === "FRAME") {
+        const childRatio = detectRatio(child.width, child.height);
+        if (childRatio && childRatio !== parentRatio) {
+          toRemove.push(child);
+        }
+      }
+    }
+    for (const node of toRemove) {
+      node.remove();
+    }
+  }
+  function applyRecursiveProportionalBaseline(frame, srcW, srcH, tgtW, tgtH) {
     const scaleX = tgtW / srcW;
     const scaleY = tgtH / srcH;
+    for (const child of frame.children) {
+      scaleNodeRecursive(child, scaleX, scaleY, tgtW, tgtH);
+    }
+  }
+  function scaleNodeRecursive(node, scaleX, scaleY, frameW, frameH) {
+    node.x = Math.round(node.x * scaleX);
+    node.y = Math.round(node.y * scaleY);
+    const isFullBleed = node.width >= frameW / scaleX * 0.9;
+    if (isFullBleed && "resize" in node) {
+      node.resize(frameW, Math.round(node.height * scaleY));
+    } else if ("resize" in node && node.type !== "TEXT") {
+      const uniformScale = Math.min(scaleX, scaleY);
+      const newW = Math.round(node.width * uniformScale);
+      const newH = Math.round(node.height * uniformScale);
+      if (newW > 0 && newH > 0) {
+        node.resize(newW, newH);
+      }
+    }
+    if (node.type === "TEXT") {
+      const textNode = node;
+      textNode.textAutoResize = "HEIGHT";
+      if (textNode.width > frameW * 0.9) {
+        textNode.resize(Math.round(frameW * 0.85), textNode.height);
+      }
+    }
+    if ("children" in node && node.type !== "INSTANCE") {
+      const childFrame = node;
+      for (const child of childFrame.children) {
+        const parentScaleX = isFullBleed ? 1 : scaleX === scaleY ? 1 : scaleX;
+        const parentScaleY = isFullBleed ? scaleY : scaleX === scaleY ? 1 : scaleY;
+        scaleNodeRecursive(child, parentScaleX, parentScaleY, childFrame.width, childFrame.height);
+      }
+    }
+  }
+  async function applyEditPlan(frame, steps, srcW, srcH, tgtW, tgtH) {
     for (const step of steps) {
-      const node = step.targetNodeName ? findNodeByName(frame, step.targetNodeName) : null;
+      let node = null;
+      if (step.targetNodeId) {
+        const byId = await figma.getNodeByIdAsync(step.targetNodeId);
+        if (byId && isDescendantOf(byId, frame)) {
+          node = byId;
+        }
+      }
+      if (!node && step.targetNodeName) {
+        node = findNodeByName(frame, step.targetNodeName);
+      }
       if (!node) continue;
       switch (step.action) {
         case "move": {
@@ -1246,44 +1327,17 @@
           break;
         }
         default:
-          if ("resize" in node) {
-            node.x = Math.round(node.x * scaleX);
-            node.y = Math.round(node.y * scaleY);
-          }
           break;
       }
     }
   }
-  function applyProportionalResize(frame, srcW, srcH, tgtW, tgtH) {
-    const scaleX = tgtW / srcW;
-    const scaleY = tgtH / srcH;
-    for (const child of frame.children) {
-      repositionChild(child, scaleX, scaleY, tgtW, tgtH);
+  function isDescendantOf(node, ancestor) {
+    let current = node;
+    while (current) {
+      if (current.id === ancestor.id) return true;
+      current = current.parent;
     }
-  }
-  function repositionChild(node, scaleX, scaleY, frameW, frameH) {
-    const newX = Math.round(node.x * scaleX);
-    const newY = Math.round(node.y * scaleY);
-    node.x = newX;
-    node.y = newY;
-    const isFullBleed = node.width >= frameW / scaleX * 0.9;
-    if (isFullBleed && "resize" in node) {
-      node.resize(frameW, Math.round(node.height * scaleY));
-    }
-    if (node.type === "TEXT") {
-      const textNode = node;
-      textNode.textAutoResize = "HEIGHT";
-      if (textNode.width > frameW * 0.9) {
-        textNode.resize(Math.round(frameW * 0.85), textNode.height);
-      }
-    }
-    const margin = frameW * 0.04;
-    if (node.x + node.width > frameW - margin && !isFullBleed) {
-      node.x = Math.max(margin, frameW - node.width - margin);
-    }
-    if (node.y + node.height > frameH - margin) {
-      node.y = Math.max(margin, frameH - node.height - margin);
-    }
+    return false;
   }
   var SAFE_ZONES = {
     "9x16": { top: 240, bottom: 492, side: 80 },
@@ -1398,8 +1452,7 @@
     }
     return rects;
   }
-  async function reviewAndFixImageFraming(frame, imageRects, apiBase, token) {
-    const adjustments = [];
+  async function reviewAndFixImageFraming(_frame, imageRects, apiBase, token) {
     for (const rect of imageRects) {
       try {
         const fills = rect.fills;
@@ -1538,9 +1591,7 @@
     }
     return btoa(raw);
   }
-  function buildUI2(frame, sourceRatio, fileKey) {
-    const apiBase = getApiBase();
-    const token = getPluginToken();
+  function buildUI2(frame, sourceRatio, _fileKey) {
     return `
 <!DOCTYPE html>
 <html>

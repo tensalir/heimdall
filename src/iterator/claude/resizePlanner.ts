@@ -1,9 +1,13 @@
 /**
  * Claude-powered planner for aspect-ratio resize / format derivation.
  *
- * Given a source frame's layer structure and a target aspect ratio,
- * produces an EditPlan with move/scale/reflow/crop-shift steps that
- * adapt the layout while preserving visual hierarchy and story.
+ * Given a source frame's layer structure (from the ORIGINAL master, not a
+ * resized clone) and a target aspect ratio, produces an EditPlan with
+ * move/scale/reflow/crop-shift steps that adapt the layout while
+ * preserving visual hierarchy and story.
+ *
+ * The plugin applies a recursive proportional baseline FIRST, then
+ * overlays this plan's steps for art-directed refinement.
  */
 
 import Anthropic from '@anthropic-ai/sdk'
@@ -26,31 +30,28 @@ const SAFE_ZONES: Record<string, { top: number; bottom: number; side: number }> 
 
 const SYSTEM_PROMPT = `You are an experienced art director adapting performance ads from one aspect ratio to another for Loop Earplugs.
 
-Your job: given the source frame layer structure and a target aspect ratio, produce a JSON edit plan telling the plugin exactly how to reposition, scale, reflow, or crop-shift each element so the resized version looks intentionally designed for the new format — not mechanically squashed.
-
-Key constraints:
-- The plugin has ALREADY cloned and resized the frame to the target dimensions.
-- Your steps will be applied AFTER the frame is at the correct target size.
-- Each step uses the TARGET coordinate space.
-- Element coordinates in the layer data are from the SOURCE frame.
+IMPORTANT CONTEXT:
+- The plugin has already applied a proportional baseline: all elements have been scaled and repositioned proportionally from the source to the target frame.
+- Your job is to produce ART-DIRECTED REFINEMENTS on top of that baseline — fixing things that proportional scaling gets wrong, like cramped spacing, hierarchy loss, or story occlusion.
+- You do NOT need to move every element. Only include steps for elements that need art-directed adjustment beyond what proportional scaling already did.
+- Each step uses the TARGET coordinate space (the element is already at its proportionally-scaled position).
 
 Available actions per step:
-- "move": { dx, dy } or { x, y } — reposition an element
-- "scale": { factor } or { factorX, factorY } — scale an element
-- "reflow": { maxWidth, fontSize? } — reflow text to fit a narrower width
+- "move": { dx, dy } or { x, y } — nudge or reposition an element
+- "scale": { factor } or { factorX, factorY } — resize an element
+- "reflow": { maxWidth, fontSize? } — reflow text to fit width
 - "crop-shift": { zoom, panX, panY } — adjust crop/pan on an image rectangle
 
 Design principles:
 - Preserve visual hierarchy. The primary message should read first.
-- Respect safe zones. All content must stay within the safe zone.
-- Background images should remain full-bleed; adjust crop-shift if the aspect change affects subject framing.
-- Prefer keeping element widths similar; compensate for height changes through vertical spacing.
-- For severe compressions (>45% height loss, like 9:16→1:1), text may need to shrink and groups may need to restructure vertically.
-- For mild compressions (<30%), repositioning is usually sufficient.
+- Respect safe zones. All content must stay within the safe zone for the target format.
+- Background images should remain full-bleed; use crop-shift if the subject gets cut.
+- For severe compressions (>45% height loss), text may need to shrink and groups may need to restructure.
+- For mild compressions (<30%), small nudges may be all that's needed.
 
 Story preservation:
-- The background image carries part of the ad's meaning (person, lifestyle, product in use).
-- If overlays would cover story-carrying regions after resize, move overlays to less narrative-critical areas (usually lower in the frame).
+- The background image carries part of the ad's meaning.
+- If overlays would cover story-carrying regions after resize, move them to less narrative-critical areas.
 - Include a "storyPreservation" field in your output.
 
 Return ONLY a JSON object in this shape:
@@ -63,7 +64,7 @@ Return ONLY a JSON object in this shape:
   "targetRatios": ["target ratio"],
   "confidence": "high|medium|low",
   "humanReviewNeeded": boolean,
-  "reasoning": "overall approach",
+  "reasoning": "overall approach — what the proportional baseline got right and what you refined",
   "storyPreservation": {
     "storySubject": "what the background shows",
     "protectedRegions": ["face", "gesture", ...],
@@ -71,7 +72,9 @@ Return ONLY a JSON object in this shape:
     "recommendedAdjustment": "none|move_up|move_down|...",
     "rationale": "why"
   }
-}`
+}
+
+If the proportional baseline is sufficient and no art-directed changes are needed, return an empty steps array with "reasoning" explaining why.`
 
 export interface ResizePlanRequest {
   layerData: Record<string, unknown>
@@ -110,9 +113,12 @@ function buildUserMessage(request: ResizePlanRequest): string {
     : 0
   const severity = Math.abs(heightDelta) > 45 ? 'severe' : Math.abs(heightDelta) > 30 ? 'moderate' : 'mild'
 
+  const scaleX = target ? (target.w / request.sourceWidth).toFixed(3) : '?'
+  const scaleY = target ? (target.h / request.sourceHeight).toFixed(3) : '?'
+
   const parts: string[] = []
 
-  parts.push(`## Source frame (${request.sourceWidth}×${request.sourceHeight}, detected ${request.sourceRatio || 'unknown'})`)
+  parts.push(`## Master frame (${request.sourceWidth}×${request.sourceHeight}, ${request.sourceRatio || 'unknown'})`)
   if (sourceSafe) {
     parts.push(`Source safe zone: top ${sourceSafe.top}px, bottom ${sourceSafe.bottom}px, sides ${sourceSafe.side}px`)
   }
@@ -122,10 +128,13 @@ function buildUserMessage(request: ResizePlanRequest): string {
     parts.push(`Target safe zone: top ${targetSafe.top}px, bottom ${targetSafe.bottom}px, sides ${targetSafe.side}px`)
   }
   parts.push(`Height change: ${heightDelta}% (${severity} conversion)`)
+  parts.push(`Proportional scale factors already applied: scaleX=${scaleX}, scaleY=${scaleY}`)
 
-  parts.push(`\n## Layer structure\n\`\`\`json\n${JSON.stringify(request.layerData, null, 2)}\n\`\`\``)
+  parts.push(`\n## Source layer structure (coordinates are from the ORIGINAL master, before proportional scaling)`)
+  parts.push(`\`\`\`json\n${JSON.stringify(request.layerData, null, 2)}\n\`\`\``)
 
-  parts.push(`\nProduce an edit plan with steps in the TARGET coordinate space (${target?.w || '?'}×${target?.h || '?'}).`)
+  parts.push(`\nThe plugin has already applied proportional scaling (${scaleX}x, ${scaleY}y) to all elements. Produce art-directed refinements in the TARGET coordinate space (${target?.w || '?'}×${target?.h || '?'}).`)
+  parts.push(`Only include steps for elements that need adjustment beyond the proportional baseline.`)
 
   return parts.join('\n')
 }
