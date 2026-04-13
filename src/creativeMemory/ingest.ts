@@ -9,11 +9,11 @@
  * ingestion can complete quickly and analysis can run in the background.
  */
 
-import { getSupabase } from '@/lib/supabase'
+import { getSupabase } from '../../lib/supabase'
 import {
   frontifyGraphql,
   type FrontifyFolder,
-} from '@/src/integrations/frontify/client'
+} from '../integrations/frontify/client'
 import type {
   CanonicalRatio,
   CreativeFamily,
