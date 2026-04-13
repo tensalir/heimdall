@@ -314,6 +314,191 @@ export function runIterate(): void {
       }
     }
 
+    if (msg.type === 'smart-reframe') {
+      try {
+        const sel = figma.currentPage.selection
+        let variantFrame: FrameNode | null = null
+
+        for (const node of sel) {
+          if (node.type === 'FRAME' && node.name.endsWith('-variant')) {
+            variantFrame = node as FrameNode
+            break
+          }
+          let parent: BaseNode | null = node.parent
+          while (parent) {
+            if (parent.type === 'FRAME' && (parent as FrameNode).name.endsWith('-variant')) {
+              variantFrame = parent as FrameNode
+              break
+            }
+            parent = parent.parent
+          }
+          if (variantFrame) break
+        }
+
+        if (!variantFrame) {
+          figma.ui.postMessage({ type: 'reframe-result', text: 'Select a variant frame (or any element inside one) to reframe.' })
+          return
+        }
+
+        function findAllImageRects(node: SceneNode): RectangleNode[] {
+          const rects: RectangleNode[] = []
+          if (node.type === 'RECTANGLE') {
+            const fills = (node.fills as readonly Paint[]) || []
+            if (fills.length > 0 && fills[0].type === 'IMAGE') {
+              rects.push(node as RectangleNode)
+            }
+          }
+          if ('children' in node) {
+            for (const c of (node as FrameNode).children) rects.push(...findAllImageRects(c))
+          }
+          return rects
+        }
+
+        const imageRects = findAllImageRects(variantFrame)
+        if (imageRects.length === 0) {
+          figma.ui.postMessage({ type: 'reframe-result', text: 'No image tiles found in the variant frame.' })
+          return
+        }
+
+        const previews: Array<{
+          rectId: string
+          imageHash: string
+          rectWidth: number
+          rectHeight: number
+          imageWidth: number
+          imageHeight: number
+          previewBytes: number[]
+          mimeType: string
+        }> = []
+
+        for (const rect of imageRects) {
+          try {
+            const fills = rect.fills as readonly Paint[]
+            const imageFill = fills.find((f) => f.type === 'IMAGE') as ImagePaint | undefined
+            if (!imageFill?.imageHash) continue
+
+            const img = figma.getImageByHash(imageFill.imageHash)
+            if (!img) continue
+            const imgSize = await img.getSizeAsync()
+
+            const pngBytes = await rect.exportAsync({
+              format: 'PNG',
+              constraint: { type: 'SCALE', value: 0.5 },
+            })
+
+            previews.push({
+              rectId: rect.id,
+              imageHash: imageFill.imageHash,
+              rectWidth: Math.round(rect.width),
+              rectHeight: Math.round(rect.height),
+              imageWidth: imgSize.width,
+              imageHeight: imgSize.height,
+              previewBytes: Array.from(pngBytes),
+              mimeType: 'image/png',
+            })
+          } catch {
+            // Skip rects that fail to export
+          }
+        }
+
+        figma.ui.postMessage({ type: 'reframe-previews', previews })
+      } catch (err) {
+        figma.ui.postMessage({ type: 'reframe-result', text: 'Error discovering tiles: ' + (err as Error).message })
+      }
+    }
+
+    if (msg.type === 'apply-smart-reframe') {
+      try {
+        const adjustments = (msg.adjustments || []) as Array<{
+          rectId: string
+          imageHash: string
+          rectWidth: number
+          rectHeight: number
+          imageWidth: number
+          imageHeight: number
+          zoomDelta: number
+          panX: number
+          panY: number
+        }>
+        const doConfirm = msg.confirmPass === true
+        let adjusted = 0
+
+        for (const adj of adjustments) {
+          const node = await figma.getNodeByIdAsync(adj.rectId)
+          if (!node || node.type !== 'RECTANGLE') continue
+
+          const zoom = 1 + adj.zoomDelta
+          applyCropToRect(
+            node as RectangleNode,
+            adj.imageHash,
+            adj.rectWidth,
+            adj.rectHeight,
+            adj.imageWidth,
+            adj.imageHeight,
+            { zoom, panX: adj.panX, panY: adj.panY },
+          )
+          adjusted++
+        }
+
+        if (adjusted > 0 && doConfirm) {
+          const confirmPreviews: Array<{
+            rectId: string
+            imageHash: string
+            rectWidth: number
+            rectHeight: number
+            imageWidth: number
+            imageHeight: number
+            previewBytes: number[]
+            mimeType: string
+          }> = []
+
+          for (const adj of adjustments) {
+            try {
+              const node = await figma.getNodeByIdAsync(adj.rectId)
+              if (!node || node.type !== 'RECTANGLE') continue
+              const pngBytes = await (node as RectangleNode).exportAsync({
+                format: 'PNG',
+                constraint: { type: 'SCALE', value: 0.5 },
+              })
+              confirmPreviews.push({
+                rectId: adj.rectId,
+                imageHash: adj.imageHash,
+                rectWidth: adj.rectWidth,
+                rectHeight: adj.rectHeight,
+                imageWidth: adj.imageWidth,
+                imageHeight: adj.imageHeight,
+                previewBytes: Array.from(pngBytes),
+                mimeType: 'image/png',
+              })
+            } catch {
+              // Skip failed exports
+            }
+          }
+
+          if (confirmPreviews.length > 0) {
+            figma.ui.postMessage({
+              type: 'reframe-confirm',
+              adjusted,
+              previews: confirmPreviews,
+            })
+            return
+          }
+        }
+
+        figma.ui.postMessage({
+          type: 'reframe-result',
+          text: adjusted > 0
+            ? 'Reframed ' + adjusted + ' image(s) for better face visibility.'
+            : 'No adjustments applied.',
+        })
+      } catch (err) {
+        figma.ui.postMessage({
+          type: 'reframe-result',
+          text: 'Error applying reframe: ' + (err as Error).message,
+        })
+      }
+    }
+
     if (msg.type === 'apply-crop-adjustments') {
       try {
         const adjustments = (msg.adjustments || []) as Array<{
@@ -450,6 +635,8 @@ function buildUI(frameId: string, frameName: string): string {
     button { background: #4f46e5; color: #fff; border: none; border-radius: 6px; padding: 10px 20px; cursor: pointer; font-size: 13px; width: 100%; }
     button:hover { background: #4338ca; }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary { background: #2a2a2a; border: 1px solid #4f46e5; margin-top: 8px; }
+    .btn-secondary:hover { background: #333; }
     .layers { max-height: 200px; overflow-y: auto; margin: 8px 0; }
     .layer { padding: 4px 8px; background: #2a2a2a; border-radius: 4px; margin: 2px 0; font-size: 11px; display: flex; justify-content: space-between; }
     .layer-type { color: #888; }
@@ -462,6 +649,7 @@ function buildUI(frameId: string, frameName: string): string {
   <div id="layers" class="layers">Loading layers...</div>
   <div style="margin-top: 12px;">
     <button id="btn-variant" disabled>Create Variant</button>
+    <button id="btn-reframe" class="btn-secondary" disabled>Smart Reframe All</button>
   </div>
   <div id="progress" class="progress" style="display:none;"></div>
   <div id="status" class="status" style="display:none;"></div>
@@ -511,7 +699,22 @@ function buildUI(frameId: string, frameName: string): string {
         startGeneration();
       }
       if (msg.type === 'variant-placed') {
+        pendingCloneId = msg.cloneId;
+        document.getElementById('btn-reframe').disabled = false;
         runPlacementReview(msg);
+      }
+      if (msg.type === 'reframe-previews') {
+        runSmartReframe(msg);
+      }
+      if (msg.type === 'reframe-result') {
+        var el = document.getElementById('status');
+        el.style.display = 'block';
+        el.textContent = msg.text;
+        document.getElementById('btn-reframe').disabled = false;
+        document.getElementById('btn-reframe').textContent = 'Smart Reframe All';
+      }
+      if (msg.type === 'reframe-confirm') {
+        runConfirmPass(msg);
       }
     });
 
@@ -592,6 +795,172 @@ function buildUI(frameId: string, frameName: string): string {
         var el = document.getElementById('status');
         el.style.display = 'block';
         el.textContent = 'Variant created (review skipped): ' + (err.message || err);
+      }
+    }
+
+    async function runSmartReframe(msg) {
+      try {
+        var previews = msg.previews || [];
+        if (previews.length === 0) {
+          var el = document.getElementById('status');
+          el.style.display = 'block';
+          el.textContent = 'No image tiles found to reframe.';
+          document.getElementById('btn-reframe').disabled = false;
+          document.getElementById('btn-reframe').textContent = 'Smart Reframe All';
+          return;
+        }
+
+        setProgress('Reviewing framing on ' + previews.length + ' image(s)...');
+
+        var adjustments = [];
+        for (var i = 0; i < previews.length; i++) {
+          var preview = previews[i];
+          try {
+            setProgress('Reviewing image ' + (i + 1) + ' of ' + previews.length + '...');
+            var base64 = '';
+            var bytes = preview.previewBytes;
+            for (var ci = 0; ci < bytes.length; ci += 8192) {
+              var chunk = bytes.slice(ci, ci + 8192);
+              base64 += String.fromCharCode.apply(null, chunk);
+            }
+            base64 = btoa(base64);
+
+            var reviewResp = await fetch(API_BASE + '/api/plugin/iterator/review-placement', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Heimdall-Plugin-Token': TOKEN
+              },
+              body: JSON.stringify({
+                previewImageBase64: base64,
+                mimeType: preview.mimeType,
+                rectWidth: preview.rectWidth,
+                rectHeight: preview.rectHeight,
+                imageWidth: preview.imageWidth,
+                imageHeight: preview.imageHeight,
+                context: 'Portrait lifestyle photo in a performance ad. Please evaluate if the face is too tightly cropped and recommend zooming out to show more of the person.'
+              })
+            });
+
+            if (reviewResp.ok) {
+              var result = await reviewResp.json();
+              if (result.action === 'adjust') {
+                adjustments.push({
+                  rectId: preview.rectId,
+                  imageHash: preview.imageHash,
+                  rectWidth: preview.rectWidth,
+                  rectHeight: preview.rectHeight,
+                  imageWidth: preview.imageWidth,
+                  imageHeight: preview.imageHeight,
+                  zoomDelta: result.zoomDelta,
+                  panX: result.panX,
+                  panY: result.panY
+                });
+              }
+            }
+          } catch (reviewErr) {
+            // Review failed for this image, skip
+          }
+        }
+
+        if (adjustments.length > 0) {
+          setProgress('Applying reframing to ' + adjustments.length + ' image(s)...');
+          parent.postMessage({ pluginMessage: {
+            type: 'apply-smart-reframe',
+            adjustments: adjustments,
+            confirmPass: true
+          }}, '*');
+        } else {
+          var el = document.getElementById('status');
+          el.style.display = 'block';
+          el.textContent = 'No adjustments needed — framing looks good.';
+          document.getElementById('btn-reframe').disabled = false;
+          document.getElementById('btn-reframe').textContent = 'Smart Reframe All';
+        }
+      } catch (err) {
+        var el = document.getElementById('status');
+        el.style.display = 'block';
+        el.textContent = 'Reframe error: ' + (err.message || err);
+        document.getElementById('btn-reframe').disabled = false;
+        document.getElementById('btn-reframe').textContent = 'Smart Reframe All';
+      }
+    }
+
+    async function runConfirmPass(msg) {
+      try {
+        setProgress('Confirm pass: verifying ' + msg.adjusted + ' adjusted image(s)...');
+        var previews = msg.previews || [];
+        var stillNeedsWork = [];
+
+        for (var i = 0; i < previews.length; i++) {
+          var preview = previews[i];
+          try {
+            var base64 = '';
+            var bytes = preview.previewBytes;
+            for (var ci = 0; ci < bytes.length; ci += 8192) {
+              var chunk = bytes.slice(ci, ci + 8192);
+              base64 += String.fromCharCode.apply(null, chunk);
+            }
+            base64 = btoa(base64);
+
+            var reviewResp = await fetch(API_BASE + '/api/plugin/iterator/review-placement', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Heimdall-Plugin-Token': TOKEN
+              },
+              body: JSON.stringify({
+                previewImageBase64: base64,
+                mimeType: preview.mimeType,
+                rectWidth: preview.rectWidth,
+                rectHeight: preview.rectHeight,
+                imageWidth: preview.imageWidth,
+                imageHeight: preview.imageHeight,
+                context: 'This image was already adjusted once. Only recommend further adjustment if the face is still clearly too cropped.'
+              })
+            });
+
+            if (reviewResp.ok) {
+              var result = await reviewResp.json();
+              if (result.action === 'adjust' && result.confidence === 'high') {
+                stillNeedsWork.push({
+                  rectId: preview.rectId,
+                  imageHash: preview.imageHash,
+                  rectWidth: preview.rectWidth,
+                  rectHeight: preview.rectHeight,
+                  imageWidth: preview.imageWidth,
+                  imageHeight: preview.imageHeight,
+                  zoomDelta: result.zoomDelta,
+                  panX: result.panX,
+                  panY: result.panY
+                });
+              }
+            }
+          } catch (err) {
+            // Confirm review failed, accept current state
+          }
+        }
+
+        if (stillNeedsWork.length > 0) {
+          setProgress('Applying final refinement to ' + stillNeedsWork.length + ' image(s)...');
+          parent.postMessage({ pluginMessage: {
+            type: 'apply-smart-reframe',
+            adjustments: stillNeedsWork,
+            confirmPass: false
+          }}, '*');
+        } else {
+          var el = document.getElementById('status');
+          el.style.display = 'block';
+          el.textContent = 'Reframed ' + msg.adjusted + ' image(s) for better face visibility.';
+          document.getElementById('btn-reframe').disabled = false;
+          document.getElementById('btn-reframe').textContent = 'Smart Reframe All';
+        }
+      } catch (err) {
+        var el = document.getElementById('status');
+        el.style.display = 'block';
+        el.textContent = 'Reframed ' + msg.adjusted + ' image(s) (confirm pass skipped).';
+        document.getElementById('btn-reframe').disabled = false;
+        document.getElementById('btn-reframe').textContent = 'Smart Reframe All';
       }
     }
 
@@ -720,6 +1089,14 @@ function buildUI(frameId: string, frameName: string): string {
       // Ask main thread to clone and create grey placeholders
       parent.postMessage({ pluginMessage: { type: 'create-placeholder' } }, '*');
       // startGeneration() will be called when 'placeholder-ready' arrives
+    });
+
+    document.getElementById('btn-reframe').addEventListener('click', function() {
+      var btn = document.getElementById('btn-reframe');
+      btn.disabled = true;
+      btn.textContent = 'Reframing...';
+      setProgress('Discovering image tiles...');
+      parent.postMessage({ pluginMessage: { type: 'smart-reframe' } }, '*');
     });
 
     parent.postMessage({ pluginMessage: { type: 'ready' } }, '*');
