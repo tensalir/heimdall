@@ -39,7 +39,7 @@ const sections: NavSection[] = [
     items: [
       { name: 'Frontify Intake', href: '/admin/frontify-intake', icon: Inbox },
       { name: 'Heimdall Plugin', href: '/admin/plugin', icon: Puzzle },
-      { name: 'Mimir', href: '/briefing-assistant', icon: LayoutGrid, external: true },
+      { name: 'Mimir', href: process.env.NEXT_PUBLIC_MIMIR_URL || '/briefing-assistant', icon: LayoutGrid, external: true },
       { name: 'Loop Document Chat', href: '/document-chat', icon: BookOpen },
       { name: 'Forecast', href: '/forecast', icon: TrendingUp, external: true },
     ],

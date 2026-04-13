@@ -52,7 +52,7 @@ const ADMIN_SECTIONS: NavSection[] = [
     items: [
       { name: 'Heimdall Plugin', href: '/admin/plugin', icon: Puzzle },
       { name: 'Feedback Summarizer', href: '/sheets', icon: MessageSquare },
-      { name: 'Mimir', href: '/briefing-assistant', icon: LayoutGrid },
+      { name: 'Mimir', href: process.env.NEXT_PUBLIC_MIMIR_URL || '/briefing-assistant', icon: LayoutGrid, external: true },
       { name: 'Loop Document Chat', href: '/document-chat', icon: BookOpen },
     ],
   },
@@ -69,7 +69,7 @@ const USER_SECTIONS: NavSection[] = [
     label: 'Tools',
     items: [
       { name: 'Feedback Summarizer', href: '/sheets', icon: MessageSquare },
-      { name: 'Mimir', href: '/briefing-assistant', icon: LayoutGrid },
+      { name: 'Mimir', href: process.env.NEXT_PUBLIC_MIMIR_URL || '/briefing-assistant', icon: LayoutGrid, external: true },
       { name: 'Loop Document Chat', href: '/document-chat', icon: BookOpen },
     ],
   },
