@@ -34,9 +34,11 @@ export async function storeAsset(
     return null
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-  const publicUrl = `${supabaseUrl}/storage/v1/object/public/${BUCKET}/${path}`
-  return publicUrl
+  const { data: signedUrl } = await db.storage
+    .from(BUCKET)
+    .createSignedUrl(path, 60 * 60 * 24) // 24-hour expiry
+
+  return signedUrl?.signedUrl || null
 }
 
 export async function storeBase64Asset(
