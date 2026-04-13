@@ -38,7 +38,6 @@
     figma.showUI(html, { width: 440, height: 640 });
     const sourceFrame = frame;
     figma.ui.onmessage = async (msg) => {
-      var _a;
       if (msg.type === "ready") {
         const layerSummary = extractLayerSummary(sourceFrame);
         figma.ui.postMessage({ type: "frame-data", data: layerSummary });
@@ -97,39 +96,23 @@
           if (genLabel) genLabel.remove();
           const images = msg.images || [];
           let imagesPlaced = 0;
-          const debugImgLog = [];
           for (const img of images) {
-            debugImgLog.push(`img nodeId=${img.nodeId} bytesLen=${((_a = img.bytes) == null ? void 0 : _a.length) || 0}`);
-            if (!img.bytes || img.bytes.length === 0) {
-              debugImgLog.push("  SKIP: empty bytes");
-              continue;
-            }
+            if (!img.bytes || img.bytes.length === 0) continue;
             const bytes = new Uint8Array(img.bytes);
             try {
               const image = figma.createImage(bytes);
-              debugImgLog.push(`  createImage hash=${image.hash}`);
               const originalNode = await figma.getNodeByIdAsync(img.nodeId);
-              if (!originalNode) {
-                debugImgLog.push("  SKIP: original not found");
-                continue;
-              }
+              if (!originalNode) continue;
               let rectName = originalNode.name;
               if (originalNode.type === "FRAME" && "children" in originalNode) {
                 const origRect = originalNode.children.find((c) => c.type === "RECTANGLE");
                 if (origRect) rectName = origRect.name;
               }
-              debugImgLog.push(`  originalNode=${originalNode.name} rectName=${rectName}`);
               const targetRect = findImageRectInClone(variantFrame, rectName);
-              debugImgLog.push(`  targetRect=${targetRect ? targetRect.id + ":" + targetRect.name : "NOT FOUND"}`);
-              if (!targetRect) {
-                debugImgLog.push("  SKIP: rect not found in clone");
-                continue;
-              }
+              if (!targetRect) continue;
               targetRect.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
               imagesPlaced++;
-              debugImgLog.push("  PLACED OK");
-            } catch (imgErr) {
-              debugImgLog.push(`  ERROR: ${imgErr.message}`);
+            } catch (e) {
             }
           }
           const copyChanges = msg.copyChanges || [];
@@ -149,7 +132,7 @@
           figma.viewport.scrollAndZoomIntoView([variantFrame]);
           figma.ui.postMessage({
             type: "status",
-            text: "Done! " + imagesPlaced + " images replaced, " + copyApplied + " copy changes applied.\n\n[DEBUG main thread]\n" + debugImgLog.join("\n")
+            text: "Variant created! " + imagesPlaced + " images replaced, " + copyApplied + " copy changes applied."
           });
         } catch (err) {
           figma.ui.postMessage({
@@ -345,13 +328,7 @@
         }
 
         var result = await resp.json();
-        // #region agent log H1
-        var debugLines = ['[DEBUG] imageResults: ' + result.imageResults.length];
-        for (var d = 0; d < result.imageResults.length; d++) {
-          debugLines.push('  [' + d + '] nodeId=' + result.imageResults[d].nodeId + ' url=' + (result.imageResults[d].url ? result.imageResults[d].url.substring(0, 80) + '...' : 'NULL') + ' error=' + (result.imageResults[d].error || 'none'));
-        }
-        // #endregion
-        setProgress('Step 3/5: Downloading generated images...\\n' + debugLines.join('\\n'));
+        setProgress('Step 3/5: Downloading generated images...');
 
         // Fetch each generated image as bytes
         var imagePayloads = [];
@@ -361,14 +338,8 @@
             try {
               setProgress('Step 3/5: Downloading image ' + (j + 1) + '/' + result.imageResults.length + '...');
               var imgResp = await fetch(imgResult.url);
-              // #region agent log H2 H3
-              debugLines.push('  fetch[' + j + '] status=' + imgResp.status + ' ok=' + imgResp.ok);
-              // #endregion
               if (imgResp.ok) {
                 var buf = await imgResp.arrayBuffer();
-                // #region agent log H3
-                debugLines.push('  bytes[' + j + '] length=' + buf.byteLength);
-                // #endregion
                 imagePayloads.push({
                   nodeId: imgResult.nodeId,
                   bytes: Array.from(new Uint8Array(buf)),
@@ -376,15 +347,10 @@
                 });
               }
             } catch (imgErr) {
-              // #region agent log H2
-              debugLines.push('  fetchError[' + j + ']: ' + (imgErr.message || imgErr));
-              // #endregion
+              // Image download failed, skip
             }
           }
         }
-        // #region agent log summary
-        debugLines.push('[DEBUG] imagePayloads ready: ' + imagePayloads.length);
-        // #endregion
 
         setProgress('Step 4/5: Preparing copy changes...');
 
@@ -416,7 +382,7 @@
           }
         }
 
-        setProgress('Step 5/5: Applying images and copy to variant...\\n' + debugLines.join('\\n'));
+        setProgress('Step 5/5: Applying images and copy to variant...');
 
         // Send to main thread for application on the existing clone
         parent.postMessage({ pluginMessage: {
