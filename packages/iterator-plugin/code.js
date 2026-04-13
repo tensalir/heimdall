@@ -166,7 +166,13 @@
               const rh = Math.round(targetRect.height);
               const iw = imageSize.width;
               const ih = imageSize.height;
-              applyCropToRect(targetRect, image.hash, rw, rh, iw, ih, { zoom: 0.85, panX: 0, panY: 0 });
+              const framing = img.framing;
+              if (framing && framing.action === "adjust") {
+                const zoom = 1 + framing.zoomDelta;
+                applyCropToRect(targetRect, image.hash, rw, rh, iw, ih, { zoom, panX: framing.panX, panY: framing.panY });
+              } else {
+                applyCropToRect(targetRect, image.hash, rw, rh, iw, ih, { zoom: 0.85, panX: 0, panY: 0 });
+              }
               const generatedName = `generated-${img.name || "image-" + imagesPlaced}`;
               targetRect.name = generatedName;
               placedRects.push({
@@ -868,7 +874,7 @@
         var result = await resp.json();
         setProgress('Step 3/6: Downloading generated images...');
 
-        // Fetch each generated image as bytes, tracking failures explicitly
+        // Fetch each generated image as bytes, tracking failures and framing instructions
         var imagePayloads = [];
         var failedTiles = [];
         for (var j = 0; j < result.imageResults.length; j++) {
@@ -885,7 +891,8 @@
               imagePayloads.push({
                 nodeId: imgResult.nodeId,
                 bytes: Array.from(new Uint8Array(buf)),
-                name: 'variant-image-' + j
+                name: 'variant-image-' + j,
+                framing: imgResult.framing || null
               });
             } else {
               failedTiles.push('Tile ' + (j + 1) + ': download failed (' + imgResp.status + ')');

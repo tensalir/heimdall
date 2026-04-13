@@ -143,3 +143,25 @@ export const PLACEMENT_REVIEW_DEFAULTS: CropAdjustment = {
 }
 
 export const MAX_REVIEW_PASSES = 2
+
+// ---------------------------------------------------------------------------
+// Backend tile preflight framing
+// ---------------------------------------------------------------------------
+
+export interface TileFramingResult {
+  action: PlacementAction
+  zoomDelta: number
+  panX: number
+  panY: number
+  confidence: 'high' | 'medium' | 'low'
+  reason: string
+}
+
+export interface ImageResultWithFraming {
+  nodeId: string
+  url: string | null
+  error: string | null
+  framing: TileFramingResult | null
+  rectWidth: number
+  rectHeight: number
+}

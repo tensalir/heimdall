@@ -189,7 +189,7 @@ export function runIterate(): void {
         if (genLabel) genLabel.remove()
 
         // Apply images and collect placement metadata for review
-        const images = (msg.images || []) as Array<{ nodeId: string; bytes: number[]; name: string }>
+        const images = (msg.images || []) as Array<{ nodeId: string; bytes: number[]; name: string; framing?: { action: string; zoomDelta: number; panX: number; panY: number; confidence: string; reason: string } | null }>
         let imagesPlaced = 0
         const placedRects: Array<{
           rectId: string
@@ -226,8 +226,14 @@ export function runIterate(): void {
             const iw = imageSize.width
             const ih = imageSize.height
 
-            // Apply a slight zoom-out baseline (0.85) so portraits show more face by default
-            applyCropToRect(targetRect, image.hash, rw, rh, iw, ih, { zoom: 0.85, panX: 0, panY: 0 })
+            // Use backend preflight framing if available, otherwise apply baseline zoom-out
+            const framing = img.framing
+            if (framing && framing.action === 'adjust') {
+              const zoom = 1 + framing.zoomDelta
+              applyCropToRect(targetRect, image.hash, rw, rh, iw, ih, { zoom, panX: framing.panX, panY: framing.panY })
+            } else {
+              applyCropToRect(targetRect, image.hash, rw, rh, iw, ih, { zoom: 0.85, panX: 0, panY: 0 })
+            }
 
             const generatedName = `generated-${img.name || 'image-' + imagesPlaced}`
             targetRect.name = generatedName
@@ -1030,7 +1036,7 @@ function buildUI(frameId: string, frameName: string): string {
         var result = await resp.json();
         setProgress('Step 3/6: Downloading generated images...');
 
-        // Fetch each generated image as bytes, tracking failures explicitly
+        // Fetch each generated image as bytes, tracking failures and framing instructions
         var imagePayloads = [];
         var failedTiles = [];
         for (var j = 0; j < result.imageResults.length; j++) {
@@ -1047,7 +1053,8 @@ function buildUI(frameId: string, frameName: string): string {
               imagePayloads.push({
                 nodeId: imgResult.nodeId,
                 bytes: Array.from(new Uint8Array(buf)),
-                name: 'variant-image-' + j
+                name: 'variant-image-' + j,
+                framing: imgResult.framing || null
               });
             } else {
               failedTiles.push('Tile ' + (j + 1) + ': download failed (' + imgResp.status + ')');

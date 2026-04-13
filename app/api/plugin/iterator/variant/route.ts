@@ -17,7 +17,9 @@ import { extractFrameData, exportChildImages } from '@/src/iterator/figma/extrac
 import { generateImage } from '@/src/iterator/gemini/nanoBananaClient'
 import { planCopy } from '@/src/iterator/claude/copyPlanner'
 import { storeBase64Asset } from '@/src/iterator/storage/assetStore'
-import type { GenerationBrief, CopyPlan } from '@/src/iterator/types'
+import type { GenerationBrief, CopyPlan, ImageResultWithFraming } from '@/src/iterator/types'
+import { reviewTilePreflight } from '@/src/iterator/gemini/tilePreflightReviewer'
+import { buildCreativeContextPack, isCreativeMemoryAvailable } from '@/src/creativeMemory/store'
 
 export const maxDuration = 300
 
@@ -30,13 +32,9 @@ const VariantRequestSchema = z.object({
   resolution: z.enum(['512', '1K', '2K', '4K']).default('2K'),
 })
 
-interface ImageResult {
-  nodeId: string
-  url: string | null
-  error: string | null
-}
+// ImageResultWithFraming is imported from types.ts
 
-const IMAGE_PROMPTS: Record<string, string> = {
+const IMAGE_PROMPTS_FALLBACK: Record<string, string> = {
   engage: 'Using the reference image as a style guide, create a new portrait-style photo of a different person — different gender or skin tone — laughing joyfully in a warm, social setting. Same intimate, candid mood. Same warm lighting. Frame from mid-chest up, showing full face, hair, and shoulders with some breathing room around the subject. The person should feel real and approachable, not posed. No text, no logos, no earplugs visible.',
   dream: 'Using the reference image as a style guide, create a new portrait-style photo of a different person — different gender or skin tone — peacefully sleeping or dozing. Same intimate, restful mood. Same soft, muted lighting. Frame from mid-chest up, showing full face, hair, and shoulders with some breathing room around the subject. The person should feel real and relaxed. No text, no logos, no earplugs visible.',
   experience: 'Using the reference image as a style guide, create a new portrait-style photo of a different person — different gender or skin tone — enjoying a concert or live music event. Same vibrant, energetic mood with pink/purple lighting. Frame from mid-chest up, showing full face, hair, and shoulders with some breathing room around the subject. The person should feel real and in-the-moment. No text, no logos, no earplugs visible.',
@@ -72,12 +70,54 @@ function snapToGeminiAspectRatio(width: number, height: number): SupportedAspect
   return best.label
 }
 
-function getPromptForImage(nodeName: string): string {
+function getPromptForImageFallback(nodeName: string): string {
   const lower = nodeName.toLowerCase()
-  if (lower.includes('engage') || lower.includes('social')) return IMAGE_PROMPTS.engage
-  if (lower.includes('dream') || lower.includes('sleep')) return IMAGE_PROMPTS.dream
-  if (lower.includes('experience') || lower.includes('concert') || lower.includes('loud')) return IMAGE_PROMPTS.experience
-  return IMAGE_PROMPTS.default
+  if (lower.includes('engage') || lower.includes('social')) return IMAGE_PROMPTS_FALLBACK.engage
+  if (lower.includes('dream') || lower.includes('sleep')) return IMAGE_PROMPTS_FALLBACK.dream
+  if (lower.includes('experience') || lower.includes('concert') || lower.includes('loud')) return IMAGE_PROMPTS_FALLBACK.experience
+  return IMAGE_PROMPTS_FALLBACK.default
+}
+
+/**
+ * Build an image generation prompt using creative memory references when available.
+ * Falls back to the hardcoded product-line prompts if retrieval is unavailable.
+ */
+async function getPromptForImage(nodeName: string, frameName: string, briefing?: string): Promise<string> {
+  if (!isCreativeMemoryAvailable()) return getPromptForImageFallback(nodeName)
+
+  try {
+    const query = [briefing ?? '', frameName, nodeName].filter(Boolean).join(' ')
+    const pack = await buildCreativeContextPack(query, { maxReferences: 3 })
+
+    if (pack.references.length === 0) return getPromptForImageFallback(nodeName)
+
+    const topRef = pack.references[0]
+    const fp = topRef.fingerprint
+
+    const promptParts: string[] = [
+      'Using the reference image as a style guide, create a new variation.',
+    ]
+
+    if (fp.storySubject) {
+      promptParts.push(`The subject should be similar in role to: ${fp.storySubject}, but a different person with different gender or skin tone.`)
+    }
+
+    promptParts.push(`Composition style: ${fp.compositionArchetype}. Background: ${fp.backgroundTreatment}. Mood: ${fp.paletteMood}.`)
+
+    if (fp.protectedRegions.length > 0) {
+      promptParts.push(`Preserve clear space in: ${fp.protectedRegions.join(', ')}.`)
+    }
+
+    promptParts.push('Frame from mid-chest up, showing full face, hair, and shoulders with breathing room. The person should feel real and natural, not posed. No text, no logos, no product visible.')
+
+    if (fp.antiPatterns.length > 0) {
+      promptParts.push(`Avoid: ${fp.antiPatterns.join('; ')}.`)
+    }
+
+    return promptParts.join(' ')
+  } catch {
+    return getPromptForImageFallback(nodeName)
+  }
 }
 
 export async function POST(request: Request) {
@@ -131,22 +171,26 @@ export async function POST(request: Request) {
     })
 
     // Generate replacement images via Nano Banana (sequentially to avoid rate limits)
-    const imageResults: ImageResult[] = []
+    // then run backend preflight framing review on each successful tile
+    const imageResults: ImageResultWithFraming[] = []
     const jobId = `variant-${Date.now()}`
 
     for (const nodeId of targetImageIds) {
       const refUrl = exportedUrls[nodeId]
       if (!refUrl) {
-        imageResults.push({ nodeId, url: null, error: 'Could not export original image' })
+        imageResults.push({ nodeId, url: null, error: 'Could not export original image', framing: null, rectWidth: 0, rectHeight: 0 })
         continue
       }
 
       const childNode = frameData.children.find((c) => c.id === nodeId)
       const nodeName = childNode?.name || ''
-      const prompt = getPromptForImage(nodeName)
+      const prompt = await getPromptForImage(nodeName, frameData.name, briefing)
+
+      const rectWidth = childNode?.width || 0
+      const rectHeight = childNode?.height || 0
 
       const aspectRatio = childNode
-        ? snapToGeminiAspectRatio(childNode.width, childNode.height)
+        ? snapToGeminiAspectRatio(rectWidth, rectHeight)
         : '3:4' as SupportedAspectRatio
 
       const brief: GenerationBrief = {
@@ -159,14 +203,30 @@ export async function POST(request: Request) {
       const result = await generateImage(brief, model)
 
       if (result.imageBase64) {
+        // Run preflight framing review before storing
+        let framing = null
+        if (rectWidth > 0 && rectHeight > 0) {
+          try {
+            framing = await reviewTilePreflight({
+              sourceImageBase64: result.imageBase64,
+              mimeType: result.mimeType || 'image/png',
+              rectWidth,
+              rectHeight,
+            })
+            console.log(`[variant] Preflight for ${nodeName}: ${framing.action} (${framing.confidence}) — ${framing.reason}`)
+          } catch (err) {
+            console.warn(`[variant] Preflight review failed for ${nodeName}:`, (err as Error).message)
+          }
+        }
+
         const storedUrl = await storeBase64Asset(jobId, `img-${nodeId.replace(':', '-')}`, result.imageBase64)
         if (storedUrl) {
-          imageResults.push({ nodeId, url: storedUrl, error: null })
+          imageResults.push({ nodeId, url: storedUrl, error: null, framing, rectWidth, rectHeight })
         } else {
-          imageResults.push({ nodeId, url: null, error: 'Image generated but storage failed' })
+          imageResults.push({ nodeId, url: null, error: 'Image generated but storage failed', framing: null, rectWidth, rectHeight })
         }
       } else {
-        imageResults.push({ nodeId, url: null, error: result.error || 'Generation failed' })
+        imageResults.push({ nodeId, url: null, error: result.error || 'Generation failed', framing: null, rectWidth, rectHeight })
       }
     }
 
