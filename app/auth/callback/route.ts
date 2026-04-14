@@ -1,31 +1,32 @@
 import { NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import { isBriefingOnlyUser } from '@/lib/route-auth'
 
-const DEFAULT_REDIRECT = '/admin'
+const ADMIN_REDIRECT = '/admin'
+const USER_REDIRECT = '/ops'
 
 /**
  * GET /auth/callback
  *
  * Handles the redirect from Supabase magic link emails.
  * Exchanges the ?code= parameter for a session and sets auth cookies.
+ * Admins land on /admin; everyone else lands on /ops.
  */
 function sanitizeRedirect(raw: string): string {
-  if (!raw.startsWith('/') || raw.startsWith('//')) return DEFAULT_REDIRECT
+  if (!raw.startsWith('/') || raw.startsWith('//')) return ''
   try {
     const url = new URL(raw, 'http://localhost')
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return DEFAULT_REDIRECT
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
     return url.pathname + url.search
   } catch {
-    return DEFAULT_REDIRECT
+    return ''
   }
 }
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
-  let next = sanitizeRedirect(searchParams.get('next') ?? DEFAULT_REDIRECT)
+  const rawNext = sanitizeRedirect(searchParams.get('next') ?? '')
 
   if (code) {
     const cookieStore = await cookies()
@@ -50,12 +51,10 @@ export async function GET(request: Request) {
     const { error } = await supabase.auth.exchangeCodeForSession(code)
 
     if (!error) {
-      if (next === DEFAULT_REDIRECT) {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (user && isBriefingOnlyUser(user.email)) {
-          next = '/ops'
-        }
-      }
+      const { data: { user } } = await supabase.auth.getUser()
+      const isAdmin = user?.user_metadata?.role === 'admin'
+      const defaultDest = isAdmin ? ADMIN_REDIRECT : USER_REDIRECT
+      const next = rawNext || defaultDest
       return NextResponse.redirect(new URL(next, origin))
     }
   }

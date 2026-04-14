@@ -1,20 +1,20 @@
 /**
  * Heimdall middleware — route-based auth + CORS + legacy redirects.
  *
+ * Role model: user_metadata.role === 'admin' gets full access.
+ * All other authenticated users are restricted to /ops (Briefing Workflow).
+ *
  * Auth zones:
- *   /admin/*              → Supabase session + privileged domain (staff only)
- *   /forecast/*           → Supabase session + privileged domain (staff only)
- *   /feedback/*           → Supabase session + privileged domain (staff only)
- *   /ops/*                → Supabase session + privileged domain (staff + briefing-only testers)
- *   /briefing-assistant/* → Supabase session preferred; BRIEFING_LOCAL_PASSWORD fallback for localhost dev
- *   /sheets/*             → Cookie-based auth with SHEETS_PASSWORD
- *   /document-chat/*      → Supabase session + privileged domain (staff only)
+ *   /admin/*              → Supabase session + admin role
+ *   /forecast/*           → Supabase session + admin role
+ *   /feedback/*           → Supabase session + admin role
+ *   /document-chat/*      → Supabase session + admin role
+ *   /briefing-assistant/* → Supabase session + admin role
+ *   /sheets/*             → Supabase session + admin role
+ *   /ops/*                → Supabase session (any authenticated user)
  *   /api/*                → Classified by route policy (user / machine / webhook / public / gpt_actions)
  *   /auth/*               → No auth (callback handler)
- *   /                     → No auth (landing redirect)
- *
- * API routes default to requiring a Supabase session unless explicitly
- * classified as public, machine, or webhook in the policy map.
+ *   /                     → Redirects to /admin (admin) or /ops (non-admin)
  *
  * Legacy redirects keep old URLs working during migration.
  */
@@ -46,26 +46,6 @@ function corsHeaders(request: NextRequest): Record<string, string> {
   }
 }
 
-const PRIVILEGED_EMAIL_DOMAINS = (process.env.HEIMDALL_ALLOWED_EMAIL_DOMAINS || 'thoughtform.co,loopearplugs.com')
-  .split(',')
-  .map((d) => d.trim().toLowerCase())
-  .filter(Boolean)
-
-function isPrivilegedUser(email: string | undefined): boolean {
-  if (!email) return false
-  const domain = email.split('@')[1]?.toLowerCase()
-  return PRIVILEGED_EMAIL_DOMAINS.includes(domain)
-}
-
-const BRIEFING_ONLY_USERS = (process.env.HEIMDALL_BRIEFING_ONLY_USERS || '')
-  .split(',')
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean)
-
-function isBriefingOnlyUser(email: string | undefined): boolean {
-  if (!email) return false
-  return BRIEFING_ONLY_USERS.includes(email.toLowerCase())
-}
 
 /* ------------------------------------------------------------------ */
 /*  Legacy redirects — old paths → new paths                          */
@@ -241,9 +221,13 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
 /*  Admin Auth — Supabase session                                     */
 /* ------------------------------------------------------------------ */
 
+function isAdminRole(user: { user_metadata?: Record<string, unknown> }): boolean {
+  return user.user_metadata?.role === 'admin'
+}
+
 async function handleAdminAuth(
   request: NextRequest,
-  options?: { allowBriefingOnly?: boolean },
+  options?: { allowNonAdmin?: boolean },
 ): Promise<NextResponse> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -281,11 +265,7 @@ async function handleAdminAuth(
     return NextResponse.redirect(url)
   }
 
-  if (!isPrivilegedUser(user.email)) {
-    return NextResponse.json({ error: 'Insufficient privileges' }, { status: 403 })
-  }
-
-  if (!options?.allowBriefingOnly && isBriefingOnlyUser(user.email)) {
+  if (!isAdminRole(user) && !options?.allowNonAdmin) {
     const url = request.nextUrl.clone()
     url.pathname = '/ops'
     return NextResponse.redirect(url)
@@ -326,86 +306,6 @@ function hasValidSheetsCookie(request: NextRequest): boolean {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Sheets page auth                                                  */
-/* ------------------------------------------------------------------ */
-
-function handleSheetsAuth(request: NextRequest): NextResponse | null {
-  const sheetsPassword = process.env.SHEETS_PASSWORD
-  if (!sheetsPassword) return null
-
-  const { pathname } = request.nextUrl
-  if (pathname === '/sheets/login') return null
-
-  if (hasValidSheetsCookie(request)) return null
-
-  const url = request.nextUrl.clone()
-  url.pathname = '/sheets/login'
-  url.searchParams.set('redirect', pathname)
-  return NextResponse.redirect(url)
-}
-
-/* ------------------------------------------------------------------ */
-/*  Briefing Assistant auth — Supabase preferred, local password fbk  */
-/* ------------------------------------------------------------------ */
-
-const BRIEFING_COOKIE_NAME = 'heimdall-briefing-token'
-
-async function handleBriefingAuth(request: NextRequest): Promise<NextResponse> {
-  const { pathname } = request.nextUrl
-
-  if (pathname === '/briefing-assistant/login') return NextResponse.next()
-
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-  if (supabaseUrl && supabaseAnonKey) {
-    let response = NextResponse.next({ request: { headers: request.headers } })
-    const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => {
-            request.cookies.set(name, value)
-          })
-          response = NextResponse.next({ request: { headers: request.headers } })
-          cookiesToSet.forEach(({ name, value, options }) => {
-            response.cookies.set(name, value, options)
-          })
-        },
-      },
-    })
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) return response
-  }
-
-  const localPassword = process.env.BRIEFING_LOCAL_PASSWORD
-  if (localPassword) {
-    const token = request.cookies.get(BRIEFING_COOKIE_NAME)?.value
-    if (token) {
-      try {
-        const decoded = Buffer.from(token, 'base64').toString('ascii')
-        if (decoded === localPassword) return NextResponse.next()
-      } catch { /* invalid token */ }
-    }
-  }
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    if (!localPassword) return NextResponse.next()
-    const url = request.nextUrl.clone()
-    url.pathname = '/briefing-assistant/login'
-    url.searchParams.set('redirect', pathname)
-    return NextResponse.redirect(url)
-  }
-
-  const url = request.nextUrl.clone()
-  url.pathname = '/login'
-  url.searchParams.set('next', pathname)
-  return NextResponse.redirect(url)
-}
-
-/* ------------------------------------------------------------------ */
 /*  Main middleware                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -426,35 +326,33 @@ export async function middleware(request: NextRequest) {
     return handleApi(request)
   }
 
-  // 4. Admin + Document Chat: Supabase session + privileged domain (staff only)
+  // 4. Admin + Document Chat: admin role only
   if (pathname.startsWith('/admin') || pathname.startsWith('/document-chat')) {
     return handleAdminAuth(request)
   }
 
-  // 5. Forecast, Feedback: staff only (briefing-only users redirected to /ops)
+  // 5. Forecast, Feedback: admin role only
   if (pathname.startsWith('/forecast') || pathname.startsWith('/feedback')) {
     return handleAdminAuth(request)
   }
 
-  // 6. Ops: staff + briefing-only testers
+  // 6. Ops: any authenticated user (non-admins land here)
   if (pathname.startsWith('/ops')) {
-    return handleAdminAuth(request, { allowBriefingOnly: true })
+    return handleAdminAuth(request, { allowNonAdmin: true })
   }
 
-  // 7. Sheets routes: cookie-based auth
+  // 7. Sheets: admin role only (non-admins redirected to /ops)
   if (pathname.startsWith('/sheets')) {
-    const denied = handleSheetsAuth(request)
-    if (denied) return denied
-    return NextResponse.next()
+    return handleAdminAuth(request)
   }
 
-  // 8. Briefing Assistant: Supabase session preferred, local password fallback
+  // 8. Briefing Assistant: admin role only (non-admins redirected to /ops)
   if (pathname.startsWith('/briefing-assistant')) {
-    return handleBriefingAuth(request)
+    return handleAdminAuth(request)
   }
 
-  // 9. Everything else (root landing, etc.)
-  return NextResponse.next()
+  // 9. Everything else (root landing, etc.): require auth, non-admins go to /ops
+  return handleAdminAuth(request, { allowNonAdmin: true })
 }
 
 export const config = {

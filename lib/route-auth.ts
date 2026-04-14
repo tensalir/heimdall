@@ -31,6 +31,14 @@ export function isBriefingOnlyUser(email: string | undefined): boolean {
   return BRIEFING_ONLY_USERS.includes(email.toLowerCase())
 }
 
+/**
+ * Returns true when user_metadata.role === 'admin'.
+ * This is the single source of truth for full-access vs briefing-only.
+ */
+export function isAdminRole(userMetadata: Record<string, unknown> | undefined): boolean {
+  return userMetadata?.role === 'admin'
+}
+
 const FEEDBACK_REVIEWERS = (process.env.HEIMDALL_FEEDBACK_REVIEWERS || '')
   .split(',')
   .map((e) => e.trim().toLowerCase())
@@ -102,14 +110,14 @@ export async function requireUserOrSheetsCookie(request: Request) {
 }
 
 /**
- * Require a user from a privileged email domain (staff only).
- * Use for admin/ops/forecast/feedback API routes.
+ * Require a user with admin access: either user_metadata.role === 'admin'
+ * or email domain in the privileged allow-list (legacy fallback).
  */
 export async function requirePrivilegedUser(request: Request) {
   const result = await requireUser(request)
   if (result.error) return result
 
-  if (!isPrivilegedEmail(result.user.email)) {
+  if (!isAdminRole(result.user.user_metadata) && !isPrivilegedEmail(result.user.email)) {
     return {
       error: NextResponse.json(
         { error: 'Insufficient privileges' },

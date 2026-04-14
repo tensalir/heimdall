@@ -120,36 +120,35 @@ export function useIsPrivileged(): boolean {
 }
 
 /**
- * Returns true when the current user is on the briefing-only restricted list.
- * These users can access /ops but not the full staff Heimdall shell.
+ * Returns true when the current user is NOT an admin.
+ * Non-admin users can only access /ops (Briefing Workflow).
+ * Source of truth: Supabase user_metadata.role.
  */
 export function useIsBriefingOnly(): boolean {
   const [briefingOnly, setBriefingOnly] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false
+    if (typeof window === 'undefined') return true
     try {
-      return localStorage.getItem(BRIEFING_ONLY_KEY) === 'true'
+      const stored = localStorage.getItem(BRIEFING_ONLY_KEY)
+      if (stored === 'true' || stored === 'false') return stored === 'true'
     } catch {
-      return false
+      // ignore
     }
+    return true
   })
 
   useEffect(() => {
-    if (BRIEFING_ONLY_USERS.length === 0) {
-      setBriefingOnly(false)
-      return
-    }
     const supabase = createSupabaseBrowserClient()
     if (!supabase) {
-      setBriefingOnly(false)
+      setBriefingOnly(true)
       return
     }
     supabase.auth.getUser().then(({ data: { user }, error }) => {
       if (error || !user) {
-        setBriefingOnly(false)
+        setBriefingOnly(true)
         try { localStorage.removeItem(BRIEFING_ONLY_KEY) } catch {}
         return
       }
-      const result = BRIEFING_ONLY_USERS.includes(user.email?.toLowerCase() ?? '')
+      const result = user.user_metadata?.role !== 'admin'
       setBriefingOnly(result)
       try { localStorage.setItem(BRIEFING_ONLY_KEY, String(result)) } catch {}
     })

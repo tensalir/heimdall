@@ -81,7 +81,9 @@ function LoginForm() {
     if (error) {
       setError(error.message)
     } else {
-      router.push('/admin')
+      const { data: { user } } = await supabase.auth.getUser()
+      const dest = user?.user_metadata?.role === 'admin' ? '/admin' : '/ops'
+      router.push(dest)
       router.refresh()
     }
   }
