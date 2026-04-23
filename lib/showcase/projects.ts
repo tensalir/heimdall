@@ -7,6 +7,7 @@ export interface FoundationPillar {
   label: string
   title: string
   body: string
+  example?: string
 }
 
 export const FOUNDATION_PILLARS: FoundationPillar[] = [
@@ -16,6 +17,8 @@ export const FOUNDATION_PILLARS: FoundationPillar[] = [
     title: 'AI is an intelligence to work with, not a tool to command.',
     body:
       "Teams develop fluency by doing, working alongside it, not reading about it. The first hour with someone already fluent is worth more than a month of documentation. This has to happen first, before anything else is possible.",
+    example:
+      "Test with Claude to map Eclipse\u2019s tone of voice on Amazon listings. Work alongside it until the direction feels right.",
   },
   {
     n: '02',
@@ -23,6 +26,8 @@ export const FOUNDATION_PILLARS: FoundationPillar[] = [
     title: 'Turn the way we work into something the system can hold.',
     body:
       'Skills capture brand voice, domain rules, taste. Individual knowledge becomes team infrastructure. What one person knew, the whole team now works from. Organisational memory, finally.',
+    example:
+      'Capture what works as a reusable skill: brand voice, Amazon constraints, product-specific rules. Anyone on the team can now produce copy in that voice.',
   },
   {
     n: '03',
@@ -30,6 +35,8 @@ export const FOUNDATION_PILLARS: FoundationPillar[] = [
     title: 'Prototype tools nobody outside the team could spec.',
     body:
       "Navigation gives the intuition. Encoding gives the process. Together they're the foundation for tools built by the people who understand the problem best, in days, not months.",
+    example:
+      'When demand scales across products and markets, fold the skill into Babylon so copy generation lives next to localization in one pipeline.',
   },
 ]
 
@@ -248,14 +255,14 @@ export const PROJECTS: ShowcaseProject[] = [
     slug: 'babylon',
     name: 'Babylon',
     num: '03',
-    tagline: 'Localization & AI Dubbing Pipeline',
+    tagline: 'Copy, Localization & Dubbing Pipeline',
     subline: 'One approval step instead of five.',
     status: 'WIP',
     statusTag: 'wip',
     year: '2025',
     team: 'Studio · UGC',
     oneLiner:
-      'Transcribe, translate, dub, caption, QA. One pipeline connected to the Monday + Frontify workflow Loop already runs.',
+      'Translate, transcribe, dub, caption, QA — for video and copy. One pipeline connected to the Monday + Frontify workflow Loop already runs.',
     description:
       'The bottleneck was never translation, it was verification. Babylon cross-checks automated transcription against on-screen captions via Gemini, so proofreaders focus where human judgment actually matters.',
     image: '/showcase/assets/babylon.png',
@@ -300,7 +307,7 @@ export const PROJECTS: ShowcaseProject[] = [
     reuseSignal:
       'The review sheet, built originally for UGC proofreading, became a reusable module. It now powers Figma file translation review too. Any workflow that needs human verification of AI-generated text reuses the same component.',
     companyLeverage:
-      'Localization is a company-wide need. As Loop expands into new markets, Babylon scales from UGC dubbing to any content type (product copy, Figma assets, campaign materials) using the same translation and review infrastructure.',
+      'Copy and localization are company-wide needs. As Loop expands into new markets, Babylon scales from UGC dubbing to any content type (product copy, Figma assets, campaign materials) using the same translation and review infrastructure.',
   },
   {
     id: 'heimdall',

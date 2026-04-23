@@ -20,13 +20,10 @@ export function FoundationsHero() {
               <span className="accent-word">how Loop builds</span>.
             </h1>
             <p className="foundations-lede">
-              For two years, Creative Technology has been embedded in
-              Marketing, seeing AI signals early, cultivating adoption from
-              inside the work, and shipping tools that make teams
+              Two years embedded in Marketing, cultivating AI adoption from
+              inside the work and shipping tools that make teams
               self-sufficient. The flywheel below is how adoption turns into
-              encoded knowledge, then into production-grade tools. The four
-              projects that follow show the pattern working, and where it
-              goes from here.
+              encoded knowledge, and then into production-grade tools.
             </p>
             <div className="hero-meta hero-meta--lead">
               <div>
@@ -62,6 +59,12 @@ export function FoundationsHero() {
                 <div className="pillar-label">{p.label}</div>
                 <div className="pillar-title">{p.title}</div>
                 <div className="pillar-body">{p.body}</div>
+                {p.example && (
+                  <div className="pillar-example">
+                    <div className="pillar-example-tag">Eclipse × Amazon</div>
+                    <div className="pillar-example-body">{p.example}</div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

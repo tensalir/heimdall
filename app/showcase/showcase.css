@@ -769,6 +769,35 @@
   .showcase-scope .pillar:first-child { border-top: none; padding-top: 0; }
 }
 
+/* Worked-example inset inside each pillar */
+.showcase-scope .pillar-example {
+  margin-top: 20px;
+  padding: 14px 16px 16px;
+  border-radius: 8px;
+  background:
+    linear-gradient(
+      168deg,
+      color-mix(in oklab, var(--paper-2) 60%, transparent) 0%,
+      color-mix(in oklab, var(--paper-2) 30%, transparent) 100%
+    );
+  border: 1px solid color-mix(in oklab, var(--rule) 50%, transparent);
+}
+.showcase-scope .pillar-example-tag {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.showcase-scope .pillar-example-body {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  text-wrap: pretty;
+}
+
 /* ——— Project card additions ——— */
 .showcase-scope .psec-subline {
   font-family: var(--f-display);
