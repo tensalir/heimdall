@@ -131,6 +131,7 @@
   gap: 12px;
   color: var(--ink);
   font-weight: 600;
+  z-index: 2;
 }
 .showcase-scope .topbar .brand .loop-mark {
   width: 28px; height: 28px;
@@ -144,19 +145,98 @@
   font-size: 15px;
   text-transform: none;
 }
-.showcase-scope .topbar nav {
+.showcase-scope .topbar .topbar-nav-desktop {
   display: flex;
   gap: 28px;
   color: var(--ink-muted);
   font-weight: 500;
 }
-.showcase-scope .topbar nav a { transition: color .2s; }
-.showcase-scope .topbar nav a:hover { color: var(--ink); }
+.showcase-scope .topbar .topbar-nav-desktop a { transition: color .2s; }
+.showcase-scope .topbar .topbar-nav-desktop a:hover { color: var(--ink); }
 .showcase-scope .topbar .meta {
   color: var(--ink-faint);
   font-family: var(--f-mono);
   font-size: 11px;
   letter-spacing: 0.04em;
+}
+
+/* Hamburger button — hidden on desktop */
+.showcase-scope .topbar-burger {
+  display: none;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--ink);
+  z-index: 2;
+  -webkit-tap-highlight-color: transparent;
+  transition: background .15s;
+}
+.showcase-scope .topbar-burger:hover { background: var(--rule-soft); }
+
+/* Mobile sheet — full-screen overlay */
+.showcase-scope .topbar-sheet {
+  position: fixed;
+  inset: 0;
+  top: 64px;
+  z-index: 49;
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 40px var(--pad) 40px;
+  animation: sheetIn .22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes sheetIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .showcase-scope .topbar-sheet { animation: sheetFade .15s ease; }
+  @keyframes sheetFade { from { opacity: 0; } to { opacity: 1; } }
+}
+.showcase-scope .topbar-sheet-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.showcase-scope .topbar-sheet-link {
+  font-family: var(--f-display);
+  font-weight: 500;
+  font-size: 32px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--rule);
+  transition: color .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.showcase-scope .topbar-sheet-link:last-child { border-bottom: none; }
+.showcase-scope .topbar-sheet-link:hover { color: var(--loop-coral); }
+.showcase-scope .topbar-sheet-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-items: flex-start;
+}
+.showcase-scope .topbar-sheet-footer .btn { width: 100%; justify-content: center; }
+.showcase-scope .topbar-sheet-footer .meta {
+  color: var(--ink-faint);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 720px) {
+  .showcase-scope .topbar .topbar-nav-desktop,
+  .showcase-scope .topbar .topbar-meta-desktop { display: none; }
+  .showcase-scope .topbar-burger { display: flex; }
+}
+@media (min-width: 721px) {
+  .showcase-scope .topbar-sheet { display: none; }
+  .showcase-scope .topbar-burger { display: none; }
 }
 
 /* ——— Labels & tags ——— */
@@ -203,7 +283,7 @@
 .showcase-scope .h-xxl {
   font-family: var(--f-display);
   font-weight: 500;
-  font-size: clamp(48px, 7.8vw, 112px);
+  font-size: clamp(40px, 11vw, 112px);
   line-height: 0.96;
   letter-spacing: -0.035em;
   color: var(--ink);
@@ -557,7 +637,7 @@
   font-family: var(--f-display);
   font-style: italic;
   font-weight: 500;
-  font-size: clamp(36px, 5.2vw, 72px);
+  font-size: clamp(32px, 8vw, 72px);
   line-height: 1.02;
   letter-spacing: -0.03em;
   color: var(--paper);
@@ -654,7 +734,7 @@
   max-width: 22ch;
   font-weight: 500;
   letter-spacing: -0.035em;
-  font-size: clamp(54px, 7.2vw, 108px);
+  font-size: clamp(42px, 11vw, 108px);
   line-height: 0.95;
   margin-bottom: 8px;
 }
@@ -1110,14 +1190,14 @@
   margin: 0 0 12px;
   letter-spacing: -0.035em;
   font-weight: 500;
-  font-size: clamp(64px, 8.2vw, 128px);
+  font-size: clamp(44px, 13vw, 128px);
 }
 .showcase-scope .psec-period { color: var(--accent-card); font-style: italic; }
 .showcase-scope .psec-sub {
   font-family: var(--f-display);
   font-style: italic;
   font-weight: 500;
-  font-size: clamp(22px, 2.2vw, 32px);
+  font-size: clamp(18px, 5.2vw, 32px);
   line-height: 1.15;
   color: var(--ink-soft);
   margin-bottom: 32px;
@@ -1422,7 +1502,7 @@
   margin-bottom: 24px;
 }
 .showcase-scope .pm-title {
-  font-size: clamp(56px, 8vw, 96px);
+  font-size: clamp(40px, 11vw, 96px);
   line-height: 0.92;
   letter-spacing: -0.035em;
   margin-bottom: 10px;
@@ -1961,4 +2041,158 @@
 @media (max-width: 600px) {
   .showcase-scope .sl-actions { flex-direction: column; align-items: flex-start; gap: 12px; }
   .showcase-scope .sl-input { max-width: 100%; }
+}
+
+/* ═══════════════════════════════════════════════════
+   MOBILE RESPONSIVE PASS
+   ═══════════════════════════════════════════════════ */
+
+/* ——— Overflow guard ——— */
+@media (max-width: 900px) {
+  .showcase-scope { overflow-x: hidden; }
+}
+
+/* ——— Section padding — tighten vertical space ——— */
+@media (max-width: 640px) {
+  .showcase-scope .psec {
+    padding: 48px 0 64px;
+  }
+  .showcase-scope .foundations-section {
+    padding-top: 56px;
+    padding-bottom: 48px;
+  }
+  .showcase-scope .foundations-section--lead {
+    padding-top: 48px;
+    padding-bottom: 64px;
+  }
+  .showcase-scope .ns-section {
+    padding: 64px 0 56px;
+  }
+  .showcase-scope footer.site {
+    margin-top: 72px;
+    padding: 56px 0 40px;
+  }
+  .showcase-scope footer.site .meta-row {
+    margin-top: 40px;
+  }
+  .showcase-scope .foundations-head {
+    margin-bottom: 48px;
+  }
+  .showcase-scope .psec-head {
+    margin-bottom: 32px;
+  }
+}
+
+/* ——— Grid adjustments — small widths ——— */
+@media (max-width: 480px) {
+  .showcase-scope .psec-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .showcase-scope .psec-foot {
+    flex-direction: column;
+  }
+  .showcase-scope .psec-foot .psec-cta {
+    width: 100%;
+    justify-content: center;
+  }
+  .showcase-scope .pm-footer {
+    flex-direction: column;
+  }
+  .showcase-scope .pm-footer .btn,
+  .showcase-scope .pm-footer .psec-cta {
+    width: 100%;
+    justify-content: center;
+  }
+}
+@media (max-width: 420px) {
+  .showcase-scope .ns-proof {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .showcase-scope .ns-proof-item {
+    padding: 20px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .showcase-scope .ns-proof-item:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
+  .showcase-scope .ns-proof-item:last-child {
+    padding-bottom: 0;
+  }
+}
+
+/* ——— Screenshot frames — portrait-friendly aspect ——— */
+@media (max-width: 640px) {
+  .showcase-scope .psec-shot-frame {
+    aspect-ratio: 4 / 3;
+  }
+  .showcase-scope .psec-shot-frame.tall {
+    aspect-ratio: 8 / 7;
+  }
+  .showcase-scope .pm-shot {
+    aspect-ratio: 4 / 3;
+  }
+}
+
+/* ——— ProjectModal — full-bleed on mobile ——— */
+@media (max-width: 640px) {
+  .showcase-scope .pm-overlay {
+    padding: 0;
+    align-items: stretch;
+  }
+  .showcase-scope .pm-modal {
+    border-radius: 0;
+    max-height: 100vh;
+    max-height: 100dvh;
+    height: 100vh;
+    height: 100dvh;
+    width: 100%;
+  }
+  .showcase-scope .pm-scroll {
+    padding: 64px 20px 32px;
+  }
+  .showcase-scope .pm-close {
+    top: 16px;
+    right: 16px;
+    width: 44px;
+    height: 44px;
+  }
+  .showcase-scope .pm-hero {
+    padding-bottom: 24px;
+    margin-bottom: 28px;
+  }
+  .showcase-scope .pm-lede {
+    margin-top: 16px;
+    margin-bottom: 28px;
+  }
+}
+
+/* ——— Touch targets ——— */
+
+/* Gallery dots: keep 8px visual, expand hit area */
+.showcase-scope .sg-dot {
+  position: relative;
+}
+.showcase-scope .sg-dot::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
+/* Footer CTAs — full-width on narrow screens */
+@media (max-width: 480px) {
+  .showcase-scope footer.site .site-cta {
+    width: 100%;
+    flex-direction: column;
+  }
+  .showcase-scope footer.site .site-cta .btn {
+    width: 100%;
+    justify-content: center;
+    padding: 16px 22px;
+  }
 }
