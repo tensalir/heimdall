@@ -148,10 +148,53 @@ export const PROJECTS: ShowcaseProject[] = [
     ],
   },
   {
+    id: 'mimir',
+    slug: 'mimir',
+    name: 'Mímir',
+    num: '02',
+    tagline: 'Briefing Intelligence',
+    subline: "Loop's own insights, encoded.",
+    status: 'WIP',
+    statusTag: 'wip',
+    year: '2025',
+    team: 'Creative Strategy',
+    oneLiner:
+      "A briefing workspace built on Loop's own intelligence first — customer reviews, strategic analyses, and first-party ad performance. External signals are the next layer.",
+    description:
+      "Generation is commoditizing. The compounding advantage lives in the intelligence going in — and for Loop, most of that intelligence already exists internally. Mímir brings customer voice, strategic research, and ad-level performance data into one briefing interface, then drafts structured briefs grounded in that evidence. External signals — Meta Ad Library, social listening, trend detection — layer on top of the first-party base.",
+    image: '/showcase/assets/mimir.png',
+    accent: '#6D4FA6',
+    repo: 'https://github.com/tensalir/mimir',
+    stack: ['Claude', 'Supabase', 'Meta Graph API', 'Exa', 'Perplexity'],
+    capabilities: [
+      {
+        k: 'Strategic Insights',
+        v: 'Synthesised evidence across customer reviews, buyer feedback, and the brand growth framework — cited in every brief.',
+      },
+      {
+        k: 'Loop Ads performance',
+        v: 'First-party ad experiment data with KPI facets and variant-level drill-down, feeding directly into creative briefs.',
+      },
+      {
+        k: 'Draft brief generation',
+        v: 'Three-panel composer: evidence in, eight structured sections out, Monday handoff built in.',
+      },
+      {
+        k: 'External signals (next)',
+        v: 'Meta Ads Library, Reddit social listening, and Exa trend mining — layering onto the first-party base.',
+      },
+    ],
+    metrics: [
+      { k: 'Evidence surfaces', v: '4' },
+      { k: 'Grounded in', v: 'Loop data' },
+      { k: 'Handoff', v: '→ Monday' },
+    ],
+  },
+  {
     id: 'babylon',
     slug: 'babylon',
     name: 'Babylon',
-    num: '02',
+    num: '03',
     tagline: 'Localization & AI Dubbing Pipeline',
     subline: 'One approval step instead of five.',
     status: 'WIP',
@@ -188,49 +231,6 @@ export const PROJECTS: ShowcaseProject[] = [
       { k: 'Languages supported', v: '30+' },
       { k: 'Review steps', v: '1' },
       { k: 'Pipeline', v: 'End-to-end' },
-    ],
-  },
-  {
-    id: 'mimir',
-    slug: 'mimir',
-    name: 'Mímir',
-    num: '03',
-    tagline: 'Briefing Agent',
-    subline: 'Reads the market. Writes the brief.',
-    status: 'WIP',
-    statusTag: 'wip',
-    year: '2025',
-    team: 'Creative Strategy',
-    oneLiner:
-      'A briefing intelligence agent that pulls competitive ads, trends, and social signals into a single workspace — then drafts the brief from them.',
-    description:
-      "Generation is commoditizing. The compounding advantage lives in the intelligence going in. Mímir connects Meta Ad Library, social listening, and Loop's own performance data into one briefing interface.",
-    image: '/showcase/assets/mimir.png',
-    accent: '#6D4FA6',
-    repo: 'https://github.com/tensalir/mimir',
-    stack: ['Claude', 'Exa', 'Perplexity', 'Meta Graph API', 'Supabase'],
-    capabilities: [
-      {
-        k: 'Competitive ad browsing',
-        v: 'Meta Ads Library ingest via Graph API, SearchAPI, Apify, or scraper.',
-      },
-      {
-        k: 'Trend detection',
-        v: 'Exa web search + Claude scoring, Perplexity synthesis.',
-      },
-      {
-        k: 'Social listening',
-        v: 'Reddit comment aggregation scored through the same pipeline.',
-      },
-      {
-        k: 'Draft brief generation',
-        v: 'Three-panel workflow from research → authoring → Monday delivery.',
-      },
-    ],
-    metrics: [
-      { k: 'Sources unified', v: '5' },
-      { k: 'Sprint context', v: 'Persistent' },
-      { k: 'Handoff', v: '→ Monday' },
     ],
   },
   {
