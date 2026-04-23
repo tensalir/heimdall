@@ -4,10 +4,8 @@ import { useState } from 'react'
 import type { ShowcaseProject } from '@/lib/showcase/projects'
 import { StatusTag } from './StatusTag'
 import { ProjectModal } from './ProjectModal'
-
-function repoPath(slug: string) {
-  return slug === 'vesper' ? 'Loop-Vesper' : slug
-}
+import { ScreenshotGallery } from './ScreenshotGallery'
+import { SoftwareForFew } from './SoftwareForFew'
 
 function ProjectMeta({
   project,
@@ -27,22 +25,6 @@ function ProjectMeta({
       </div>
       <div className="psec-head-r">
         <StatusTag status={project.status} statusTag={project.statusTag} />
-        <a
-          href={project.repo}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="psec-repo"
-        >
-          github.com/tensalir/{repoPath(project.slug)}
-          <svg width="10" height="10" viewBox="0 0 10 10">
-            <path
-              d="M2 8L8 2M8 2H4M8 2v4"
-              stroke="currentColor"
-              strokeWidth="1"
-              fill="none"
-            />
-          </svg>
-        </a>
       </div>
     </div>
   )
@@ -71,6 +53,9 @@ function FrameSection({
             <div className="psec-tag" style={{ marginTop: 4 }}>
               {project.tagline}
             </div>
+            {project.subline && (
+              <div className="psec-subline">{project.subline}</div>
+            )}
           </div>
           <div className="rail-block">
             <div className="eyebrow">Summary</div>
@@ -81,6 +66,27 @@ function FrameSection({
               {project.oneLiner}
             </p>
           </div>
+          <div className="rail-block">
+            <div className="eyebrow">Workflow shift</div>
+            <div className="psec-wf">
+              <span className={`psec-wf-mode psec-wf-mode--${project.workflowMode.toLowerCase()}`}>
+                {project.workflowMode === 'Repair' && 'Repair'}
+                {project.workflowMode === 'Compress' && 'Compress'}
+                {project.workflowMode === 'Invent' && 'Invent'}
+              </span>
+              <p className="psec-wf-txt">{project.workflowAfter}</p>
+            </div>
+          </div>
+          {project.metrics.length > 0 && (
+            <div className="rail-block psec-metrics">
+              {project.metrics.map((m) => (
+                <div key={m.k} className="psec-metric">
+                  <div className="psec-metric-v">{m.v}</div>
+                  <div className="psec-metric-k">{m.k}</div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="rail-block">
             <div className="eyebrow">Stack</div>
             <div className="psec-stack" style={{ marginTop: 10 }}>
@@ -94,12 +100,19 @@ function FrameSection({
         </aside>
         <div className="psec-frame-shot">
           <div className="psec-shot-frame tall">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={project.image}
-              alt={project.name + ' screenshot'}
-              loading="lazy"
-            />
+            {project.screenshots && project.screenshots.length > 1 ? (
+              <ScreenshotGallery
+                screenshots={project.screenshots}
+                name={project.name}
+              />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={project.image}
+                alt={project.name + ' screenshot'}
+                loading="lazy"
+              />
+            )}
           </div>
           <div className="psec-caps psec-caps-tight">
             {project.capabilities.slice(0, 4).map((c) => (
@@ -109,23 +122,7 @@ function FrameSection({
               </div>
             ))}
           </div>
-          <div className="psec-foot">
-            <a
-              href={project.repo}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="psec-cta psec-cta--ghost"
-            >
-              Repository
-              <svg width="14" height="14" viewBox="0 0 14 14">
-                <path
-                  d="M3 11L11 3M11 3H5M11 3v6"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  fill="none"
-                />
-              </svg>
-            </a>
+          <div className="psec-foot" style={{ justifyContent: 'flex-end' }}>
             <button
               type="button"
               onClick={() => onOpen(project)}
@@ -160,16 +157,35 @@ export function ProjectsShowcase({ projects }: { projects: ShowcaseProject[] }) 
             Four tools · One roadmap
           </span>
           <h2 className="h-xl ps-title">
-            Each tool started <span className="accent-word">as a prototype</span>
-            <br />
-            to solve a real problem.
+            Reinvent workflows,<br />
+            <span className="accent-word">pragmatically.</span>
           </h2>
           <p className="lede ps-lede">
-            Built by Creative Technology at Loop Studio. Two in production, two
-            shipping soon. All four talk to each other through Heimdall.
+            Translating existing workflows to AI is only the first step.
+            The real advantage is reimagining them: condensing the full loop
+            from analytics to briefing to creation to review, so each cycle
+            feeds the next one. Each tool below started by fixing a specific
+            friction point, then grew into something the old workflow could
+            never have supported.
           </p>
+          <div className="ps-legend">
+            <div className="ps-legend-item">
+              <span className="psec-wf-mode psec-wf-mode--repair">Repair</span>
+              <span className="ps-legend-def">Fix the gaps between tools the team must keep using.</span>
+            </div>
+            <div className="ps-legend-item">
+              <span className="psec-wf-mode psec-wf-mode--compress">Compress</span>
+              <span className="ps-legend-def">Collapse fragmented steps into one continuous flow.</span>
+            </div>
+            <div className="ps-legend-item">
+              <span className="psec-wf-mode psec-wf-mode--invent">Invent</span>
+              <span className="ps-legend-def">Build a workflow that didn&apos;t exist before.</span>
+            </div>
+          </div>
         </div>
       </div>
+
+      <SoftwareForFew />
 
       {projects.map((project) => (
         <section

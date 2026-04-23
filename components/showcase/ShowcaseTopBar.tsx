@@ -31,6 +31,7 @@ export function ShowcaseTopBar({
         <nav>
           <a href={`${homeHref}#foundations`}>Foundations</a>
           <a href={`${homeHref}#projects`}>Projects</a>
+          <a href={`${homeHref}#next`}>Next</a>
           {extraNav
             ? extraNav.map((item) => (
                 <a

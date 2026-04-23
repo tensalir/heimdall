@@ -2,6 +2,7 @@ import Link from 'next/link'
 import type { ShowcaseProject } from '@/lib/showcase/projects'
 import { StatusTag } from './StatusTag'
 import { ShowcaseTopBar } from './ShowcaseTopBar'
+import { ScreenshotGallery } from './ScreenshotGallery'
 
 interface ProjectDetailPageProps {
   project: ShowcaseProject
@@ -21,9 +22,6 @@ export function ProjectDetailPage({
     >
       <ShowcaseTopBar
         meta={`${project.num} / 04`}
-        extraNav={[
-          { label: 'Repo ↗', href: project.repo, external: true },
-        ]}
       />
       <main>
         <section className="detail-hero">
@@ -52,79 +50,35 @@ export function ProjectDetailPage({
             <div className="dh-tag">{project.tagline}</div>
             <p className="dh-lede">{project.oneLiner}</p>
             <div className="dh-actions">
-              <a
-                className="btn"
-                href={project.repo}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                View repository
-                <svg
-                  className="arr"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 14 14"
-                >
-                  <path
-                    d="M3 11L11 3M11 3H5M11 3v6"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    fill="none"
-                  />
-                </svg>
-              </a>
-              <Link className="btn btn--ghost" href="/admin/showcase#projects">
+              <Link className="btn" href="/admin/showcase#projects">
                 Back to showcase
               </Link>
             </div>
             <div className="dh-shot">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={project.image} alt={project.name + ' screenshot'} />
+              {project.screenshots && project.screenshots.length > 1 ? (
+                <ScreenshotGallery
+                  screenshots={project.screenshots}
+                  name={project.name}
+                />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={project.image} alt={project.name + ' screenshot'} />
+              )}
             </div>
           </div>
         </section>
 
         <div className="container">
-          <div className="info-strip">
-            <div className="info-item">
-              <div className="eyebrow">Status</div>
-              <div className="v">{project.status}</div>
+          {project.metrics.length > 0 && (
+            <div className="detail-metrics-strip">
+              {project.metrics.map((m) => (
+                <div key={m.k} className="detail-metric">
+                  <div className="detail-metric-v">{m.v}</div>
+                  <div className="detail-metric-k">{m.k}</div>
+                </div>
+              ))}
             </div>
-            <div className="info-item">
-              <div className="eyebrow">Team</div>
-              <div className="v">{project.team}</div>
-            </div>
-            <div className="info-item">
-              <div className="eyebrow">Shipped</div>
-              <div className="v">{project.year}</div>
-            </div>
-            <div className="info-item">
-              <div className="eyebrow">Source</div>
-              <div className="v">
-                <a
-                  href={project.repo}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ borderBottom: '1px solid currentColor' }}
-                >
-                  github.com/tensalir
-                </a>
-              </div>
-            </div>
-          </div>
-
-          <section className="detail-section">
-            <span className="eyebrow">
-              <span className="bar" />
-              Context
-            </span>
-            <h2 className="h-lg ds-title" style={{ marginTop: 16 }}>
-              Why it exists.
-            </h2>
-            <p className="ds-sub" style={{ fontSize: 17, maxWidth: '62ch' }}>
-              {project.description}
-            </p>
-          </section>
+          )}
 
           <section className="detail-section">
             <span className="eyebrow">
@@ -145,6 +99,62 @@ export function ProjectDetailPage({
                 </div>
               ))}
             </div>
+          </section>
+
+          <section className="detail-section">
+            <span className="eyebrow">
+              <span className="bar" />
+              Workflow shift
+            </span>
+            <h2 className="h-lg ds-title" style={{ marginTop: 16 }}>
+              What changed.
+            </h2>
+            <span className={`ds-wf-mode ds-wf-mode--${project.workflowMode.toLowerCase()}`}>
+              Workflow {project.workflowMode.toLowerCase()}
+            </span>
+            <div className="ds-wf-compare">
+              <div className="ds-wf-col">
+                <div className="ds-wf-label mono-small">Before</div>
+                <p className="ds-wf-text">{project.workflowBefore}</p>
+              </div>
+              <div className="ds-wf-col ds-wf-col--after">
+                <div className="ds-wf-label mono-small">After</div>
+                <p className="ds-wf-text">{project.workflowAfter}</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="detail-section">
+            <span className="eyebrow">
+              <span className="bar" />
+              From prototype to platform
+            </span>
+            <h2 className="h-lg ds-title" style={{ marginTop: 16 }}>
+              How it grew.
+            </h2>
+            <div className="ds-proto-grid">
+              <div className="ds-proto-item">
+                <div className="ds-proto-label mono-small">What sparked it</div>
+                <p className="ds-proto-text">{project.prototypeOrigin}</p>
+              </div>
+              <div className="ds-proto-item">
+                <div className="ds-proto-label mono-small">What became reusable</div>
+                <p className="ds-proto-text">{project.reuseSignal}</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="detail-section">
+            <span className="eyebrow">
+              <span className="bar" />
+              Beyond this team
+            </span>
+            <h2 className="h-lg ds-title" style={{ marginTop: 16 }}>
+              Where it goes next.
+            </h2>
+            <p className="ds-sub" style={{ fontSize: 17, maxWidth: '62ch' }}>
+              {project.companyLeverage}
+            </p>
           </section>
 
           <section className="detail-section">

@@ -14,16 +14,12 @@ export function SoftwareForFew() {
               <span className="accent-word">Software</span> for few.
             </h2>
             <p className="sff-lede">
-              Off-the-shelf tools aren&apos;t capable enough for the specific
-              problem. A dev agency is too expensive to justify for a team of
-              ten.
-            </p>
-            <p className="sff-lede">
-              In that gap,{' '}
+              Off-the-shelf SaaS is too generic. A dev agency is too expensive
+              for a team of ten. In that gap,{' '}
               <span className="sff-emph">
                 AI lets the team build the tool themselves
               </span>{' '}
-              — in days, not months, by the people who understand the problem
+              , in days, not months, by the people who understand the problem
               best.
             </p>
           </div>

@@ -22,11 +22,12 @@ export function FoundationsHero() {
             </h1>
             <p className="foundations-lede">
               For two years, Creative Technology has been embedded in
-              Marketing — seeing AI signals early, cultivating adoption from
+              Marketing, seeing AI signals early, cultivating adoption from
               inside the work, and shipping tools that make teams
-              self-sufficient. The method below is how Loop turns AI ambition
-              into company-wide capability. The projects that follow are the
-              proof.
+              self-sufficient. The flywheel below is how adoption turns into
+              encoded knowledge, then into production-grade tools. The four
+              projects that follow show the pattern working, and where it
+              goes from here.
             </p>
             <div className="hero-meta hero-meta--lead">
               <div>

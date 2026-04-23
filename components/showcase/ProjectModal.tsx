@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import type { ShowcaseProject } from '@/lib/showcase/projects'
 import { StatusTag } from './StatusTag'
+import { ScreenshotGallery } from './ScreenshotGallery'
 
 interface ProjectModalProps {
   project: ShowcaseProject
@@ -54,21 +55,27 @@ export function ProjectModal({ project, onClose }: ProjectModalProps) {
             </h2>
             <div className="psec-tag">{project.tagline}</div>
             <p className="pm-lede">{project.oneLiner}</p>
+            {project.metrics.length > 0 && (
+              <div className="pm-metrics">
+                {project.metrics.map((m) => (
+                  <div key={m.k} className="pm-metric">
+                    <div className="pm-metric-v">{m.v}</div>
+                    <div className="pm-metric-k">{m.k}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="pm-shot">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={project.image} alt={project.name + ' screenshot'} />
+              {project.screenshots && project.screenshots.length > 1 ? (
+                <ScreenshotGallery
+                  screenshots={project.screenshots}
+                  name={project.name}
+                />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={project.image} alt={project.name + ' screenshot'} />
+              )}
             </div>
-          </div>
-
-          <div className="pm-section">
-            <span className="eyebrow">
-              <span className="bar" />
-              Context
-            </span>
-            <h3 className="h-lg pm-h" style={{ marginTop: 12 }}>
-              Why it exists.
-            </h3>
-            <p className="pm-body">{project.description}</p>
           </div>
 
           <div className="pm-section">
@@ -95,6 +102,40 @@ export function ProjectModal({ project, onClose }: ProjectModalProps) {
           <div className="pm-section">
             <span className="eyebrow">
               <span className="bar" />
+              Workflow shift
+            </span>
+            <h3 className="h-lg pm-h" style={{ marginTop: 12 }}>
+              What changed.
+            </h3>
+            <span className={`ds-wf-mode ds-wf-mode--${project.workflowMode.toLowerCase()}`}>
+              Workflow {project.workflowMode.toLowerCase()}
+            </span>
+            <div className="ds-wf-compare" style={{ marginTop: 16 }}>
+              <div className="ds-wf-col">
+                <div className="ds-wf-label mono-small">Before</div>
+                <p className="ds-wf-text">{project.workflowBefore}</p>
+              </div>
+              <div className="ds-wf-col ds-wf-col--after">
+                <div className="ds-wf-label mono-small">After</div>
+                <p className="ds-wf-text">{project.workflowAfter}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="pm-section">
+            <span className="eyebrow">
+              <span className="bar" />
+              Beyond this team
+            </span>
+            <h3 className="h-lg pm-h" style={{ marginTop: 12 }}>
+              Where it goes next.
+            </h3>
+            <p className="pm-body">{project.companyLeverage}</p>
+          </div>
+
+          <div className="pm-section">
+            <span className="eyebrow">
+              <span className="bar" />
               Stack
             </span>
             <div className="psec-stack" style={{ marginTop: 16 }}>
@@ -108,29 +149,8 @@ export function ProjectModal({ project, onClose }: ProjectModalProps) {
 
           <div className="pm-footer">
             <a
-              href={project.repo}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn"
-            >
-              Open repository
-              <svg
-                className="arr"
-                width="14"
-                height="14"
-                viewBox="0 0 14 14"
-              >
-                <path
-                  d="M3 11L11 3M11 3H5M11 3v6"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  fill="none"
-                />
-              </svg>
-            </a>
-            <a
               href={`/admin/showcase/${project.slug}`}
-              className="btn btn--ghost"
+              className="btn"
             >
               Open full detail
             </a>
