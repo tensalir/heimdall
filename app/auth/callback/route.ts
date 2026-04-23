@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { hasFullAccess } from '@/lib/access-control'
 
 const ADMIN_REDIRECT = '/admin'
 const USER_REDIRECT = '/ops'
@@ -52,8 +53,9 @@ export async function GET(request: Request) {
 
     if (!error) {
       const { data: { user } } = await supabase.auth.getUser()
-      const isAdmin = user?.user_metadata?.role === 'admin'
-      const defaultDest = isAdmin ? ADMIN_REDIRECT : USER_REDIRECT
+      const defaultDest = hasFullAccess(user?.user_metadata, user?.email)
+        ? ADMIN_REDIRECT
+        : USER_REDIRECT
       const next = rawNext || defaultDest
       return NextResponse.redirect(new URL(next, origin))
     }

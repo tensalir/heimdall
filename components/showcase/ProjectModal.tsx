@@ -149,7 +149,7 @@ export function ProjectModal({ project, onClose }: ProjectModalProps) {
 
           <div className="pm-footer">
             <a
-              href={`/admin/showcase/${project.slug}`}
+              href={`/showcase/${project.slug}`}
               className="btn"
             >
               Open full detail

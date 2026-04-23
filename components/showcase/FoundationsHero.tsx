@@ -14,11 +14,10 @@ export function FoundationsHero() {
               <span className="eyebrow muted">April 2026</span>
             </div>
             <h1 className="h-xxl foundations-lead-title">
-              Before the tools,
+              A flywheel. Three steps.
               <br />
-              there&apos;s a <span className="accent-word">flywheel</span>.
-              <br />
-              Three steps. They compound.
+              They compound into{' '}
+              <span className="accent-word">how Loop builds</span>.
             </h1>
             <p className="foundations-lede">
               For two years, Creative Technology has been embedded in
@@ -50,7 +49,7 @@ export function FoundationsHero() {
                   90% of briefings use AI
                   <br />
                   <span className="muted">
-                    6 tools in production · 69 Claude users across departments
+                    6 tools in production · 140 Claude users across departments
                   </span>
                 </div>
               </div>

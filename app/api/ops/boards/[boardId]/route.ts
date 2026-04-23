@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getBoard, getBoardItems, deleteBoard, updateBoard } from '@/src/services/opsBoardStore'
 import type { PipelineStatus } from '@/src/services/opsBoardStore'
+import { getSyncedFeedbackItemIds } from '@/src/services/opsFeedbackStore'
 
 export async function GET(
   _request: Request,
@@ -14,11 +15,16 @@ export async function GET(
 
   const url = new URL(_request.url)
   const statusFilter = url.searchParams.get('status') as PipelineStatus | null
-  const items = await getBoardItems(boardId, {
-    pipelineStatus: statusFilter ?? undefined,
-  })
+  const [items, syncedFeedbackIds] = await Promise.all([
+    getBoardItems(boardId, { pipelineStatus: statusFilter ?? undefined }),
+    getSyncedFeedbackItemIds(board.monday_board_id),
+  ])
 
-  return NextResponse.json({ board, items })
+  return NextResponse.json({
+    board,
+    items,
+    feedbackSyncedItemIds: [...syncedFeedbackIds],
+  })
 }
 
 export async function PATCH(

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getEnv } from '@/src/config/env'
-import { readMondayBoardItems } from '@/src/services/mondayBoardReader'
+import {
+  fetchBoardSchema,
+  buildFilterRules,
+  readFilteredBoardItems,
+  resolveBatchLabel,
+} from '@/src/services/mondayBoardReader'
 import type { MondayBoardItemRow } from '@/src/services/mondayBoardReader'
 import { parseBatchToCanonical } from '@/src/domain/routing/batchToFile'
 import {
@@ -198,39 +203,54 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const allItems = await readMondayBoardItems(BOARD_ID)
+    // Build server-side Monday filter rules from env allowlists
+    const schema = await fetchBoardSchema(BOARD_ID)
+    const filterRules = buildFilterRules(schema, [
+      {
+        titleCandidates: ['Status'],
+        values: statusAllowlist,
+      },
+      {
+        titleCandidates: [
+          'Creative Partner',
+          'Creatives',
+          'Creation Team',
+          'Creative Team',
+          'Assigned Team',
+          'Team',
+          'Assignee Team',
+        ],
+        values: partnerAllowlist,
+      },
+    ])
+
+    // Optionally add a batch filter when we can map the canonical key to a Monday label
+    let batchFilteredUpstream = false
+    if (batchCanonical) {
+      const batchLabel = resolveBatchLabel(schema, batchCanonical, parseBatchToCanonical)
+      if (batchLabel) {
+        const batchRules = buildFilterRules(schema, [
+          { titleCandidates: ['Batch', 'Batch Name'], values: [batchLabel] },
+        ])
+        filterRules.push(...batchRules)
+        batchFilteredUpstream = batchRules.length > 0
+      }
+    }
+
+    const { items: allItems } = await readFilteredBoardItems(BOARD_ID, filterRules)
     const parsedRows = allItems.map((row) => {
       const col = rowToColumnMap(row)
       const batchRaw = getColFromRow(col, 'batch', 'batch_name')
       const parsed = batchRaw ? parseBatchToCanonical(batchRaw) : null
-
       const statusVal = getColFromRow(col, 'status')
-      const statusNorm = statusVal?.toLowerCase() ?? ''
-      const statusMatch =
-        statusAllowlist.length === 0 ||
-        statusAllowlist.some((a) => statusNorm.includes(a) || a.includes(statusNorm))
-
-      const partnerVal = getColFromRow(
-        col,
-        'creative_partner',
-        'creatives',
-        'creation_team',
-        'creative_team',
-        'assigned_team',
-        'team',
-        'assignee_team'
-      )
-      const partnerNorm = partnerVal?.toLowerCase() ?? ''
-      const partnerMatch =
-        partnerAllowlist.length === 0 ||
-        partnerAllowlist.some((a) => partnerNorm.includes(a) || a.includes(partnerNorm))
 
       return {
         row,
         parsed,
         statusVal,
-        statusMatch,
-        partnerMatch,
+        statusMatch: true,
+        partnerMatch: true,
+        batchFilteredUpstream,
       }
     })
 
@@ -306,8 +326,9 @@ export async function POST(request: NextRequest) {
     }> = []
 
     for (const entry of parsedRows) {
-      const { row, parsed, statusVal, statusMatch, partnerMatch } = entry
-      if (!parsed || parsed.canonicalKey !== batchCanonical) continue
+      const { row, parsed, statusVal, statusMatch, partnerMatch, batchFilteredUpstream: batchUpstream } = entry
+      if (!batchUpstream && (!parsed || parsed.canonicalKey !== batchCanonical)) continue
+      if (batchUpstream && !parsed) continue
       if (!statusMatch || !partnerMatch) continue
 
       const existing = syncByItemId.get(row.id)

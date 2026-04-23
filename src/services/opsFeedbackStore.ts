@@ -144,6 +144,21 @@ export async function markSynced(
 }
 
 /**
+ * Return the set of monday_item_id values that have been reviewed and synced
+ * back to Monday via Heimdall for a given board.
+ */
+export async function getSyncedFeedbackItemIds(mondayBoardId: string): Promise<Set<string>> {
+  const db = getSupabase()
+  if (!db) return new Set()
+  const { data } = await db
+    .from('ops_feedback_reviews')
+    .select('monday_item_id')
+    .eq('monday_board_id', mondayBoardId)
+    .eq('synced_to_monday', true)
+  return new Set((data ?? []).map((r) => r.monday_item_id))
+}
+
+/**
  * Parse a Monday feedback doc into a structured version/variation map.
  * Expected template: version headings (v1, v2, ...) with per-variation sub-sections.
  */

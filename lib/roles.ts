@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createSupabaseBrowserClient } from './supabase-auth.js'
+import { hasFullAccess, isPrivilegedEmail } from './access-control.js'
 
 export type UserRole = 'admin' | 'user'
 
@@ -10,32 +11,12 @@ const PRIVILEGED_STORAGE_KEY = 'heimdall:is-privileged'
 const FEEDBACK_REVIEWER_KEY = 'heimdall:is-feedback-reviewer'
 const BRIEFING_ONLY_KEY = 'heimdall:is-briefing-only'
 
-const BRIEFING_ONLY_USERS = (
-  process.env.NEXT_PUBLIC_HEIMDALL_BRIEFING_ONLY_USERS || ''
-)
-  .split(',')
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean)
-
 const FEEDBACK_REVIEWERS = (
   process.env.NEXT_PUBLIC_HEIMDALL_FEEDBACK_REVIEWERS || ''
 )
   .split(',')
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean)
-
-const PRIVILEGED_EMAIL_DOMAINS = (
-  process.env.NEXT_PUBLIC_HEIMDALL_ALLOWED_EMAIL_DOMAINS || 'thoughtform.co,loopearplugs.com'
-)
-  .split(',')
-  .map((d) => d.trim().toLowerCase())
-  .filter(Boolean)
-
-function checkPrivilegedEmail(email: string | undefined): boolean {
-  if (!email) return false
-  const domain = email.split('@')[1]?.toLowerCase()
-  return PRIVILEGED_EMAIL_DOMAINS.includes(domain)
-}
 
 /**
  * Reads role from Supabase user_metadata.role.
@@ -110,7 +91,7 @@ export function useIsPrivileged(): boolean {
         try { localStorage.removeItem(PRIVILEGED_STORAGE_KEY) } catch { /* ignore */ }
         return
       }
-      const result = checkPrivilegedEmail(user.email)
+      const result = isPrivilegedEmail(user.email)
       setPrivileged(result)
       try { localStorage.setItem(PRIVILEGED_STORAGE_KEY, String(result)) } catch { /* ignore */ }
     })
@@ -120,9 +101,9 @@ export function useIsPrivileged(): boolean {
 }
 
 /**
- * Returns true when the current user is NOT an admin.
- * Non-admin users can only access /ops (Briefing Workflow).
- * Source of truth: Supabase user_metadata.role.
+ * Returns true when the current user should stay in the briefing-only shell.
+ * Full-access users are admins or privileged-domain users who are not on the
+ * explicit briefing-only allowlist.
  */
 export function useIsBriefingOnly(): boolean {
   const [briefingOnly, setBriefingOnly] = useState<boolean>(() => {
@@ -148,7 +129,7 @@ export function useIsBriefingOnly(): boolean {
         try { localStorage.removeItem(BRIEFING_ONLY_KEY) } catch {}
         return
       }
-      const result = user.user_metadata?.role !== 'admin'
+      const result = !hasFullAccess(user.user_metadata, user.email)
       setBriefingOnly(result)
       try { localStorage.setItem(BRIEFING_ONLY_KEY, String(result)) } catch {}
     })
@@ -186,7 +167,7 @@ export function useIsFeedbackReviewer(): boolean {
       const email = user.email?.toLowerCase() ?? ''
       const result = FEEDBACK_REVIEWERS.length > 0
         ? FEEDBACK_REVIEWERS.includes(email)
-        : checkPrivilegedEmail(user.email)
+        : isPrivilegedEmail(user.email)
       setAllowed(result)
       try { localStorage.setItem(FEEDBACK_REVIEWER_KEY, String(result)) } catch {}
     })

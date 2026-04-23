@@ -25,7 +25,7 @@ const sections: NavSection[] = [
     label: 'Platform',
     items: [
       { name: 'Connections', href: '/admin', icon: Network },
-      { name: 'Showcase', href: '/admin/showcase', icon: Layers },
+      { name: 'Showcase', href: '/showcase', icon: Layers },
       { name: 'Settings', href: '/admin/settings', icon: Settings },
     ],
   },

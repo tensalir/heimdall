@@ -1,7 +1,7 @@
 import { ShowcaseTopBar } from '@/components/showcase/ShowcaseTopBar'
 import { FoundationsHero } from '@/components/showcase/FoundationsHero'
-import { SoftwareForFew } from '@/components/showcase/SoftwareForFew'
 import { ProjectsShowcase } from '@/components/showcase/ProjectsShowcase'
+import { NextSteps } from '@/components/showcase/NextSteps'
 import { ShowcaseFooter } from '@/components/showcase/ShowcaseFooter'
 import { PROJECTS } from '@/lib/showcase/projects'
 
@@ -17,8 +17,8 @@ export default function ShowcasePage() {
       <ShowcaseTopBar />
       <main>
         <FoundationsHero />
-        <SoftwareForFew />
         <ProjectsShowcase projects={PROJECTS} />
+        <NextSteps />
       </main>
       <ShowcaseFooter />
     </>

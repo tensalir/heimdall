@@ -1,20 +1,20 @@
 /**
  * Heimdall middleware — route-based auth + CORS + legacy redirects.
  *
- * Role model: user_metadata.role === 'admin' gets full access.
- * All other authenticated users are restricted to /ops (Briefing Workflow).
+ * Role model: admins and privileged-domain users get full access, unless they
+ * are explicitly marked briefing-only. Everyone else is restricted to /ops.
  *
  * Auth zones:
- *   /admin/*              → Supabase session + admin role
- *   /forecast/*           → Supabase session + admin role
- *   /feedback/*           → Supabase session + admin role
- *   /document-chat/*      → Supabase session + admin role
- *   /briefing-assistant/* → Supabase session + admin role
- *   /sheets/*             → Supabase session + admin role
+ *   /admin/*              → Supabase session + full access
+ *   /forecast/*           → Supabase session + full access
+ *   /feedback/*           → Supabase session + full access
+ *   /document-chat/*      → Supabase session + full access
+ *   /briefing-assistant/* → Supabase session + full access
+ *   /sheets/*             → Supabase session + full access
  *   /ops/*                → Supabase session (any authenticated user)
  *   /api/*                → Classified by route policy (user / machine / webhook / public / gpt_actions)
  *   /auth/*               → No auth (callback handler)
- *   /                     → Redirects to /admin (admin) or /ops (non-admin)
+ *   /                     → Redirects to /admin (full access) or /ops (everyone else)
  *
  * Legacy redirects keep old URLs working during migration.
  */
@@ -23,6 +23,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { resolveCorsOrigin } from '@/lib/cors'
+import { hasFullAccess } from '@/lib/access-control'
 import { classifyApiRoute } from '@/lib/route-auth'
 import { timingSafeEqualSecret } from '@/lib/crypto-compare'
 
@@ -61,6 +62,7 @@ const LEGACY_REDIRECTS: Record<string, string> = {
   '/admin/jobs': '/admin/plugin/jobs',
   '/admin/queue': '/admin/plugin/queue',
   '/admin/routing': '/admin',
+  '/admin/showcase': '/showcase',
 }
 
 function legacyRedirect(request: NextRequest): NextResponse | null {
@@ -75,6 +77,12 @@ function legacyRedirect(request: NextRequest): NextResponse | null {
   if (pathname.startsWith('/comments/')) {
     const url = request.nextUrl.clone()
     url.pathname = pathname.replace('/comments/', '/sheets/')
+    return NextResponse.redirect(url, 308)
+  }
+
+  if (pathname.startsWith('/admin/showcase/')) {
+    const url = request.nextUrl.clone()
+    url.pathname = pathname.replace('/admin/showcase/', '/showcase/')
     return NextResponse.redirect(url, 308)
   }
 
@@ -221,10 +229,6 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
 /*  Admin Auth — Supabase session                                     */
 /* ------------------------------------------------------------------ */
 
-function isAdminRole(user: { user_metadata?: Record<string, unknown> }): boolean {
-  return user.user_metadata?.role === 'admin'
-}
-
 async function handleAdminAuth(
   request: NextRequest,
   options?: { allowNonAdmin?: boolean },
@@ -265,7 +269,7 @@ async function handleAdminAuth(
     return NextResponse.redirect(url)
   }
 
-  if (!isAdminRole(user) && !options?.allowNonAdmin) {
+  if (!hasFullAccess(user.user_metadata, user.email) && !options?.allowNonAdmin) {
     const url = request.nextUrl.clone()
     url.pathname = '/ops'
     return NextResponse.redirect(url)
@@ -277,6 +281,41 @@ async function handleAdminAuth(
 /* ------------------------------------------------------------------ */
 /*  Sheets cookie helpers (shared by page + API auth)                 */
 /* ------------------------------------------------------------------ */
+
+const SHOWCASE_COOKIE_NAME = 'heimdall-showcase-token'
+const SHOWCASE_DEFAULT_PASSWORD = 'getawaylimburg'
+
+function showcasePassword(): string {
+  return process.env.SHOWCASE_PASSWORD?.trim() || SHOWCASE_DEFAULT_PASSWORD
+}
+
+function hasValidShowcaseCookie(request: NextRequest): boolean {
+  const token = request.cookies.get(SHOWCASE_COOKIE_NAME)?.value
+  if (!token) return false
+  try {
+    const decoded = Buffer.from(token, 'base64').toString('utf8')
+    return decoded === showcasePassword()
+  } catch {
+    return false
+  }
+}
+
+async function handleShowcase(request: NextRequest): Promise<NextResponse> {
+  const { pathname } = request.nextUrl
+
+  if (pathname === '/showcase/login') {
+    return NextResponse.next()
+  }
+
+  if (hasValidShowcaseCookie(request)) {
+    return NextResponse.next()
+  }
+
+  const url = request.nextUrl.clone()
+  url.pathname = '/showcase/login'
+  url.searchParams.set('next', pathname + (request.nextUrl.search || ''))
+  return NextResponse.redirect(url)
+}
 
 const SHEETS_COOKIE_NAME = 'heimdall-sheets-token'
 
@@ -321,6 +360,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // 2b. Showcase — password gate (no Supabase account required)
+  if (pathname === '/showcase' || pathname.startsWith('/showcase/')) {
+    return handleShowcase(request)
+  }
+
   // 3. API routes: classified by policy (user / machine / webhook / public)
   if (pathname.startsWith('/api/')) {
     return handleApi(request)
@@ -360,6 +404,8 @@ export const config = {
     '/',
     '/login',
     '/admin/:path*',
+    '/showcase',
+    '/showcase/:path*',
     '/document-chat',
     '/document-chat/:path*',
     '/sheets/:path*',

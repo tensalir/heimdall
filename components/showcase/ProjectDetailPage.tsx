@@ -26,7 +26,7 @@ export function ProjectDetailPage({
       <main>
         <section className="detail-hero">
           <div className="container">
-            <Link className="back-link" href="/admin/showcase#projects">
+            <Link className="back-link" href="/showcase#projects">
               <svg width="12" height="12" viewBox="0 0 12 12">
                 <path
                   d="M8 2L2 6l6 4"
@@ -50,7 +50,7 @@ export function ProjectDetailPage({
             <div className="dh-tag">{project.tagline}</div>
             <p className="dh-lede">{project.oneLiner}</p>
             <div className="dh-actions">
-              <Link className="btn" href="/admin/showcase#projects">
+              <Link className="btn" href="/showcase#projects">
                 Back to showcase
               </Link>
             </div>
@@ -178,14 +178,14 @@ export function ProjectDetailPage({
           </section>
 
           <div className="proj-nav">
-            <Link className="prev" href={`/admin/showcase/${prev.slug}`}>
+            <Link className="prev" href={`/showcase/${prev.slug}`}>
               <span className="eyebrow">← Previous</span>
               <span className="name">{prev.name}</span>
               <span className="muted" style={{ fontSize: 13 }}>
                 {prev.tagline}
               </span>
             </Link>
-            <Link className="next" href={`/admin/showcase/${next.slug}`}>
+            <Link className="next" href={`/showcase/${next.slug}`}>
               <span className="eyebrow">Next →</span>
               <span className="name">{next.name}</span>
               <span className="muted" style={{ fontSize: 13 }}>

@@ -95,6 +95,7 @@ export default function BoardDetailPage() {
 
   const [board, setBoard] = useState<OpsBoard | null>(null)
   const [items, setItems] = useState<OpsBoardItem[]>([])
+  const [feedbackSyncedIds, setFeedbackSyncedIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('kanban')
@@ -134,6 +135,7 @@ export default function BoardDetailPage() {
         const data = await res.json()
         setBoard(data.board ?? null)
         setItems(data.items ?? [])
+        setFeedbackSyncedIds(new Set(data.feedbackSyncedItemIds ?? []))
       }
     } finally {
       setLoading(false)
@@ -365,9 +367,9 @@ export default function BoardDetailPage() {
           )
         ) : (
           viewMode === 'kanban' ? (
-            <FeedbackKanbanView items={filteredItems} onItemClick={setSelectedItem} showOther={showOtherLane} onToggleOther={() => setShowOtherLane(!showOtherLane)} />
+            <FeedbackKanbanView items={filteredItems} onItemClick={setSelectedItem} showOther={showOtherLane} onToggleOther={() => setShowOtherLane(!showOtherLane)} feedbackSyncedIds={feedbackSyncedIds} />
           ) : (
-            <FeedbackTableView items={filteredItems} onItemClick={setSelectedItem} />
+            <FeedbackTableView items={filteredItems} onItemClick={setSelectedItem} feedbackSyncedIds={feedbackSyncedIds} />
           )
         )}
       </div>
@@ -726,22 +728,24 @@ function FeedbackKanbanView({
   onItemClick,
   showOther,
   onToggleOther,
+  feedbackSyncedIds,
 }: {
   items: OpsBoardItem[]
   onItemClick: (item: OpsBoardItem) => void
   showOther: boolean
   onToggleOther: () => void
+  feedbackSyncedIds: Set<string>
 }) {
   const laneItems = useMemo(() => {
     const map: Record<FeedbackLane, OpsBoardItem[]> = {
-      ready_for_review: [], feedback_given: [], other: [],
+      ready_for_review: [], pending_review: [], feedback_given: [], other: [],
     }
     for (const item of items) {
-      const lane = getFeedbackLane(item.monday_status)
+      const lane = getFeedbackLane(item.monday_status, feedbackSyncedIds.has(item.monday_item_id))
       map[lane].push(item)
     }
     return map
-  }, [items])
+  }, [items, feedbackSyncedIds])
 
   return (
     <div className="flex flex-col gap-4 flex-1 min-h-0">
@@ -898,7 +902,7 @@ function SyncTableView({ items, onItemClick }: { items: OpsBoardItem[]; onItemCl
 
 // ── Feedback Table ──────────────────────────────────────────────────────────
 
-function FeedbackTableView({ items, onItemClick }: { items: OpsBoardItem[]; onItemClick: (item: OpsBoardItem) => void }) {
+function FeedbackTableView({ items, onItemClick, feedbackSyncedIds }: { items: OpsBoardItem[]; onItemClick: (item: OpsBoardItem) => void; feedbackSyncedIds: Set<string> }) {
   const [sortKey, setSortKey] = useState<'name' | 'batch' | 'status' | 'updated'>('updated')
   const [sortAsc, setSortAsc] = useState(false)
 
@@ -910,8 +914,8 @@ function FeedbackTableView({ items, onItemClick }: { items: OpsBoardItem[]; onIt
       case 'batch':
         return dir * (a.batch_canonical ?? '').localeCompare(b.batch_canonical ?? '')
       case 'status': {
-        const laneA = getFeedbackLane(a.monday_status)
-        const laneB = getFeedbackLane(b.monday_status)
+        const laneA = getFeedbackLane(a.monday_status, feedbackSyncedIds.has(a.monday_item_id))
+        const laneB = getFeedbackLane(b.monday_status, feedbackSyncedIds.has(b.monday_item_id))
         return dir * laneA.localeCompare(laneB)
       }
       case 'updated':
@@ -964,7 +968,7 @@ function FeedbackTableView({ items, onItemClick }: { items: OpsBoardItem[]; onIt
                   {item.creative_partner ?? '—'}
                 </td>
                 <td className="px-3 py-2.5">
-                  <FeedbackLanePill lane={getFeedbackLane(item.monday_status)} />
+                  <FeedbackLanePill lane={getFeedbackLane(item.monday_status, feedbackSyncedIds.has(item.monday_item_id))} />
                 </td>
                 <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                   {new Date(item.updated_at).toLocaleDateString()}

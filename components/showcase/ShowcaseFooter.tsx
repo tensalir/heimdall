@@ -3,12 +3,24 @@ export function ShowcaseFooter() {
     <footer className="site" id="contact">
       <div className="container">
         <div className="row">
-          <h3>
-            Generation is commoditizing. The compounding{' '}
-            <span className="accent-word">advantage</span> lives in the
-            intelligence going in.
-          </h3>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <div className="site-quote-wrap">
+            <h3 className="site-quote">
+              <span className="site-quote-mark" aria-hidden="true">
+                &ldquo;
+              </span>
+              What I cannot <span className="accent-word">create</span>, I do
+              not understand.
+            </h3>
+            <div className="site-quote-attr mono-small">
+              — Richard Feynman
+            </div>
+            <p className="site-quote-outro">
+              That&apos;s the flywheel in one line. Two years of building to
+              understand the work, then encoding it so the whole team can
+              build from it.
+            </p>
+          </div>
+          <div className="site-cta">
             <a className="btn" href="mailto:vince.buyssens@loopearplugs.com">
               Get in touch
               <svg

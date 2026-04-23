@@ -7,37 +7,21 @@
 
 import { NextResponse } from 'next/server.js'
 import { createSupabaseRouteClient } from './supabase-auth.js'
+import {
+  hasFullAccess,
+  isAdminRole,
+  isBriefingOnlyUser,
+  isPrivilegedEmail,
+} from './access-control.js'
+
+export {
+  hasFullAccess,
+  isAdminRole,
+  isBriefingOnlyUser,
+  isPrivilegedEmail,
+} from './access-control.js'
 
 export type RoutePolicy = 'public' | 'user' | 'machine' | 'webhook' | 'dual' | 'gpt_actions'
-
-const PRIVILEGED_EMAIL_DOMAINS = (process.env.HEIMDALL_ALLOWED_EMAIL_DOMAINS || 'thoughtform.co,loopearplugs.com')
-  .split(',')
-  .map((d) => d.trim().toLowerCase())
-  .filter(Boolean)
-
-export function isPrivilegedEmail(email: string | undefined): boolean {
-  if (!email) return false
-  const domain = email.split('@')[1]?.toLowerCase()
-  return PRIVILEGED_EMAIL_DOMAINS.includes(domain)
-}
-
-const BRIEFING_ONLY_USERS = (process.env.HEIMDALL_BRIEFING_ONLY_USERS || '')
-  .split(',')
-  .map((e) => e.trim().toLowerCase())
-  .filter(Boolean)
-
-export function isBriefingOnlyUser(email: string | undefined): boolean {
-  if (!email) return false
-  return BRIEFING_ONLY_USERS.includes(email.toLowerCase())
-}
-
-/**
- * Returns true when user_metadata.role === 'admin'.
- * This is the single source of truth for full-access vs briefing-only.
- */
-export function isAdminRole(userMetadata: Record<string, unknown> | undefined): boolean {
-  return userMetadata?.role === 'admin'
-}
 
 const FEEDBACK_REVIEWERS = (process.env.HEIMDALL_FEEDBACK_REVIEWERS || '')
   .split(',')
@@ -117,7 +101,7 @@ export async function requirePrivilegedUser(request: Request) {
   const result = await requireUser(request)
   if (result.error) return result
 
-  if (!isAdminRole(result.user.user_metadata) && !isPrivilegedEmail(result.user.email)) {
+  if (!hasFullAccess(result.user.user_metadata, result.user.email)) {
     return {
       error: NextResponse.json(
         { error: 'Insufficient privileges' },

@@ -8,7 +8,7 @@ interface TopBarProps {
 
 export function ShowcaseTopBar({
   meta = 'v.2026.04',
-  homeHref = '/admin/showcase',
+  homeHref = '/showcase',
   extraNav,
 }: TopBarProps) {
   return (
@@ -47,16 +47,6 @@ export function ShowcaseTopBar({
             : (
               <a href={`${homeHref}#contact`}>Contact</a>
             )}
-          <Link
-            href="/admin"
-            style={{
-              color: 'var(--ink-muted)',
-              borderLeft: '1px solid var(--rule)',
-              paddingLeft: 18,
-            }}
-          >
-            ← Heimdall
-          </Link>
         </nav>
         <span className="meta">{meta}</span>
       </div>

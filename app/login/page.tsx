@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-auth'
+import { hasFullAccess } from '@/lib/access-control'
 import { RunicRain } from '@/components/ui/runic-rain'
 import { Shield, Mail, KeyRound, Loader2, AlertCircle } from 'lucide-react'
 
@@ -82,7 +83,7 @@ function LoginForm() {
       setError(error.message)
     } else {
       const { data: { user } } = await supabase.auth.getUser()
-      const dest = user?.user_metadata?.role === 'admin' ? '/admin' : '/ops'
+      const dest = hasFullAccess(user?.user_metadata, user?.email) ? '/admin' : '/ops'
       router.push(dest)
       router.refresh()
     }

@@ -13,7 +13,7 @@ export type PipelineStatus =
 
 export type KanbanLane = 'upcoming' | 'ready_for_figma' | 'imported' | 'exported' | 'other'
 
-export type FeedbackLane = 'ready_for_review' | 'feedback_given' | 'other'
+export type FeedbackLane = 'ready_for_review' | 'pending_review' | 'feedback_given' | 'other'
 
 export type BoardMode = 'sync' | 'feedback'
 
@@ -129,7 +129,8 @@ export function getKanbanLane(mondayStatus: string | null, pipelineStatus: Pipel
 
 const FEEDBACK_LANE_CONFIG: Record<FeedbackLane, { label: string; bg: string; text: string; dot: string }> = {
   ready_for_review: { label: 'Ready for Review', bg: 'bg-[hsl(var(--status-eligible)/0.12)]', text: 'text-[hsl(var(--status-eligible))]', dot: 'bg-[hsl(var(--status-eligible))]' },
-  feedback_given:   { label: 'Feedback Given',   bg: 'bg-[hsl(var(--status-synced)/0.12)]',   text: 'text-[hsl(var(--status-synced))]',   dot: 'bg-[hsl(var(--status-synced))]' },
+  pending_review:   { label: 'Pending Review',   bg: 'bg-[hsl(var(--status-queued)/0.12)]',   text: 'text-[hsl(var(--status-queued))]',   dot: 'bg-[hsl(var(--status-queued))]' },
+  feedback_given:   { label: 'Feedback Given',    bg: 'bg-[hsl(var(--status-synced)/0.12)]',   text: 'text-[hsl(var(--status-synced))]',   dot: 'bg-[hsl(var(--status-synced))]' },
   other:            { label: 'Other',             bg: 'bg-[hsl(var(--status-skipped)/0.12)]',  text: 'text-[hsl(var(--status-skipped))]',  dot: 'bg-[hsl(var(--status-skipped))]' },
 }
 
@@ -159,11 +160,13 @@ export function FeedbackLanePill({
   )
 }
 
-export function getFeedbackLane(mondayStatus: string | null): FeedbackLane {
+export function getFeedbackLane(mondayStatus: string | null, heimdallReviewed = false): FeedbackLane {
   const status = (mondayStatus ?? '').toLowerCase().trim()
   if (status === 'ready for review') return 'ready_for_review'
-  if (status === 'feedback') return 'feedback_given'
+  if (status === 'feedback') {
+    return heimdallReviewed ? 'feedback_given' : 'pending_review'
+  }
   return 'other'
 }
 
-export const FEEDBACK_WORKFLOW_LANES: FeedbackLane[] = ['ready_for_review', 'feedback_given']
+export const FEEDBACK_WORKFLOW_LANES: FeedbackLane[] = ['ready_for_review', 'pending_review', 'feedback_given']
