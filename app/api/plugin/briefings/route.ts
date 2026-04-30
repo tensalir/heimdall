@@ -6,7 +6,7 @@ import {
   readFilteredBoardItems,
   resolveBatchLabel,
 } from '@/src/services/mondayBoardReader'
-import type { MondayBoardItemRow } from '@/src/services/mondayBoardReader'
+import type { MondayBoardItemRow, MondayFilterRule } from '@/src/services/mondayBoardReader'
 import { parseBatchToCanonical } from '@/src/domain/routing/batchToFile'
 import {
   appendImportEvent,
@@ -203,28 +203,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Build server-side Monday filter rules from env allowlists
+    // Only filter upstream by Batch (single-valued).
+    //
+    // Status and Creative Partner allowlists are applied locally below because
+    // Monday's items_page combines multiple rules with `operator: and`, so two
+    // values for the same column (e.g. partner = "Studio" AND partner =
+    // "Content Creation") require a row to match both at once and silently
+    // return zero rows. Local filtering keeps the OR semantics the allowlists
+    // are meant to express.
     const schema = await fetchBoardSchema(BOARD_ID)
-    const filterRules = buildFilterRules(schema, [
-      {
-        titleCandidates: ['Status'],
-        values: statusAllowlist,
-      },
-      {
-        titleCandidates: [
-          'Creative Partner',
-          'Creatives',
-          'Creation Team',
-          'Creative Team',
-          'Assigned Team',
-          'Team',
-          'Assignee Team',
-        ],
-        values: partnerAllowlist,
-      },
-    ])
-
-    // Optionally add a batch filter when we can map the canonical key to a Monday label
+    const filterRules: MondayFilterRule[] = []
     let batchFilteredUpstream = false
     if (batchCanonical) {
       const batchLabel = resolveBatchLabel(schema, batchCanonical, parseBatchToCanonical)
@@ -242,14 +230,32 @@ export async function POST(request: NextRequest) {
       const col = rowToColumnMap(row)
       const batchRaw = getColFromRow(col, 'batch', 'batch_name')
       const parsed = batchRaw ? parseBatchToCanonical(batchRaw) : null
-      const statusVal = getColFromRow(col, 'status')
+      const statusVal = getColFromRow(col, 'status', 'brief_status')
+      const partnerVal = getColFromRow(
+        col,
+        'creative_partner',
+        'creatives',
+        'creation_team',
+        'creative_team',
+        'assigned_team',
+        'team',
+        'assignee_team',
+      )
+
+      const statusMatch =
+        statusAllowlist.length === 0 ||
+        statusAllowlist.includes((statusVal ?? '').toLowerCase().trim())
+      const partnerMatch =
+        partnerAllowlist.length === 0 ||
+        partnerAllowlist.includes((partnerVal ?? '').toLowerCase().trim())
 
       return {
         row,
         parsed,
         statusVal,
-        statusMatch: true,
-        partnerMatch: true,
+        partnerVal,
+        statusMatch,
+        partnerMatch,
         batchFilteredUpstream,
       }
     })
