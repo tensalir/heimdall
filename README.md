@@ -131,3 +131,16 @@ Deployment: see [DEPLOYMENT.md](./DEPLOYMENT.md) for the Vercel guide.
 ## Current frontier
 
 Exploring deeper integration between Mimir's competitive intelligence and the briefing template pipeline. Loop Data modules (ads performance, strategic insights) are stubbed and waiting for live data connections. The Iterator plugin's "Generate from Briefing" command is wired as a UI skeleton, pending backend integration. The roadmap tracks what the team surfaces as friction, not a predetermined feature list.
+
+## Documentation
+
+- [Case note](./docs/case-note.md) — the build story behind Heimdall: bridge framing, scope expansion, the Mimir extraction.
+- [Patterns](./docs/patterns/) — reusable principles surfaced here:
+  - [workflow-bridge](./docs/patterns/workflow-bridge.md)
+- [Briefing assistant rollout](./docs/briefing-assistant-rollout.md)
+- [Template setup](./docs/template-setup.md)
+- [Deployment](./DEPLOYMENT.md)
+
+## Constellation fit
+
+Part of the Loop / Tensalir build constellation. Inherits the multi-surface hub posture from Babylon and provides the Figma bridge consumed by Babylon's Localization Hub. Originated the briefing assistant capability that has since spun out as the standalone [`mimir`](https://github.com/tensalir/mimir) repo for the upstream creative-strategy work. Cross-repo lineage and reusable patterns are encoded in the [thoughtform-repo-intelligence](https://github.com/thoughtform-co/thoughtform-repo-intelligence) Skill and MCP.
