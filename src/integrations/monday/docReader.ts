@@ -399,8 +399,32 @@ function normalizeImageContent(raw: unknown, depth = 0): Record<string, unknown>
 }
 
 /**
+ * Block types (lowercased) that we treat as images. We keep the historical
+ * `image`/`file` shape (which is what Monday's stable docs API returns today)
+ * and also accept common variants that have appeared or may appear in newer
+ * doc shapes (`photo`, `picture`, `image_file`, `page_image`, `embedded_image`).
+ * We deliberately do NOT accept `video` here — those cannot be placed via
+ * `figma.createImage` and would fail at placement time.
+ */
+const IMAGE_BLOCK_TYPES = new Set(['image', 'file', 'photo', 'picture'])
+
+function isImageBlockType(rawType: string | undefined | null): boolean {
+  const t = String(rawType ?? '').toLowerCase().trim()
+  if (!t) return false
+  if (IMAGE_BLOCK_TYPES.has(t)) return true
+  // Contain-match for future shapes like `image_file`, `page_image`,
+  // `embedded_image`. Guard against `video`/`audio` prefixes explicitly.
+  if (t.startsWith('video') || t.startsWith('audio')) return false
+  return t.includes('image') || t.includes('photo') || t.includes('picture')
+}
+
+/**
  * Extract image URLs from Monday Doc blocks.
  * Handles stringified or structured content; supports src, url, publicUrl/public_url, assetId/asset_id/fileId (any casing).
+ * Returns [] on any extraction error and emits an observability warning when
+ * the doc has image-typed blocks but yielded 0 extracted images — that
+ * specific pattern (image blocks present, extraction empty) is the signature
+ * of a Monday-shape drift that would silently break job.images.
  */
 export async function getDocImages(docId: string): Promise<MondayImageAttachment[]> {
   if (!docId.trim()) return []
@@ -443,13 +467,25 @@ export async function getDocImages(docId: string): Promise<MondayImageAttachment
 
     const images: MondayImageAttachment[] = []
     let imageBlocksSeen = 0
+    let contentRejected = 0
+    const rejectedSamples: Array<{ id: string; type: string; contentKeys: string[] }> = []
+
     for (const block of allBlocks) {
-      const blockType = (block.type ?? '').toLowerCase()
-      if (blockType !== 'image' && blockType !== 'file') continue
+      if (!isImageBlockType(block.type)) continue
       imageBlocksSeen++
 
       const content = normalizeImageContent(block.content)
-      if (!content) continue
+      if (!content) {
+        contentRejected++
+        if (rejectedSamples.length < 3) {
+          rejectedSamples.push({
+            id: block.id,
+            type: String(block.type ?? ''),
+            contentKeys: [],
+          })
+        }
+        continue
+      }
 
       const url =
         getStringFromObj(content, 'src', 'url', 'publicUrl', 'public_url', 'rawUrl', 'raw_url') ?? null
@@ -464,8 +500,30 @@ export async function getDocImages(docId: string): Promise<MondayImageAttachment
           source: 'doc',
           ...(assetId && { assetId }),
         })
+      } else {
+        contentRejected++
+        if (rejectedSamples.length < 3) {
+          rejectedSamples.push({
+            id: block.id,
+            type: String(block.type ?? ''),
+            contentKeys: Object.keys(content),
+          })
+        }
       }
     }
+
+    if (imageBlocksSeen > 0 && images.length === 0) {
+      console.warn(
+        '[docReader] getDocImages found image-typed blocks but extracted 0 images',
+        {
+          docId,
+          imageBlocksSeen,
+          contentRejected,
+          rejectedSamples,
+        }
+      )
+    }
+
     return images
   } catch (err) {
     console.error('[docReader] getDocImages failed for docId', docId, err instanceof Error ? err.message : err)

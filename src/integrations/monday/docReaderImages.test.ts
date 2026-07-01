@@ -135,6 +135,94 @@ async function runTests() {
   assert(imagesD[0].url === 'https://files.example.com/doc.pdf', 'rawUrl: wrong url')
   console.log('rawUrl + file type: OK', imagesD[0])
 
+  // Case: Current real-world Monday shape captured 2026-07-01 for the Loop
+  // Paid Social board. Locks in the shape our production pipeline sees today
+  // so a future silent Monday-shape drift is caught immediately.
+  mockGraphql([
+    {
+      id: 'block-real-1',
+      type: 'image',
+      content: {
+        url: 'https://loopearplugs.monday.com/protected_static/2641482/resources/2989548909/screenshot.png',
+        width: null,
+        assetId: 2989548909,
+        alignment: 'left',
+        direction: 'ltr',
+        aspectRatio: null,
+        widthPercentage: 100,
+      },
+    },
+  ])
+  const imagesReal = await getDocImages('18414414717')
+  restoreFetch()
+  assert(imagesReal.length === 1, `Real shape: expected 1 image, got ${imagesReal.length}`)
+  assert(imagesReal[0].assetId === '2989548909', `Real shape: assetId not extracted, got ${imagesReal[0].assetId}`)
+  assert(imagesReal[0].url.startsWith('https://loopearplugs.monday.com/'), 'Real shape: url missing')
+  console.log('Case Real (current Monday shape): OK', imagesReal[0])
+
+  // Case: Broadened block-type tolerance for Monday shape drift.
+  // These variants are not the current Monday type but have been observed in
+  // adjacent doc shapes; the broadened filter accepts them so we don't
+  // silently drop images when Monday tweaks the type string.
+  mockGraphql([
+    { id: 'variant-1', type: 'image_file', content: { url: 'https://x/a.png', assetId: 1 } },
+    { id: 'variant-2', type: 'page_image', content: { url: 'https://x/b.png', assetId: 2 } },
+    { id: 'variant-3', type: 'photo', content: { url: 'https://x/c.png', assetId: 3 } },
+    { id: 'variant-4', type: 'embedded_image', content: { url: 'https://x/d.png', assetId: 4 } },
+  ])
+  const imagesVariants = await getDocImages('555')
+  restoreFetch()
+  assert(imagesVariants.length === 4, `Variant types: expected 4 images, got ${imagesVariants.length}`)
+  const variantIds = imagesVariants.map((i) => i.assetId).sort()
+  assert(
+    JSON.stringify(variantIds) === JSON.stringify(['1', '2', '3', '4']),
+    `Variant types: wrong assetIds ${JSON.stringify(variantIds)}`
+  )
+  console.log('Case Variant types (image_file / page_image / photo / embedded_image): OK')
+
+  // Case: Video/audio blocks must still be rejected — figma.createImage would
+  // fail on those bytes, so extracting them would move the failure downstream
+  // where the user only sees a silent "0 placed" outcome.
+  mockGraphql([
+    {
+      id: 'video-1',
+      type: 'video',
+      content: {
+        url: 'https://loopearplugs.monday.com/protected_static/x/y.mp4',
+        assetId: 999,
+      },
+    },
+    {
+      id: 'audio-1',
+      type: 'audio_clip',
+      content: {
+        url: 'https://loopearplugs.monday.com/protected_static/x/z.mp3',
+        assetId: 998,
+      },
+    },
+  ])
+  const imagesMedia = await getDocImages('444')
+  restoreFetch()
+  assert(imagesMedia.length === 0, `Video/audio: expected 0 images, got ${imagesMedia.length}`)
+  console.log('Case Video/audio rejection: OK')
+
+  // Case: The observability warn path — image-typed blocks present but no
+  // extractable URL/assetId. Must return [] without throwing.
+  const originalWarn = console.warn
+  let warnCalled = false
+  ;(console as { warn: (...a: unknown[]) => void }).warn = (..._args: unknown[]) => {
+    warnCalled = true
+  }
+  mockGraphql([
+    { id: 'shape-drift-1', type: 'image', content: { width: 800, alignment: 'center' } },
+  ])
+  const imagesDrift = await getDocImages('333')
+  restoreFetch()
+  console.warn = originalWarn
+  assert(imagesDrift.length === 0, `Shape drift: expected 0 images, got ${imagesDrift.length}`)
+  assert(warnCalled, 'Shape drift: expected console.warn to be called for diagnostic visibility')
+  console.log('Case Shape drift observability: OK (warned as expected)')
+
   // Empty doc
   mockGraphql([])
   const imagesE = await getDocImages('666')
