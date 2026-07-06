@@ -2,8 +2,8 @@ import 'dotenv/config'
 import { mondayGraphql, columnMap, getCol } from '../integrations/monday/client.js'
 import { getDocContent, getDocIdFromColumnValue } from '../integrations/monday/docReader.js'
 
-const ITEM_ID = '10867939252'
-const DOC_ID = '18395775670'
+const ITEM_ID = process.argv[2] ?? '10867939252'
+const DOC_ID = process.argv[3] ?? '18395775670'
 
 async function main(): Promise<void> {
   const data = await mondayGraphql<{
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const docContent = await getDocContent(DOC_ID)
+  const docContent = await getDocContent(DOC_ID, { itemId: ITEM_ID })
   if (!docContent) {
     console.log(`DOC_CONTENT ${DOC_ID}: EMPTY_OR_INACCESSIBLE`)
     try {

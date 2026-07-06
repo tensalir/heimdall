@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     const col = columnMap(item)
     const feedbackRaw = getCol(col, 'feedback', 'feedback_doc', 'creative_feedback', 'fb_doc')
     const feedbackDocId = getDocIdFromColumnValue(feedbackRaw ?? null)
-    const feedbackDocContent = feedbackDocId ? await getDocContent(feedbackDocId) : null
+    const feedbackDocContent = feedbackDocId ? await getDocContent(feedbackDocId, { itemId }) : null
 
     const parsed = feedbackDocContent ? parseFeedbackDoc(feedbackDocContent) : {}
 

@@ -27,7 +27,7 @@ export async function GET(request: Request) {
     const col = columnMap(item)
     const briefRaw = getCol(col, 'brief', 'briefing', 'doc')
     const docId = getDocIdFromColumnValue(briefRaw ?? null)
-    const docContent = docId ? await getDocContent(docId) : null
+    const docContent = docId ? await getDocContent(docId, { itemId }) : null
 
     const columns: Record<string, string> = {}
     for (const [k, v] of Object.entries(col)) {

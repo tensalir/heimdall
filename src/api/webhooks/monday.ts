@@ -226,12 +226,12 @@ export async function handleMondayWebhook(body: MondayWebhookPayload): Promise<{
   let docReferenceLinks: Awaited<ReturnType<typeof getDocReferenceLinks>> = []
   if (docId) {
     try {
-      docImages = await getDocImages(docId)
+      docImages = await getDocImages(docId, { itemId })
     } catch (err) {
       logger.error('webhook', 'Failed to fetch doc images', err as Error, { docId, mondayItemId: itemId })
     }
     try {
-      docReferenceLinks = await getDocReferenceLinks(docId)
+      docReferenceLinks = await getDocReferenceLinks(docId, { itemId })
     } catch (err) {
       logger.error('webhook', 'Failed to fetch doc reference links', err as Error, {
         docId,
@@ -266,7 +266,7 @@ export async function handleMondayWebhook(body: MondayWebhookPayload): Promise<{
     try {
       const tree = await getTemplateNodeTree(target.figmaFileKey)
       let mondayDocContent: string | null = null
-      if (docId) mondayDocContent = await getDocContent(docId)
+      if (docId) mondayDocContent = await getDocContent(docId, { itemId })
       if (docId && !mondayDocContent) {
         logger.warn('mapping', 'Monday doc returned empty content — docs:read scope may be missing', { docId, mondayItemId: itemId, itemName: item.name })
       }
@@ -398,12 +398,12 @@ export async function queueMondayItem(
   let qDocReferenceLinks: Awaited<ReturnType<typeof getDocReferenceLinks>> = []
   if (qDocId) {
     try {
-      qDocImages = await getDocImages(qDocId)
+      qDocImages = await getDocImages(qDocId, { itemId })
     } catch (err) {
       logger.error('webhook', 'Manual queue: failed to fetch doc images', err as Error, { docId: qDocId, itemId })
     }
     try {
-      qDocReferenceLinks = await getDocReferenceLinks(qDocId)
+      qDocReferenceLinks = await getDocReferenceLinks(qDocId, { itemId })
     } catch (err) {
       logger.error('webhook', 'Manual queue: failed to fetch doc reference links', err as Error, {
         docId: qDocId,
@@ -439,7 +439,7 @@ export async function queueMondayItem(
   if (mappingFileKey) {
     try {
       const tree = await getTemplateNodeTree(mappingFileKey)
-      const mondayDocContent = qDocId ? await getDocContent(qDocId) : null
+      const mondayDocContent = qDocId ? await getDocContent(qDocId, { itemId }) : null
       if (qDocId && !mondayDocContent) {
         logger.warn('mapping', 'Manual queue: Monday doc returned empty — docs:read scope may be missing', { docId: qDocId, itemId, itemName: item.name })
       }
@@ -456,7 +456,7 @@ export async function queueMondayItem(
       logger.error('mapping', 'Manual queue: mapping agent failed', err as Error, { itemId })
     }
   } else {
-    const mondayDocContent = qDocId ? await getDocContent(qDocId) : null
+    const mondayDocContent = qDocId ? await getDocContent(qDocId, { itemId }) : null
     if (qDocId && !mondayDocContent) {
       logger.warn('mapping', 'Manual queue (no template): Monday doc returned empty', { docId: qDocId, itemId, itemName: item.name })
     }

@@ -114,6 +114,164 @@ interface DocBlock {
   content?: unknown
 }
 
+export interface DocFetchOptions {
+  /** Monday item id that owns the doc — enables the item-traversal fallback. */
+  itemId?: string
+}
+
+interface DocBlocksResult {
+  /** Whether the API returned the doc at all (a doc can exist with zero blocks). */
+  docFound: boolean
+  blocks: DocBlock[]
+}
+
+async function fetchDocBlocksByObjectId(objectId: number): Promise<DocBlocksResult> {
+  const allBlocks: DocBlock[] = []
+  let docFound = false
+  let page = 1
+  const limit = 100
+  while (true) {
+    const data = await mondayGraphql<{
+      docs?: Array<{
+        id: string
+        blocks?: DocBlock[]
+      }>
+    }>(
+      `query ($objectIds: [ID!]!, $limit: Int!, $page: Int!) {
+        docs(object_ids: $objectIds) {
+          id
+          blocks(limit: $limit, page: $page) {
+            id
+            type
+            parent_block_id
+            content
+          }
+        }
+      }`,
+      { objectIds: [objectId], limit, page }
+    )
+    const doc = data?.docs?.[0]
+    if (doc) docFound = true
+    const blocks = doc?.blocks ?? []
+    if (!blocks.length) break
+    allBlocks.push(...blocks)
+    if (blocks.length < limit) break
+    page += 1
+  }
+  return { docFound, blocks: allBlocks }
+}
+
+interface ItemDocColumnValue {
+  file?: {
+    doc?: {
+      id?: string
+      object_id?: string | number
+      blocks?: DocBlock[] | null
+    } | null
+  } | null
+}
+
+async function fetchDocBlocksViaItem(itemId: string, docId: string): Promise<DocBlocksResult> {
+  const allBlocks: DocBlock[] = []
+  let docFound = false
+  let page = 1
+  const limit = 100
+  while (true) {
+    const data = await mondayGraphql<{
+      items?: Array<{ column_values?: Array<ItemDocColumnValue | null> }>
+    }>(
+      `query ($itemIds: [ID!]!, $limit: Int!, $page: Int!) {
+        items(ids: $itemIds) {
+          column_values {
+            ... on DocValue {
+              file {
+                doc {
+                  id
+                  object_id
+                  blocks(limit: $limit, page: $page) {
+                    id
+                    type
+                    parent_block_id
+                    content
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`,
+      { itemIds: [itemId], limit, page }
+    )
+    const columns = data?.items?.[0]?.column_values ?? []
+    const doc = columns
+      .map((c) => c?.file?.doc)
+      .find((d) => d && (String(d.object_id ?? '') === docId || String(d.id ?? '') === docId))
+    if (!doc) break
+    docFound = true
+    const blocks = doc.blocks ?? []
+    if (!blocks.length) break
+    allBlocks.push(...blocks)
+    if (blocks.length < limit) break
+    page += 1
+  }
+  return { docFound, blocks: allBlocks }
+}
+
+/**
+ * Fetch all blocks of a Monday doc by its object id (the numeric id in doc URLs).
+ *
+ * Primary path is the top-level `docs(object_ids:)` query. Since ~2026-07,
+ * Monday's new-engine docs (doc-column docs whose blocks carry yjs state) are
+ * silently absent from that query when queried with a personal API token — it
+ * returns `docs: []` with no error, on every API version. When the primary
+ * path yields no blocks and the caller supplied the owning item id, fall back
+ * to traversing the item's doc columns (items → column_values →
+ * DocValue.file.doc), which still returns those docs.
+ *
+ * Genuinely empty docs (doc returned, zero blocks on both paths) stay silent;
+ * a doc that is invisible on both paths warns loudly — that exact silence is
+ * how the 2026-07 blackout went unnoticed.
+ */
+async function fetchDocBlocks(docId: string, opts?: DocFetchOptions): Promise<DocBlock[]> {
+  const id = docId.trim().replace(/^doc_/i, '')
+  if (!id) return []
+  const objectId = Number(id)
+  if (!Number.isFinite(objectId)) return []
+
+  const primary = await fetchDocBlocksByObjectId(objectId)
+  if (primary.blocks.length > 0) return primary.blocks
+
+  const itemId = opts?.itemId?.trim()
+  let fallback: DocBlocksResult = { docFound: false, blocks: [] }
+  if (itemId) {
+    try {
+      fallback = await fetchDocBlocksViaItem(itemId, id)
+    } catch (err) {
+      console.warn('[docReader] item-traversal fallback query failed', {
+        docId,
+        itemId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  if (fallback.blocks.length > 0) {
+    console.warn(
+      '[docReader] docs(object_ids) returned no blocks; recovered via item-traversal fallback',
+      { docId, itemId, blocks: fallback.blocks.length, primarySawDoc: primary.docFound }
+    )
+    return fallback.blocks
+  }
+
+  if (!primary.docFound && !fallback.docFound) {
+    console.warn(
+      '[docReader] doc invisible to docs(object_ids) and not recovered via item traversal',
+      { docId, itemId: itemId ?? null, fallbackAttempted: !!itemId }
+    )
+  }
+  return []
+}
+
 const DOC_URL_KEYS = new Set([
   'href',
   'link',
@@ -200,50 +358,11 @@ function collectDescendantText(
  * Fetch a Monday Doc by id and return its block content as a single string (for the mapping agent).
  * Returns null if token missing, doc not found, or API error (e.g. docs:read not granted).
  */
-export async function getDocContent(docId: string): Promise<string | null> {
+export async function getDocContent(docId: string, opts?: DocFetchOptions): Promise<string | null> {
   if (!docId.trim()) return null
-  const id = docId.trim().replace(/^doc_/i, '')
-  if (!id) return null
 
   try {
-    const objectId = Number(id)
-    if (!Number.isFinite(objectId)) return null
-
-    const allBlocks: DocBlock[] = []
-    let page = 1
-    const limit = 100
-    while (true) {
-      const data = await mondayGraphql<{
-        docs?: Array<{
-          id: string
-          object_id?: string
-          name?: string
-          blocks?: DocBlock[]
-        }>
-      }>(
-        `query ($objectIds: [ID!]!, $limit: Int!, $page: Int!) {
-          docs(object_ids: $objectIds) {
-            id
-            object_id
-            name
-            blocks(limit: $limit, page: $page) {
-              id
-              type
-              parent_block_id
-              content
-            }
-          }
-        }`,
-        { objectIds: [objectId], limit, page }
-      )
-      const doc = data?.docs?.[0]
-      const blocks = doc?.blocks ?? []
-      if (!blocks.length) break
-      allBlocks.push(...blocks)
-      if (blocks.length < limit) break
-      page += 1
-    }
-
+    const allBlocks = await fetchDocBlocks(docId, opts)
     if (!allBlocks.length) return null
     const byId = new Map<string, DocBlock>()
     for (const block of allBlocks) byId.set(block.id, block)
@@ -426,44 +545,11 @@ function isImageBlockType(rawType: string | undefined | null): boolean {
  * specific pattern (image blocks present, extraction empty) is the signature
  * of a Monday-shape drift that would silently break job.images.
  */
-export async function getDocImages(docId: string): Promise<MondayImageAttachment[]> {
+export async function getDocImages(docId: string, opts?: DocFetchOptions): Promise<MondayImageAttachment[]> {
   if (!docId.trim()) return []
-  const id = docId.trim().replace(/^doc_/i, '')
-  if (!id) return []
 
   try {
-    const objectId = Number(id)
-    if (!Number.isFinite(objectId)) return []
-
-    const allBlocks: DocBlock[] = []
-    let page = 1
-    const limit = 100
-    while (true) {
-      const data = await mondayGraphql<{
-        docs?: Array<{
-          id: string
-          blocks?: DocBlock[]
-        }>
-      }>(
-        `query ($objectIds: [ID!]!, $limit: Int!, $page: Int!) {
-          docs(object_ids: $objectIds) {
-            id
-            blocks(limit: $limit, page: $page) {
-              id
-              type
-              content
-            }
-          }
-        }`,
-        { objectIds: [objectId], limit, page }
-      )
-      const doc = data?.docs?.[0]
-      const blocks = doc?.blocks ?? []
-      if (!blocks.length) break
-      allBlocks.push(...blocks)
-      if (blocks.length < limit) break
-      page += 1
-    }
+    const allBlocks = await fetchDocBlocks(docId, opts)
 
     const images: MondayImageAttachment[] = []
     let imageBlocksSeen = 0
@@ -536,45 +622,11 @@ export async function getDocImages(docId: string): Promise<MondayImageAttachment
  * Ignores URLs outside that section and ignores image/file block URLs since
  * those are already handled by getDocImages().
  */
-export async function getDocReferenceLinks(docId: string): Promise<MondayDocReferenceLink[]> {
+export async function getDocReferenceLinks(docId: string, opts?: DocFetchOptions): Promise<MondayDocReferenceLink[]> {
   if (!docId.trim()) return []
-  const id = docId.trim().replace(/^doc_/i, '')
-  if (!id) return []
 
   try {
-    const objectId = Number(id)
-    if (!Number.isFinite(objectId)) return []
-
-    const allBlocks: DocBlock[] = []
-    let page = 1
-    const limit = 100
-    while (true) {
-      const data = await mondayGraphql<{
-        docs?: Array<{
-          id: string
-          blocks?: DocBlock[]
-        }>
-      }>(
-        `query ($objectIds: [ID!]!, $limit: Int!, $page: Int!) {
-          docs(object_ids: $objectIds) {
-            id
-            blocks(limit: $limit, page: $page) {
-              id
-              type
-              parent_block_id
-              content
-            }
-          }
-        }`,
-        { objectIds: [objectId], limit, page }
-      )
-      const doc = data?.docs?.[0]
-      const blocks = doc?.blocks ?? []
-      if (!blocks.length) break
-      allBlocks.push(...blocks)
-      if (blocks.length < limit) break
-      page += 1
-    }
+    const allBlocks = await fetchDocBlocks(docId, opts)
 
     const links: MondayDocReferenceLink[] = []
     const seenUrls = new Set<string>()

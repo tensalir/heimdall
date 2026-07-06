@@ -175,7 +175,7 @@ async function main() {
         const docIdMatch = val.match(/\d{5,}/)
         if (docIdMatch) {
           try {
-            docText = await getDocContent(docIdMatch[0])
+            docText = await getDocContent(docIdMatch[0], { itemId: item.id })
           } catch { /* doc read failed */ }
           if (docText) break
         }

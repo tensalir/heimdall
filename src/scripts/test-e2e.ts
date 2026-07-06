@@ -104,7 +104,7 @@ async function main() {
     const docId = getDocIdFromColumnValue(briefRaw ?? null)
     if (docId) {
       console.log(`\n=== Fetching Monday Doc (id: ${docId}) ===\n`)
-      mondayDocContent = await getDocContent(docId)
+      mondayDocContent = await getDocContent(docId, { itemId: ITEM_ID })
       console.log(mondayDocContent ? `Doc content: ${mondayDocContent.substring(0, 200)}...` : 'Doc not accessible')
     }
 
