@@ -3043,6 +3043,29 @@ async function processJobs(jobs: QueuedJob[]): Promise<Array<{ idempotencyKey: s
         try { await (targetPage as any).loadAsync() } catch (_) {}
       }
 
+      // GUARD: clone() copies EVERY top-level frame on the template page. If the
+      // template ever accumulates stray/foreign frames (e.g. a separate
+      // "Campaign Briefing" WIP, detached Copy/Design columns), they would leak
+      // into every synced briefing as unfilled scaffolding. A freshly-cloned
+      // page must only carry the experiment briefing structure, so strip any
+      // top-level frame that isn't part of it. Only runs on a just-cloned page.
+      if (createdNew) {
+        try {
+          var allowedTopLevel = function (name: string): boolean {
+            return name === 'Name Briefing'
+              || name === 'Design Header'
+              || name.indexOf('References') === 0
+          }
+          var topLevelNodes = (targetPage.children || []).slice()
+          for (var pruneI = 0; pruneI < topLevelNodes.length; pruneI++) {
+            var topNode = topLevelNodes[pruneI]
+            if (!allowedTopLevel(topNode.name)) {
+              try { topNode.remove() } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
+
       targetPage.setPluginData('heimdallIdempotencyKey', job.idempotencyKey)
       targetPage.setPluginData('heimdallMondayItemId', job.mondayItemId || '')
       if (briefing.sectionName) {
@@ -3465,6 +3488,24 @@ var uiHtml = '<html><head><style>'
   + '  document.getElementById("msg").textContent = currentBriefings.length === 0 ? "No briefings match this batch and filters." : "";'
   + '  document.getElementById("msg").className = "";'
   + '}'
+  + 'var MONTHS_FULL = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"];'
+  + 'function buildBatchOptions(data) {'
+  + '  var out = [];'
+  + '  if (data && data.availableBatches && data.availableBatches.length > 0) {'
+  + '    var labels = data.batchLabels || data.availableBatches;'
+  + '    for (var i = 0; i < data.availableBatches.length; i++) { out.push({ value: data.availableBatches[i], label: labels[i] || data.availableBatches[i] }); }'
+  + '    return out;'
+  + '  }'
+  + '  var now = new Date();'
+  + '  for (var k = -2; k <= 12; k++) {'
+  + '    var d = new Date(now.getFullYear(), now.getMonth() + k, 1);'
+  + '    var mm = d.getMonth();'
+  + '    var yy = d.getFullYear();'
+  + '    var key = yy + "-" + (mm + 1 < 10 ? "0" : "") + (mm + 1);'
+  + '    out.push({ value: key, label: MONTHS_FULL[mm] + " " + yy });'
+  + '  }'
+  + '  return out;'
+  + '}'
   + 'function fetchBriefings(selectedBatch) {'
   + '  document.getElementById("msg").textContent = "Loading briefings...";'
   + '  document.getElementById("msg").className = "";'
@@ -3473,21 +3514,23 @@ var uiHtml = '<html><head><style>'
   + '  if (selectedBatch) body.batch = selectedBatch;'
   + '  requestJson(HEIMDALL_API + "/api/plugin/briefings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })'
   + '    .then(function(data) {'
-  + '      if (data.needsBatchSelection && data.availableBatches && data.availableBatches.length > 0) {'
+  + '      if (data.needsBatchSelection) {'
+  + '        var batchOpts = buildBatchOptions(data);'
   + '        document.getElementById("batch-select-wrap").style.display = "flex";'
   + '        document.getElementById("batch-select-wrap").className = "row";'
   + '        var sel = document.getElementById("batch-select");'
   + '        sel.innerHTML = "";'
-  + '        var labels = data.batchLabels || data.availableBatches;'
-  + '        for (var i = 0; i < data.availableBatches.length; i++) {'
+  + '        for (var i = 0; i < batchOpts.length; i++) {'
   + '          var opt = document.createElement("option");'
-  + '          opt.value = data.availableBatches[i];'
-  + '          opt.textContent = labels[i] || data.availableBatches[i];'
+  + '          opt.value = batchOpts[i].value;'
+  + '          opt.textContent = batchOpts[i].label;'
   + '          sel.appendChild(opt);'
   + '        }'
   + '        document.getElementById("batch-label").textContent = "";'
   + '        document.getElementById("briefings-list").innerHTML = "";'
-  + '        document.getElementById("msg").textContent = "Select a batch to show briefings.";'
+  + '        var hadServerBatches = !!(data.availableBatches && data.availableBatches.length > 0);'
+  + '        document.getElementById("msg").textContent = hadServerBatches ? "Select a batch to show briefings." : "Could not auto-detect the batch for this file. Pick a month, then Apply.";'
+  + '        document.getElementById("msg").className = "";'
   + '        return;'
   + '      }'
   + '      document.getElementById("batch-select-wrap").style.display = "none";'
