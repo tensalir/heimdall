@@ -1,0 +1,26 @@
+{
+  "skill_name": "figma-to-psd",
+  "evals": [
+    {
+      "id": 0,
+      "eval_name": "basic-export",
+      "prompt": "Can you convert this Figma frame into a PSD for me? https://www.figma.com/design/Yujv66E4t42TLxzAJHIpJ8/Design-files-for-Amazon?node-id=2-892 — I need it as a layered Photoshop file to hand to our Amazon agency. My Figma token is the FIGMA_ACCESS_TOKEN value in C:\\Users\\buyss\\Manifold Delta\\Artifacts\\11_Heimdall\\.env (don't print it). Save the PSD to the outputs directory I gave you.",
+      "expected_output": "A valid multi-layer PSD of frame 2:892 (1440x2560) in the outputs dir, verified with an independent parser, plus mention of the .text.json sidecar.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "eval_name": "frame-discovery",
+      "prompt": "I have this Figma file with our Amazon creatives: https://www.figma.com/design/Yujv66E4t42TLxzAJHIpJ8/Design-files-for-Amazon — before we convert everything to PSD, tell me which frames are actually convertible deliverables. Heads up: some of the real creatives are nested inside container frames called 'Assets', don't miss those. Don't export anything yet — just write a findings.md to the outputs directory listing deliverable frames with their node IDs, and flag anything that would cause conversion problems. Figma token is FIGMA_ACCESS_TOKEN in C:\\Users\\buyss\\Manifold Delta\\Artifacts\\11_Heimdall\\.env.",
+      "expected_output": "findings.md that lists the 12 top-level EXP-* deliverables AND the 6 nested frames inside the three Assets containers (2:90, 2:132, 2:803, 2:847, 3:405, 3:416), excludes scaffolding (Safe Zones, Interface, Assets containers themselves), and notes eligibility.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "eval_name": "warning-honesty",
+      "prompt": "Export these two frames to layered PSDs: node 3-405 and node 3-416 from https://www.figma.com/design/Yujv66E4t42TLxzAJHIpJ8/Design-files-for-Amazon. They have some blurred glow effects in the background. I need to know exactly which layers will and won't be editable in the PSDs — my designer will ask. Figma token is FIGMA_ACCESS_TOKEN in C:\\Users\\buyss\\Manifold Delta\\Artifacts\\11_Heimdall\\.env. Save the PSDs plus a short report.md to the outputs directory.",
+      "expected_output": "Both PSDs exported (1440x2560 and 1440x1800), report.md that honestly identifies the blurred/rotated decorative layers as non-editable hidden placeholders (Ellipse 2/3, Rectangle 1/3) while noting they remain visible in the flattened composite, and confirms text/photo layers are present.",
+      "files": []
+    }
+  ]
+}

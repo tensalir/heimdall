@@ -19,3 +19,6 @@ next-env.d.ts
 # Vercel
 .vercel
 .env*.local
+
+# Skill eval scratch (large binaries, node_modules)
+skills/*-workspace/

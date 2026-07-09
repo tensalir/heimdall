@@ -1,0 +1,17 @@
+{
+  "name": "figma-to-psd-skill",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Figma frame -> layered PSD via the Figma REST API. Self-contained; vendored from Heimdall src/psd.",
+  "type": "module",
+  "scripts": {
+    "probe": "tsx probe.ts",
+    "export": "tsx cli.ts"
+  },
+  "dependencies": {
+    "ag-psd": "31.0.0",
+    "dotenv": "^17.2.4",
+    "sharp": "^0.33.5",
+    "tsx": "^4.19.2"
+  }
+}
