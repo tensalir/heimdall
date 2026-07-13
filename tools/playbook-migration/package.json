@@ -1,0 +1,41 @@
+{
+  "name": "loop-playbook-migration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "One-shot migration of the Loop Earplugs playbook from SharePoint to New Google Sites. Microsoft Graph extracts, a Claude skill translates, Playwright authors.",
+  "scripts": {
+    "extract": "tsx src/cli.ts extract",
+    "extract:one": "tsx src/cli.ts extract --page",
+    "translate": "tsx src/cli.ts translate",
+    "translate:one": "tsx src/cli.ts translate --page",
+    "author": "tsx src/cli.ts author",
+    "author:dry": "tsx src/cli.ts author --dry-run",
+    "run-all": "tsx src/cli.ts run-all",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "smoke:extract": "tsx src/extract/__smoke.ts",
+    "smoke:author": "tsx src/author/__smoke.ts",
+    "smoke": "npm run smoke:extract && npm run smoke:author",
+    "playwright:install": "playwright install chromium"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@azure/msal-node": "^5.2.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "commander": "^14.0.0",
+    "dotenv": "^17.2.4",
+    "isomorphic-fetch": "^3.0.0",
+    "playwright": "^1.59.0",
+    "slugify": "^1.6.6",
+    "turndown": "^7.2.4",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@microsoft/microsoft-graph-types": "^2.40.0",
+    "@types/node": "^22.10.1",
+    "@types/turndown": "^5.0.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
