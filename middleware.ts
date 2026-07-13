@@ -317,6 +317,41 @@ async function handleShowcase(request: NextRequest): Promise<NextResponse> {
   return NextResponse.redirect(url)
 }
 
+const WEMBLEY_COOKIE_NAME = 'heimdall-wembley-token'
+const WEMBLEY_DEFAULT_PASSWORD = 'loopleasing'
+
+function wembleyPassword(): string {
+  return process.env.WEMBLEY_PASSWORD?.trim() || WEMBLEY_DEFAULT_PASSWORD
+}
+
+function hasValidWembleyCookie(request: NextRequest): boolean {
+  const token = request.cookies.get(WEMBLEY_COOKIE_NAME)?.value
+  if (!token) return false
+  try {
+    const decoded = Buffer.from(token, 'base64').toString('utf8')
+    return decoded === wembleyPassword()
+  } catch {
+    return false
+  }
+}
+
+async function handleWembley(request: NextRequest): Promise<NextResponse> {
+  const { pathname } = request.nextUrl
+
+  if (pathname === '/wembley/login') {
+    return NextResponse.next()
+  }
+
+  if (hasValidWembleyCookie(request)) {
+    return NextResponse.next()
+  }
+
+  const url = request.nextUrl.clone()
+  url.pathname = '/wembley/login'
+  url.searchParams.set('next', pathname + (request.nextUrl.search || ''))
+  return NextResponse.redirect(url)
+}
+
 const SHEETS_COOKIE_NAME = 'heimdall-sheets-token'
 
 const SHEETS_READ_API_PREFIXES = [
@@ -365,6 +400,11 @@ export async function middleware(request: NextRequest) {
     return handleShowcase(request)
   }
 
+  // 2c. Wembley OOH preview — password gate (no Supabase account required)
+  if (pathname === '/wembley' || pathname.startsWith('/wembley/')) {
+    return handleWembley(request)
+  }
+
   // 3. API routes: classified by policy (user / machine / webhook / public)
   if (pathname.startsWith('/api/')) {
     return handleApi(request)
@@ -406,6 +446,8 @@ export const config = {
     '/admin/:path*',
     '/showcase',
     '/showcase/:path*',
+    '/wembley',
+    '/wembley/:path*',
     '/document-chat',
     '/document-chat/:path*',
     '/sheets/:path*',

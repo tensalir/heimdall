@@ -1,0 +1,159 @@
+.wembley-shell {
+  --void: #1a1522;
+  --surface: #221c2c;
+  --dawn: #f6f0e8;
+  --muted: rgba(246, 240, 232, 0.66);
+  --hairline: rgba(246, 240, 232, 0.18);
+  --lavender: #b8a4d4;
+  --wood: #8b6248;
+  --petal: #d4a8b8;
+
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(214, 196, 232, 0.14), transparent 32%),
+    radial-gradient(circle at 82% 12%, rgba(155, 181, 154, 0.1), transparent 28%),
+    radial-gradient(circle at 62% 78%, rgba(139, 98, 72, 0.08), transparent 34%),
+    linear-gradient(135deg, #1a1522, #241e30 46%, #1f1a28);
+  color: var(--dawn);
+  font-family: Georgia, 'Times New Roman', serif;
+}
+
+.wembley-login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(24px, 6vw, 80px);
+}
+
+.wembley-login-panel {
+  width: 100%;
+  max-width: 460px;
+  padding: clamp(28px, 4vw, 48px);
+  background: rgba(26, 21, 34, 0.72);
+  border: 1px solid var(--hairline);
+  backdrop-filter: blur(16px);
+  clip-path: polygon(
+    0 0,
+    calc(100% - 18px) 0,
+    100% 18px,
+    100% 100%,
+    18px 100%,
+    0 calc(100% - 18px)
+  );
+}
+
+.wembley-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'PT Mono', 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--lavender);
+  margin-bottom: 22px;
+}
+.wembley-eyebrow::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--lavender);
+  transform: rotate(45deg);
+}
+
+.wembley-title {
+  margin: 0;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(34px, 4.6vw, 52px);
+  font-weight: 600;
+  line-height: 0.95;
+  letter-spacing: -0.03em;
+}
+.wembley-title em {
+  font-style: italic;
+  font-weight: 400;
+  color: var(--lavender);
+}
+
+.wembley-lede {
+  margin: 18px 0 28px;
+  color: var(--muted);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 15px;
+  line-height: 1.5;
+  font-style: italic;
+}
+
+.wembley-field {
+  display: block;
+  margin-bottom: 16px;
+}
+.wembley-field-label {
+  display: block;
+  font-family: 'PT Mono', 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.wembley-input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--dawn);
+  border: 1px solid var(--hairline);
+  padding: 12px 14px;
+  font-family: 'PT Mono', 'Courier New', monospace;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  outline: none;
+  transition: border-color 140ms ease;
+}
+.wembley-input:focus,
+.wembley-input:focus-visible {
+  border-color: var(--lavender);
+}
+.wembley-input[aria-invalid='true'] {
+  border-color: var(--petal);
+}
+
+.wembley-error {
+  margin: 0 0 14px;
+  color: var(--petal);
+  font-family: 'PT Mono', 'Courier New', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.wembley-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  color: var(--dawn);
+  border: 1px solid color-mix(in srgb, var(--lavender) 55%, transparent);
+  padding: 11px 18px;
+  font-family: 'PT Mono', 'Courier New', monospace;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+.wembley-submit:hover {
+  border-color: var(--lavender);
+  color: var(--lavender);
+  transform: translateY(-1px);
+}
+
+.wembley-meta {
+  margin-top: 26px;
+  display: flex;
+  justify-content: space-between;
+  font-family: 'PT Mono', 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
