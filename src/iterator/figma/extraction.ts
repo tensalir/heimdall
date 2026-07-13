@@ -97,6 +97,9 @@ export async function exportFrameAsImage(fileKey: string, nodeId: string, scale 
 /**
  * Export multiple child nodes as PNG image URLs.
  * Used to extract individual image layers for use as Nano Banana style references.
+ *
+ * Figma returns `null` for nodes it cannot render (invisible, 0% opacity, no
+ * renderable content). Those are dropped — a null URL is useless as a style ref.
  */
 export async function exportChildImages(
   fileKey: string,
@@ -105,7 +108,11 @@ export async function exportChildImages(
 ): Promise<Record<string, string>> {
   try {
     const images = await exportNodeImages(fileKey, nodeIds, { format: 'png', scale })
-    return images || {}
+    const rendered: Record<string, string> = {}
+    for (const [nodeId, url] of Object.entries(images ?? {})) {
+      if (url) rendered[nodeId] = url
+    }
+    return rendered
   } catch (err) {
     console.error('[iterator/extraction] Failed to export child images:', (err as Error).message)
     return {}

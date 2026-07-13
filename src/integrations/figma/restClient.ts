@@ -298,27 +298,145 @@ export async function getConsolidatedComments(
 // ── Image Export ──────────────────────────────────────────────────
 
 /**
+ * Node ids appear as `1-23` in Figma URLs but the REST API expects `1:23`.
+ * Safe to call on an already-normalized id.
+ */
+export function normalizeNodeId(id: string): string {
+  return id.replace(/-/g, ':')
+}
+
+export interface ExportNodeImagesOptions {
+  format?: 'png' | 'jpg' | 'svg' | 'pdf'
+  scale?: number
+  /**
+   * Render the node at its full bounding-box dimensions, ignoring cropping and
+   * empty surrounding space. Needed when the returned pixel size must match
+   * `absoluteBoundingBox` exactly (e.g. a PSD composite).
+   */
+  useAbsoluteBounds?: boolean
+  /** Exclude content that overlaps the node. Figma's default is true. */
+  contentsOnly?: boolean
+  /** Pin to a specific file version for reproducible exports. */
+  version?: string
+}
+
+function buildExportUrl(
+  fileKey: string,
+  nodeIds: string[],
+  options?: ExportNodeImagesOptions
+): URL {
+  const url = new URL(`${FIGMA_API_BASE}/images/${fileKey}`)
+  url.searchParams.set('ids', nodeIds.join(','))
+  if (options?.format) url.searchParams.set('format', options.format)
+  if (options?.scale != null) url.searchParams.set('scale', String(options.scale))
+  if (options?.useAbsoluteBounds != null)
+    url.searchParams.set('use_absolute_bounds', String(options.useAbsoluteBounds))
+  if (options?.contentsOnly != null)
+    url.searchParams.set('contents_only', String(options.contentsOnly))
+  if (options?.version) url.searchParams.set('version', options.version)
+  return url
+}
+
+/**
  * Export nodes as images (PNG/SVG/JPG/PDF).
  * Returns map from node id to image URL. URLs expire after ~30 days.
+ *
+ * A `null` value means Figma could not render that node — it is invisible, has
+ * 0% opacity, or has no renderable content. This is normal, not an error.
+ *
+ * Swallows 403/404 into `{}`. If you need to tell "no access" apart from
+ * "nothing rendered", use `exportNodeImagesWithRetry`, which throws.
  */
 export async function exportNodeImages(
   fileKey: string,
   nodeIds: string[],
-  options?: { format?: 'png' | 'jpg' | 'svg' | 'pdf'; scale?: number }
-): Promise<Record<string, string>> {
+  options?: ExportNodeImagesOptions
+): Promise<Record<string, string | null>> {
   const token = getFigmaToken()
   if (!token || nodeIds.length === 0) return {}
-  const url = new URL(`${FIGMA_API_BASE}/images/${fileKey}`)
-  url.searchParams.set('ids', nodeIds.join(','))
-  if (options?.format) url.searchParams.set('format', options.format)
-  if (options?.scale != null)
-    url.searchParams.set('scale', String(options.scale))
+  const url = buildExportUrl(fileKey, nodeIds, options)
   const res = await fetch(url.toString(), { headers: { 'X-Figma-Token': token } })
   if (!res.ok) {
     if (res.status === 403 || res.status === 404) return {}
     throw new Error(`Figma API error: ${res.status} ${res.statusText}`)
   }
-  const data = (await res.json()) as { err?: string; images?: Record<string, string> }
+  const data = (await res.json()) as { err?: string; images?: Record<string, string | null> }
   if (data.err) throw new Error(`Figma export error: ${data.err}`)
   return data.images ?? {}
+}
+
+const FIGMA_IMAGES_RETRY_ATTEMPTS = 4
+const FIGMA_IMAGES_RETRY_BASE_MS = 2000
+
+/** Thrown when Figma rejects a render request outright. */
+export class FigmaExportError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number
+  ) {
+    super(message)
+    this.name = 'FigmaExportError'
+  }
+}
+
+/**
+ * Like `exportNodeImages`, but retries 429/5xx with backoff and **throws** on
+ * 403/404 rather than returning `{}`.
+ *
+ * That distinction matters for the PSD exporter: a token without
+ * `file_content:read` scope, and a frame where every layer happens to be
+ * hidden, would otherwise be indistinguishable — both yield an empty map.
+ *
+ * Note that Figma returns a top-level `err` when *any* node in the batch fails
+ * to render, so a single oversized node poisons the whole request. Callers that
+ * batch should bisect on `FigmaExportError` to isolate the offender.
+ */
+export async function exportNodeImagesWithRetry(
+  fileKey: string,
+  nodeIds: string[],
+  options?: ExportNodeImagesOptions
+): Promise<Record<string, string | null>> {
+  const token = getFigmaToken()
+  if (!token) throw new FigmaExportError('FIGMA_ACCESS_TOKEN is not set')
+  if (nodeIds.length === 0) return {}
+
+  const url = buildExportUrl(fileKey, nodeIds, options)
+  let lastError: Error | null = null
+
+  for (let attempt = 1; attempt <= FIGMA_IMAGES_RETRY_ATTEMPTS; attempt++) {
+    const res = await fetch(url.toString(), { headers: { 'X-Figma-Token': token } })
+
+    if (res.status === 429 && attempt < FIGMA_IMAGES_RETRY_ATTEMPTS) {
+      const retryAfter = res.headers.get('Retry-After')
+      const waitMs = retryAfter
+        ? Math.min(Number(retryAfter) * 1000, 30000)
+        : FIGMA_IMAGES_RETRY_BASE_MS * attempt
+      await new Promise((r) => setTimeout(r, waitMs))
+      continue
+    }
+
+    if (res.status >= 500 && attempt < FIGMA_IMAGES_RETRY_ATTEMPTS) {
+      lastError = new FigmaExportError(`Figma API error: ${res.status} ${res.statusText}`, res.status)
+      // Exponential backoff with jitter.
+      const waitMs = FIGMA_IMAGES_RETRY_BASE_MS * 2 ** (attempt - 1) + Math.floor(Math.random() * 500)
+      await new Promise((r) => setTimeout(r, waitMs))
+      continue
+    }
+
+    if (!res.ok) {
+      throw new FigmaExportError(
+        `Figma API error: ${res.status} ${res.statusText}` +
+          (res.status === 403
+            ? ' — token expired, missing file_content:read scope, or org content-access restriction'
+            : ''),
+        res.status
+      )
+    }
+
+    const data = (await res.json()) as { err?: string; images?: Record<string, string | null> }
+    if (data.err) throw new FigmaExportError(`Figma export error: ${data.err}`)
+    return data.images ?? {}
+  }
+
+  throw lastError ?? new FigmaExportError('Figma API: rate limited')
 }
