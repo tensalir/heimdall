@@ -58,7 +58,7 @@
  * These appear in Figma's dev console (Plugins → Development → Open console).
  * ═══════════════════════════════════════════════════════════════════
  */
-import { DEFAULT_HEIMDALL_API, DEFAULT_PLUGIN_TOKEN } from '../constants'
+import { DEFAULT_HEIMDALL_API, DEFAULT_PLUGIN_TOKEN, BUILD_ID } from '../constants'
 import { runExportComments } from './exportComments'
 
 const TEMPLATE_PAGE_NAMES = ['Briefing Template to Duplicate', 'Briefing Template', 'Template']
@@ -3089,7 +3089,7 @@ async function processJobs(jobs: QueuedJob[]): Promise<Array<{ idempotencyKey: s
 
       debugLog.push({
         nodeName: '__PLUGIN_META__',
-        chars: 'hasMapping=' + !!hasMapping + ' mappingLen=' + (job.nodeMapping ? job.nodeMapping.length : 0) + ' pageChildren=' + childCount + ' pageName=' + targetPage.name + ' createdNew=' + createdNew,
+        chars: 'hasMapping=' + !!hasMapping + ' mappingLen=' + (job.nodeMapping ? job.nodeMapping.length : 0) + ' pageChildren=' + childCount + ' pageName=' + targetPage.name + ' createdNew=' + createdNew + ' build=' + BUILD_ID,
         path: [],
         matched: false,
       })
@@ -3225,6 +3225,7 @@ var uiHtml = '<html><head><style>'
   + '</style></head><body>'
   + '<div class="tabs"><button class="tab active" id="tab-sync">Sync Briefings</button><button class="tab" id="tab-comments">Export Comments</button></div>'
   + '<h3>Heimdall Sync</h3>'
+  + '<div style="font-size:10px;color:#888;margin:-4px 0 8px">build ' + BUILD_ID + '</div>'
   + '<div class="row"><span class="label">API base</span><input id="api-base" placeholder='
   + JSON.stringify(DEFAULT_HEIMDALL_API)
   + ' /><button class="secondary" id="save-api">Save</button></div>'

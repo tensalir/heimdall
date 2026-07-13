@@ -12,3 +12,12 @@ export const DEFAULT_HEIMDALL_API =
 declare const __PLUGIN_TOKEN__: string
 export const DEFAULT_PLUGIN_TOKEN: string =
   typeof __PLUGIN_TOKEN__ !== 'undefined' ? __PLUGIN_TOKEN__ : ''
+
+/**
+ * Build stamp (git short sha + ISO timestamp), injected at build time via
+ * esbuild --define. Surfaced in the plugin UI + dev console so we can verify
+ * which bundle is actually published. Falls back to 'dev' when unbuilt.
+ */
+declare const __BUILD_ID__: string
+export const BUILD_ID: string =
+  typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : 'dev'

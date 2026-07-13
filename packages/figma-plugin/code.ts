@@ -6,6 +6,11 @@
 
 import { runSyncBriefings } from './src/commands/syncBriefings'
 import { runExportComments } from './src/commands/exportComments'
+import { BUILD_ID } from './src/constants'
+
+// Log the live build id on every launch so "which bundle is published?" is
+// answerable from Plugins → Development → Open console.
+console.log('[Heimdall] plugin build ' + BUILD_ID)
 
 const command = figma.command
 
