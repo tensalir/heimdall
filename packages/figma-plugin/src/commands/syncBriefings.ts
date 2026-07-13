@@ -2969,7 +2969,7 @@ function scorePageContent(contentRoot: BaseNode): {
   }
 }
 
-async function processJobs(jobs: QueuedJob[]): Promise<Array<{ idempotencyKey: string; experimentPageName: string; pageId: string; fileUrl: string; error?: string; contentEmpty?: boolean }>> {
+async function processJobs(jobs: QueuedJob[], imagesOnly?: boolean): Promise<Array<{ idempotencyKey: string; experimentPageName: string; pageId: string; fileUrl: string; error?: string; contentEmpty?: boolean }>> {
   debugLog = []
   var root = figma.root
   var children = root.children || []
@@ -3030,6 +3030,21 @@ async function processJobs(jobs: QueuedJob[]): Promise<Array<{ idempotencyKey: s
             break
           }
         }
+      }
+
+      // Images-only mode: only top up images on an already-existing page. Skip
+      // items with no page (nothing to import into) and skip the text/layout
+      // fill entirely, so any manual edits on the page are left untouched.
+      if (imagesOnly) {
+        if (!targetPage) {
+          results.push({ idempotencyKey: job.idempotencyKey, experimentPageName: job.experimentPageName, pageId: '', fileUrl: '', error: 'No existing page — run a full Sync first' })
+          continue
+        }
+        if (typeof (targetPage as any).loadAsync === 'function') { try { await (targetPage as any).loadAsync() } catch (_) {} }
+        var imgOnlyUrl = 'https://www.figma.com/file/' + fileKey + '?node-id=' + encodeURIComponent(targetPage.id.replace(':', '-'))
+        debugLog.push({ nodeName: '__IMAGES_ONLY__', chars: 'page=' + targetPage.name + ' images=' + (job.images ? job.images.length : 0), path: [], matched: true })
+        results.push({ idempotencyKey: job.idempotencyKey, experimentPageName: job.experimentPageName, pageId: targetPage.id, fileUrl: imgOnlyUrl, outcome: 'images-only' })
+        continue
       }
 
       if (!targetPage) {
@@ -3235,7 +3250,7 @@ var uiHtml = '<html><head><style>'
   + '  <p id="batch-label" style="margin:4px 0;font-size:12px;font-weight:600;"></p>'
   + '  <ul id="briefings-list" class="list"></ul>'
   + '  <p id="msg" style="margin:8px 0;min-height:20px;font-size:11px;color:#666;"></p>'
-  + '  <div class="btn-row"><button id="load-briefings" class="outlined">Load Briefings</button><button id="sync">Sync</button></div>'
+  + '  <div class="btn-row"><button id="load-briefings" class="outlined">Load Briefings</button><button id="import-images" class="outlined">Import images</button><button id="sync">Sync</button></div>'
   + '  <div class="tool-row"><button id="create-template" class="outlined">Create Template</button><button id="migrate-widgets">Migrate Status Widgets</button><button id="fix-layouts">Fix Layouts</button></div>'
   + '  <div class="btn-row"><button id="preview-selected-asset" class="outlined">Preview Video</button></div>'
   + '  <div class="subtle-row"><button id="preview-diagnostics">Preview diagnostics</button></div>'
@@ -3256,6 +3271,7 @@ var uiHtml = '<html><head><style>'
   + 'var fileKey = "";'
   + 'var fileName = "";'
   + 'var isSyncing = false;'
+  + 'var importImagesOnly = false;'
   + 'var currentBriefings = [];'
   + 'var queuedJobIds = [];'
   + 'var existingPageNames = [];'
@@ -3549,13 +3565,14 @@ var uiHtml = '<html><head><style>'
   + '};'
   + 'document.getElementById("sync").onclick = function() {'
   + '  if (isSyncing) return;'
+  + '  var doImagesOnly = importImagesOnly; importImagesOnly = false;'
   + '  if (currentBriefings.length === 0) {'
   + '    document.getElementById("msg").textContent = "No briefings loaded yet. Wait for load or check API base/filters.";'
   + '    document.getElementById("msg").className = "err";'
   + '    return;'
   + '  }'
   + '  isSyncing = true;'
-  + '  document.getElementById("msg").textContent = "Queueing briefings...";'
+  + '  document.getElementById("msg").textContent = doImagesOnly ? "Fetching images..." : "Queueing briefings...";'
   + '  document.getElementById("sync").disabled = true;'
   + '  var cbs = document.querySelectorAll("#briefings-list input[type=checkbox]:checked");'
   + '  var selectedIdxs = [];'
@@ -3581,8 +3598,8 @@ var uiHtml = '<html><head><style>'
   + '    .then(function(data2) {'
   + '      var jobs = (data2 && data2.jobs) ? data2.jobs : [];'
   + '      if (jobs.length === 0) { document.getElementById("msg").textContent = "No jobs returned. Try again in a moment."; isSyncing = false; document.getElementById("sync").disabled = false; return; }'
-  + '      document.getElementById("msg").textContent = "Creating " + jobs.length + " page(s)...";'
-  + '      parent.postMessage({ pluginMessage: { type: "process-jobs", jobs: jobs } }, "*");'
+  + '      document.getElementById("msg").textContent = doImagesOnly ? ("Importing images for " + jobs.length + " page(s)...") : ("Creating " + jobs.length + " page(s)...");'
+  + '      parent.postMessage({ pluginMessage: { type: "process-jobs", jobs: jobs, imagesOnly: doImagesOnly } }, "*");'
   + '    })'
   + '    .catch(function(e) {'
   + '      isSyncing = false;'
@@ -3590,6 +3607,12 @@ var uiHtml = '<html><head><style>'
   + '      document.getElementById("msg").textContent = "Error: " + e.message;'
   + '      document.getElementById("msg").className = "err";'
   + '    });'
+  + '};'
+  + 'document.getElementById("import-images").onclick = function() {'
+  + '  if (isSyncing) return;'
+  + '  if (currentBriefings.length === 0) { document.getElementById("msg").textContent = "No briefings loaded yet."; document.getElementById("msg").className = "err"; return; }'
+  + '  importImagesOnly = true;'
+  + '  document.getElementById("sync").onclick();'
   + '};'
   + 'parent.postMessage({ pluginMessage: { type: "ui-handlers-bound" } }, "*");'
   + 'function fetchJobs(fk) {'
@@ -3872,6 +3895,7 @@ export function runSyncBriefings() {
     hasSync?: boolean;
     hasCreate?: boolean;
     hasSave?: boolean;
+    imagesOnly?: boolean;
   }) {
     if (msg.type === 'open-export-comments') {
       runExportComments()
@@ -4052,7 +4076,7 @@ export function runSyncBriefings() {
       }
       var results: Array<{ idempotencyKey: string; experimentPageName: string; pageId: string; fileUrl: string; error?: string; contentEmpty?: boolean }>
       try {
-        results = await processJobs(msg.jobs)
+        results = await processJobs(msg.jobs, msg.imagesOnly)
       } catch (e) {
         const err = e instanceof Error ? e.message : 'Unknown error'
         results = msg.jobs.map((job) => ({
