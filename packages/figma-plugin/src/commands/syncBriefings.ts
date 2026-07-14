@@ -2602,6 +2602,18 @@ async function resolveUploadsBody(page: PageNode): Promise<FrameNode> {
   if (!uploadsBody) {
     uploadsBody = createFallbackDocImagesTarget(page)
   }
+  // The template's References body ships with a FIXED height and
+  // clipsContent=false, so stacked references taller than the template height
+  // spill past the frame's bottom edge. Switch the content axis to hug (AUTO)
+  // so the frame grows with what we append — the References Column above it
+  // already hugs vertically, so the whole column extends cleanly with it.
+  try {
+    if (uploadsBody.layoutMode === 'VERTICAL' && uploadsBody.primaryAxisSizingMode !== 'AUTO') {
+      uploadsBody.primaryAxisSizingMode = 'AUTO'
+    } else if (uploadsBody.layoutMode === 'HORIZONTAL' && uploadsBody.counterAxisSizingMode !== 'AUTO') {
+      uploadsBody.counterAxisSizingMode = 'AUTO'
+    }
+  } catch (_) {}
   return uploadsBody
 }
 
