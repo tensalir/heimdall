@@ -2605,6 +2605,22 @@ async function resolveUploadsBody(page: PageNode): Promise<FrameNode> {
   return uploadsBody
 }
 
+/**
+ * Read-only count of placed images (children with an IMAGE fill) in a page's
+ * Uploads frame. Returns 0 when there is no Uploads frame yet. Used at boot to
+ * compare against the Monday doc's image count and flag missing assets.
+ */
+function countPlacedImages(page: PageNode): number {
+  const body = findUploadsBody(page)
+  if (!body) return 0
+  let n = 0
+  for (let i = 0; i < body.children.length; i++) {
+    const fills = (body.children[i] as { fills?: unknown }).fills
+    if (Array.isArray(fills) && fills.some((f) => f != null && (f as { type?: string }).type === 'IMAGE')) n++
+  }
+  return n
+}
+
 function alignUploadsBodyToPage(page: PageNode, uploadsBody: FrameNode): void {
   const nameBriefing = page.children.find(
     (c) => c.type === 'FRAME' && (c as FrameNode).name === 'Name Briefing'
@@ -3237,6 +3253,7 @@ var uiHtml = '<html><head><style>'
   + '.badge.populated{background:#0fa958;}'
   + '.list li.empty-import{border-left-color:#f24822;background:linear-gradient(90deg,#fdecea 0%,#fef5f3 100%);}'
   + '.badge.empty-import{background:#f24822;}'
+  + '.badge.missing{background:#e8833a;}'
   + '.hdr{display:flex;align-items:center;justify-content:space-between;}'
   + '.hdr-icons{display:inline-flex;gap:2px;}'
   + '.icon-btn{background:none;border:none;padding:3px 5px;cursor:pointer;font-size:15px;color:#888;width:auto;line-height:1;}'
@@ -3294,6 +3311,7 @@ var uiHtml = '<html><head><style>'
   + 'var existingMondayItemIdSet = {};'
   + 'var pendingResults = null;'
   + 'var pageContentStatusMap = {};'
+  + 'var placedImageCountsMap = {};'
   + 'var pageContentStatusByNameMap = {};'
   + 'var pageScoreDebugMap = {};'
   + 'function sanitizeApiBase(raw) {'
@@ -3528,6 +3546,37 @@ var uiHtml = '<html><head><style>'
   + '  updateSyncBtnCount();'
   + '  document.getElementById("msg").textContent = currentBriefings.length === 0 ? "No briefings match this batch and filters." : "";'
   + '  document.getElementById("msg").className = "";'
+  + '  checkAssets();'
+  + '}'
+  + 'function checkAssets() {'
+  + '  var synced = [];'
+  + '  for (var i = 0; i < currentBriefings.length; i++) { var it = currentBriefings[i]; if (it && it.id && (it._exists || placedImageCountsMap.hasOwnProperty(it.id))) synced.push({ id: it.id, idx: i }); }'
+  + '  if (synced.length === 0) return;'
+  + '  requestJson(HEIMDALL_API + "/api/plugin/asset-status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: synced.map(function(s){ return { id: s.id }; }) }) })'
+  + '    .then(function(data) {'
+  + '      var statuses = (data && data.statuses) ? data.statuses : [];'
+  + '      var byId = {};'
+  + '      for (var k = 0; k < statuses.length; k++) byId[statuses[k].itemId] = statuses[k];'
+  + '      for (var j = 0; j < synced.length; j++) {'
+  + '        var st = byId[synced[j].id];'
+  + '        if (!st) continue;'
+  + '        var docCount = st.docImageCount || 0;'
+  + '        var placed = placedImageCountsMap[synced[j].id] || 0;'
+  + '        if (docCount > placed) flagRowMissing(synced[j].idx, docCount - placed);'
+  + '      }'
+  + '    })'
+  + '    .catch(function(){});'
+  + '}'
+  + 'function flagRowMissing(idx, missing) {'
+  + '  var li = document.querySelector("#briefings-list li[data-idx=" + JSON.stringify(String(idx)) + "]");'
+  + '  if (!li) return;'
+  + '  var bg = li.querySelector(".badge-group");'
+  + '  if (!bg || bg.querySelector(".badge.missing")) return;'
+  + '  var b = document.createElement("span");'
+  + '  b.className = "badge missing";'
+  + '  b.textContent = "\\u26A0 " + missing + " missing";'
+  + '  b.title = missing + " image(s) in the Monday doc are not on this page. Hover the row and click Images to pull them in.";'
+  + '  bg.insertBefore(b, bg.firstChild);'
   + '}'
   + 'var MONTHS_FULL = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"];'
   + 'function buildBatchOptions(data) {'
@@ -3729,6 +3778,7 @@ var uiHtml = '<html><head><style>'
   + '    existingPageNames = Array.isArray(d.existingPages) ? d.existingPages : [];'
   + '    existingPageSummaries = Array.isArray(d.existingPageSummaries) ? d.existingPageSummaries : [];'
   + '    pageContentStatusMap = d.pageContentStatus || {};'
+  + '    placedImageCountsMap = d.placedImageCounts || {};'
   + '    pageContentStatusByNameMap = d.pageContentStatusByName || {};'
   + '    pageScoreDebugMap = d.pageScoreDebug || {};'
   + '    rebuildExistingLookupSets(Array.isArray(d.existingMondayItemIds) ? d.existingMondayItemIds : []);'
@@ -3933,6 +3983,7 @@ export function runSyncBriefings() {
       const pageContentStatus: Record<string, 'populated' | 'empty'> = {}
       const pageContentStatusByName: Record<string, 'populated' | 'empty'> = {}
       const pageScoreDebug: Record<string, unknown> = {}
+      const placedImageCounts: Record<string, number> = {}
       for (let i = 0; i < figma.root.children.length; i++) {
         const p = figma.root.children[i]
         if (p.type === 'PAGE') {
@@ -3950,6 +4001,7 @@ export function runSyncBriefings() {
             const contentRoot = findPageContentRoot(page) ?? page
             const score = scorePageContent(contentRoot)
             const status = (score.briefingSet || score.variantsPopulated > 0) ? 'populated' : 'empty'
+            if (mondayItemId) placedImageCounts[mondayItemId] = countPlacedImages(page)
             if (mondayItemId) {
               pageContentStatus[mondayItemId] = status
               pageScoreDebug[mondayItemId] = {
@@ -3999,6 +4051,7 @@ export function runSyncBriefings() {
         pageContentStatus,
         pageContentStatusByName,
         pageScoreDebug,
+        placedImageCounts,
       })
     }
     if (msg.type === 'ui-handlers-bound') {
