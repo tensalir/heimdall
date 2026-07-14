@@ -2606,22 +2606,53 @@ async function resolveUploadsBody(page: PageNode): Promise<FrameNode> {
 }
 
 /**
- * Read-only count of placed images on a page: every node carrying an IMAGE
- * fill, anywhere in the tree. Counting by fill — not by node name, and not by
- * a single "Uploads" frame — is what makes this robust: images reach a page
- * both via the plugin (rects named "doc-image-*") AND by hand (pasted rects
- * named "image-from-clipboard …", avatar ellipses, etc.), and can sit in any
- * container. Empty template placeholders ("Media Target") carry no image fill,
- * so they don't inflate the count. Verified against a real page (4 image fills
- * == the doc's 4 images). Used at boot to compare against the doc's image count.
+ * Absolute horizontal band (x-range) of the References column, or null if it
+ * can't be located. Reference images live in this column; scoping the image
+ * count to it keeps status-pill avatars and Design-column artwork (which sit
+ * far to the right) from being counted as reference images.
+ */
+function referencesXRange(page: PageNode): { min: number; max: number } | null {
+  const stack: BaseNode[] = []
+  for (let i = 0; i < page.children.length; i++) stack.push(page.children[i])
+  while (stack.length > 0) {
+    const n = stack.pop() as BaseNode
+    if ((n as { type?: string }).type === 'FRAME' && /^references/i.test((n as { name?: string }).name || '')) {
+      const bb = (n as { absoluteBoundingBox?: { x: number; width: number } | null }).absoluteBoundingBox
+      if (bb) return { min: bb.x, max: bb.x + bb.width }
+    }
+    const kids = (n as { children?: readonly BaseNode[] }).children
+    if (kids) {
+      for (let i = 0; i < kids.length; i++) stack.push(kids[i])
+    }
+  }
+  return null
+}
+
+/**
+ * Read-only count of reference images on a page: nodes carrying an IMAGE fill
+ * whose box falls within the References column's horizontal band. Scoping by
+ * the column (rather than counting every image fill on the page) keeps
+ * status-pill avatars and Design-column artwork from inflating the count, while
+ * still covering both plugin-placed ("doc-image-*") and hand-pasted images in
+ * any container. Falls back to counting all image fills if the References
+ * column can't be found. Used for the missing-assets check and as the import
+ * dedup backstop.
  */
 function countPlacedImages(page: PageNode): number {
+  const range = referencesXRange(page)
   let n = 0
   const stack: BaseNode[] = [page]
   while (stack.length > 0) {
     const node = stack.pop() as BaseNode
     const fills = (node as { fills?: unknown }).fills
-    if (Array.isArray(fills) && fills.some((f) => f != null && (f as { type?: string }).type === 'IMAGE')) n++
+    if (Array.isArray(fills) && fills.some((f) => f != null && (f as { type?: string }).type === 'IMAGE')) {
+      if (!range) {
+        n++
+      } else {
+        const bb = (node as { absoluteBoundingBox?: { x: number; width: number } | null }).absoluteBoundingBox
+        if (!bb || (bb.x < range.max && bb.x + bb.width > range.min)) n++
+      }
+    }
     const kids = (node as { children?: readonly BaseNode[] }).children
     if (kids) {
       for (let i = 0; i < kids.length; i++) stack.push(kids[i])
@@ -2892,7 +2923,6 @@ async function importImagesToPage(
   // so we never push a page above its expected image count.
   const existingImageNames = new Set<string>()
   const existingHashes = new Set<string>()
-  let currentImageCount = 0
   const stack: BaseNode[] = [page]
   while (stack.length > 0) {
     const node = stack.pop() as BaseNode
@@ -2907,7 +2937,6 @@ async function importImagesToPage(
         }
       }
       if (hasImage) {
-        currentImageCount++
         const nm = ((node as { name?: string }).name || '').trim().toLowerCase()
         if (nm) existingImageNames.add(nm)
       }
@@ -2918,6 +2947,10 @@ async function importImagesToPage(
     }
   }
 
+  // Dedup (name/hash) is page-wide above; the backstop count is scoped to the
+  // References column (countPlacedImages) so avatars / Design artwork elsewhere
+  // don't make us think the column is already full.
+  const currentImageCount = countPlacedImages(page)
   const maxToPlace = Math.max(0, images.length - currentImageCount)
   let placed = 0
   for (const img of images) {
