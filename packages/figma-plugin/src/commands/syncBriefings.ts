@@ -2606,17 +2606,26 @@ async function resolveUploadsBody(page: PageNode): Promise<FrameNode> {
 }
 
 /**
- * Read-only count of placed images (children with an IMAGE fill) in a page's
- * Uploads frame. Returns 0 when there is no Uploads frame yet. Used at boot to
- * compare against the Monday doc's image count and flag missing assets.
+ * Read-only count of placed images on a page: every node carrying an IMAGE
+ * fill, anywhere in the tree. Counting by fill — not by node name, and not by
+ * a single "Uploads" frame — is what makes this robust: images reach a page
+ * both via the plugin (rects named "doc-image-*") AND by hand (pasted rects
+ * named "image-from-clipboard …", avatar ellipses, etc.), and can sit in any
+ * container. Empty template placeholders ("Media Target") carry no image fill,
+ * so they don't inflate the count. Verified against a real page (4 image fills
+ * == the doc's 4 images). Used at boot to compare against the doc's image count.
  */
 function countPlacedImages(page: PageNode): number {
-  const body = findUploadsBody(page)
-  if (!body) return 0
   let n = 0
-  for (let i = 0; i < body.children.length; i++) {
-    const fills = (body.children[i] as { fills?: unknown }).fills
+  const stack: BaseNode[] = [page]
+  while (stack.length > 0) {
+    const node = stack.pop() as BaseNode
+    const fills = (node as { fills?: unknown }).fills
     if (Array.isArray(fills) && fills.some((f) => f != null && (f as { type?: string }).type === 'IMAGE')) n++
+    const kids = (node as { children?: readonly BaseNode[] }).children
+    if (kids) {
+      for (let i = 0; i < kids.length; i++) stack.push(kids[i])
+    }
   }
   return n
 }
@@ -2874,22 +2883,59 @@ async function importImagesToPage(
   alignUploadsBodyToPage(page as PageNode, uploadsBody)
   clearUploadsPlaceholders(uploadsBody)
 
-  let placed = 0
+  // Identity-based, page-wide dedup so re-running never duplicates — even for
+  // hand-pasted or renamed images. Across the WHOLE page we collect the names
+  // of image-bearing nodes and the content hash of every IMAGE fill; an
+  // incoming image is skipped if its name OR its content hash already exists.
+  // A count backstop then caps the total at what the doc expects — this catches
+  // pasted images whose bytes/names differ from the plugin's copy (no match),
+  // so we never push a page above its expected image count.
   const existingImageNames = new Set<string>()
-  for (let i = 0; i < uploadsBody.children.length; i++) {
-    const child = uploadsBody.children[i]
-    const name = (child.name || '').trim().toLowerCase()
-    if (name) existingImageNames.add(name)
-  }
-  for (const img of images) {
-    const dedupeName = (img.name || 'Briefing Image').trim().toLowerCase()
-    if (existingImageNames.has(dedupeName)) {
-      continue
+  const existingHashes = new Set<string>()
+  let currentImageCount = 0
+  const stack: BaseNode[] = [page]
+  while (stack.length > 0) {
+    const node = stack.pop() as BaseNode
+    const fills = (node as { fills?: unknown }).fills
+    if (Array.isArray(fills)) {
+      let hasImage = false
+      for (const f of fills) {
+        if (f != null && (f as { type?: string }).type === 'IMAGE') {
+          hasImage = true
+          const h = (f as { imageHash?: string | null }).imageHash
+          if (h) existingHashes.add(h)
+        }
+      }
+      if (hasImage) {
+        currentImageCount++
+        const nm = ((node as { name?: string }).name || '').trim().toLowerCase()
+        if (nm) existingImageNames.add(nm)
+      }
     }
+    const kids = (node as { children?: readonly BaseNode[] }).children
+    if (kids) {
+      for (let i = 0; i < kids.length; i++) stack.push(kids[i])
+    }
+  }
+
+  const maxToPlace = Math.max(0, images.length - currentImageCount)
+  let placed = 0
+  for (const img of images) {
+    if (placed >= maxToPlace) break
+    const dedupeName = (img.name || 'Briefing Image').trim().toLowerCase()
+    if (existingImageNames.has(dedupeName)) continue
+    let hash: string | null = null
+    try {
+      hash = figma.createImage(img.bytes).hash
+    } catch (_) {
+      hash = null
+    }
+    if (hash && existingHashes.has(hash)) continue
     const result = await placeImageInUploads(uploadsBody, img.bytes, img.name)
     if (result.ok) {
       placed++
       existingImageNames.add(dedupeName)
+      if (hash) existingHashes.add(hash)
     } else {
       failures.push({ name: img.name, reason: result.reason })
     }
