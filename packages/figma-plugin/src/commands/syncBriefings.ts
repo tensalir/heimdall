@@ -2783,7 +2783,15 @@ async function placeImageInUploads(
     const rect = figma.createRectangle()
     rect.name = imageName || 'Briefing Image'
 
-    const columnWidth = uploadsBody.width > 0 ? uploadsBody.width : 260
+    // Size to the auto-layout CONTENT width (frame width minus horizontal
+    // padding), not the full frame width. layoutAlign='STRETCH' shrinks the
+    // rect to the content width; if the height was computed for the wider frame
+    // the image ends up letterboxed and doesn't sit flush. Using content width
+    // keeps the aspect exact so images fill the column cleanly.
+    const frameWidth = uploadsBody.width > 0 ? uploadsBody.width : 260
+    const padL = (uploadsBody as { paddingLeft?: number }).paddingLeft || 0
+    const padR = (uploadsBody as { paddingRight?: number }).paddingRight || 0
+    const columnWidth = Math.max(1, frameWidth - padL - padR)
     let thumbWidth = columnWidth
     let thumbHeight = Math.round(columnWidth * 0.6)
     try {
