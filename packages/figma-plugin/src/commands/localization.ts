@@ -400,20 +400,27 @@ async function runImport(mode) {
   if (!file) return say('Choose the filled .xlsx first.', 'err');
   say(mode === 'commit' ? 'Importing…' : 'Checking…');
   var b64 = await readFileBase64(file);
-  var report = await api('/api/plugin/localization/import', {
-    method: 'POST', json: {
-      project_id: PROJECT, xlsx_base64: b64, mode: mode, confirm: mode === 'commit' ? true : undefined
-    }
-  });
+  var body = { xlsx_base64: b64, mode: mode, confirm: mode === 'commit' ? true : undefined };
+  // Only pin the sheet when we know it. The workbook carries its own run id in
+  // the hidden Key column, so the server can place it — and if the file came
+  // from a different sheet than the one open here, sending PROJECT would hide
+  // that mismatch instead of reporting it.
+  if (PROJECT) body.project_id = PROJECT;
+  var report = await api('/api/plugin/localization/import', { method: 'POST', json: body });
   var t = report.totals || {};
-  return { report: report, summary: t.rows + ' row(s), ' + t.cells + ' cell(s): ' +
-    (t.created || 0) + ' new, ' + (t.updated || 0) + ' updated, ' + (t.unmatched || 0) + ' unmatched' };
+  var summary = t.rows + ' row(s), ' + t.cells + ' cell(s): ' +
+    (t.created || 0) + ' new, ' + (t.updated || 0) + ' updated, ' + (t.unmatched || 0) + ' unmatched';
+  // Warnings are where silent data loss shows up — an agency renaming "NL" to
+  // "Dutch" imports cleanly and simply lacks a language unless we say so.
+  var warns = report.warnings || [];
+  if (warns.length) summary += String.fromCharCode(10, 10) + '! ' + warns.join(String.fromCharCode(10) + '! ');
+  return { report: report, summary: summary, warned: warns.length > 0 };
 }
 
 $('btn-preview').onclick = async function () {
   try {
     var r = await runImport('preview');
-    say('Preview — ' + r.summary + '. Nothing written yet.', 'ok');
+    say('Preview — ' + r.summary + String.fromCharCode(10) + 'Nothing written yet.', r.warned ? 'err' : 'ok');
     $('btn-commit').disabled = false;
   } catch (e) { say(String(e.message || e), 'err'); }
 };
@@ -421,7 +428,7 @@ $('btn-preview').onclick = async function () {
 $('btn-commit').onclick = async function () {
   try {
     var r = await runImport('commit');
-    say('Imported — ' + r.summary + '.', 'ok');
+    say('Imported — ' + r.summary, r.warned ? 'err' : 'ok');
     $('btn-push').disabled = false;
   } catch (e) { say(String(e.message || e), 'err'); }
 };
