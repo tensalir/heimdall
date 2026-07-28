@@ -43,6 +43,30 @@ async function signHmacSha256(secret: string, message: string): Promise<string> 
 }
 
 /**
+ * The exact string Babylon hashes. Exported so a contract test can pin it
+ * against fixed vectors that Babylon's own test asserts too — the two
+ * implementations share no code, so nothing else keeps them in step.
+ */
+export function babylonCanonicalString(
+  timestamp: string,
+  method: string,
+  path: string,
+  rawBody: string,
+): string {
+  return `${timestamp}.${method.toUpperCase()}.${path}.${rawBody}`
+}
+
+export async function signBabylonRequest(
+  secret: string,
+  timestamp: string,
+  method: string,
+  path: string,
+  rawBody: string,
+): Promise<string> {
+  return signHmacSha256(secret, babylonCanonicalString(timestamp, method, path, rawBody))
+}
+
+/**
  * Base origin for Babylon. Derived from the configured ingest URL so no extra
  * env var is needed, with an explicit override if the two ever diverge.
  */
@@ -90,7 +114,7 @@ export async function callBabylonPlugin(
 
   const rawBody = body ?? ''
   const timestamp = String(Date.now())
-  const signature = await signHmacSha256(secret, `${timestamp}.${method}.${path}.${rawBody}`)
+  const signature = await signBabylonRequest(secret, timestamp, method, path, rawBody)
 
   const res = await fetch(`${origin}${path}`, {
     method,
