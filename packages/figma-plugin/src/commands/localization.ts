@@ -25,7 +25,9 @@ const TOKEN_KEY = 'heimdallLocalizationToken'
 /** Last-used target languages, so the picker is not re-ticked every run. */
 const LANGS_KEY = 'heimdallLocalizationLangs'
 
-const localizationUiHtml = `<html><head><style>
+/** Exported so the root test suite can lift the pure decision helpers out of
+ *  it — the iframe body cannot import, so this string is the only copy. */
+export const localizationUiHtml = `<html><head><style>
   * { box-sizing: border-box; }
   body { font: 11px/1.45 Inter, -apple-system, sans-serif; margin: 0; padding: 12px; color: #1a1a1a; }
   h2 { font-size: 12px; margin: 0 0 8px; }
@@ -115,6 +117,9 @@ var VERIFY_URI = '';
 var CURRENT_PAGE_ID = '';
 var SAVED_LANGS = [];
 var RESUMED_AT = '';
+// How this document got its working sheet — 'extracted' here, or 'imported'
+// when a returned pack supplied it. Only affects what the banner claims.
+var SHEET_SOURCE = 'extracted';
 
 var LANGS = ['nl','fr-ca','es-419','fr','de','es','it','ja','ko','pt-br','sv','da','fi','no'];
 
@@ -235,6 +240,7 @@ function restoreState(raw) {
       TABS = s.tabs || [];
       RUN_IDS = s.runIds || [];
       RESUMED_AT = s.updatedAt || '';
+      SHEET_SOURCE = s.source || 'extracted';
     }
   } catch (e) { /* corrupt state is not worth failing over */ }
 }
@@ -242,23 +248,32 @@ function restoreState(raw) {
 function persistState() {
   send('save-state', {
     state: JSON.stringify({
-      projectId: PROJECT, tabs: TABS, runIds: RUN_IDS, updatedAt: new Date().toISOString()
+      projectId: PROJECT, tabs: TABS, runIds: RUN_IDS,
+      source: SHEET_SOURCE, updatedAt: new Date().toISOString()
     })
   });
 }
 
-/** Enable only the steps that can actually succeed right now. */
+/**
+ * Enable only the steps that can actually succeed right now.
+ *
+ * Step 4 is deliberately NOT gated on having a sheet. Whoever imports a
+ * returned pack is usually not whoever exported it — the agency round trip
+ * takes days — and the workbook names its own run in every row's hidden Key
+ * column. Requiring an extraction in this document first asked her for
+ * something she had no way to supply, and left Preview greyed out for good.
+ */
 function renderStage() {
   var hasSheet = !!PROJECT && RUN_IDS.length > 0;
   $('btn-pack').disabled = !hasSheet;
-  $('btn-preview').disabled = !hasSheet || !$('file').files.length;
+  $('btn-preview').disabled = !$('file').files.length;
   $('btn-commit').disabled = true;
   $('btn-push').disabled = !hasSheet;
   $('resume').className = hasSheet ? 'resume' : 'resume hide';
   if (hasSheet) {
     var when = RESUMED_AT ? new Date(RESUMED_AT).toLocaleString() : '';
     $('resume').textContent = 'Working sheet: ' + (TABS.map(function (t) { return t.name; }).join(', ') || 'ready') +
-      ' — ' + RUN_IDS.length + ' page(s)' + (when ? ' · extracted ' + when : '');
+      ' — ' + RUN_IDS.length + ' page(s)' + (when ? ' · ' + SHEET_SOURCE + ' ' + when : '');
   }
 }
 
@@ -344,6 +359,8 @@ $('btn-extract').onclick = async function () {
             '" (hidden layers prune their whole subtree).', 'info');
       }
     }
+    SHEET_SOURCE = 'extracted';
+    RESUMED_AT = new Date().toISOString();
     persistState();
     renderStage();
     // The pack is what she came for, so produce it without a second click.
@@ -391,7 +408,7 @@ function readFileBase64(file) {
 }
 
 $('file').onchange = function () {
-  $('btn-preview').disabled = !$('file').files.length || !PROJECT;
+  $('btn-preview').disabled = !$('file').files.length;
   $('btn-commit').disabled = true;
 };
 
@@ -417,10 +434,69 @@ async function runImport(mode) {
   return { report: report, summary: summary, warned: warns.length > 0 };
 }
 
+/**
+ * Say out loud which file and pages the workbook resolved to. Uploading the
+ * wrong pack is the easy mistake here, and it should be visible in the preview
+ * rather than after the write.
+ */
+function describeTarget(report) {
+  var ctx = report.figma || {};
+  var pages = ctx.pages || [];
+  if (!pages.length) return 'Could not tie this workbook to a Babylon run.';
+  var names = pages.map(function (p) { return p.page_name || p.page_node_id; }).join(', ');
+  if (!ctx.file_key) return 'Covers pages in more than one Figma file: ' + names + '.';
+  var where = ctx.file_name || ctx.file_key;
+  if (!FILE_KEY) return 'Matches ' + where + ' → ' + names + '.';
+  return 'Matches ' + where + ' → ' + names +
+    (ctx.file_key === FILE_KEY ? ' (this document).' : ' — NOT the document you have open.');
+}
+
+/**
+ * Take the runs to push from the workbook that was just imported, rather than
+ * from whatever this document happens to have extracted. That is what lets
+ * someone who never ran steps 1-3 finish the round trip.
+ *
+ * The file-key check is not belt-and-braces. applyLocalePackage resolves
+ * source_page_id through getNodeByIdAsync, and Figma node ids are unique only
+ * within a file — so a pack from the wrong file does not fail cleanly. It
+ * finds whichever page happens to share that id, clones it, and writes another
+ * file's translations into it.
+ *
+ * Returns '' when the sheet was adopted, or the reason step 5 has to stay shut.
+ */
+function adoptImportedSheet(report) {
+  var ctx = report.figma || {};
+  var pages = ctx.pages || [];
+  if (!pages.length) {
+    return 'No page in this workbook could be tied to a Babylon run, so there is nothing to push.';
+  }
+  if (!ctx.file_key) {
+    return 'This pack covers more than one Figma file, so it cannot be pushed from a single document. Split it per file.';
+  }
+  if (!FILE_KEY) {
+    return 'Paste this document’s URL at the top so the plugin can confirm the pack belongs here.';
+  }
+  if (ctx.file_key !== FILE_KEY) {
+    return 'That pack belongs to a different Figma file (' + (ctx.file_name || ctx.file_key) +
+      '). The translations are saved; open that file and push from there.';
+  }
+  PROJECT = pages[0].project_id || PROJECT;
+  TABS = pages.map(function (p) { return { id: p.page_node_id, name: p.page_name }; });
+  RUN_IDS = [];
+  for (var i = 0; i < pages.length; i++) {
+    if (pages[i].run_id && RUN_IDS.indexOf(pages[i].run_id) === -1) RUN_IDS.push(pages[i].run_id);
+  }
+  SHEET_SOURCE = 'imported';
+  RESUMED_AT = new Date().toISOString();
+  persistState();
+  return '';
+}
+
 $('btn-preview').onclick = async function () {
   try {
     var r = await runImport('preview');
-    say('Preview — ' + r.summary + String.fromCharCode(10) + 'Nothing written yet.', r.warned ? 'err' : 'ok');
+    say('Preview — ' + r.summary + String.fromCharCode(10) + describeTarget(r.report) +
+        String.fromCharCode(10) + 'Nothing written yet.', r.warned ? 'err' : 'ok');
     $('btn-commit').disabled = false;
   } catch (e) { say(String(e.message || e), 'err'); }
 };
@@ -428,8 +504,12 @@ $('btn-preview').onclick = async function () {
 $('btn-commit').onclick = async function () {
   try {
     var r = await runImport('commit');
-    say('Imported — ' + r.summary, r.warned ? 'err' : 'ok');
-    $('btn-push').disabled = false;
+    var blocked = adoptImportedSheet(r.report);
+    // renderStage() opens step 5 when the sheet was adopted, and closes step 4
+    // so the same file is not committed twice by a second click.
+    renderStage();
+    say('Imported — ' + r.summary + (blocked ? String.fromCharCode(10, 10) + '! ' + blocked : ''),
+        (r.warned || blocked) ? 'err' : 'ok');
   } catch (e) { say(String(e.message || e), 'err'); }
 };
 
