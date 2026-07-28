@@ -8,7 +8,8 @@
   "menu": [
     { "name": "Sync Briefings", "command": "sync-briefings" },
     { "separator": true },
-    { "name": "Export Comments", "command": "export-comments" }
+    { "name": "Export Comments", "command": "export-comments" },
+    { "name": "Localization", "command": "localization" }
   ],
   "networkAccess": {
     "allowedDomains": ["https://bifrost-rose.vercel.app", "https://*.vercel.app", "https://api.figma.com"],
