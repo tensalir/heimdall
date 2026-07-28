@@ -44,6 +44,7 @@ const localizationUiHtml = `<html><head><style>
   .status.ok { background: #e8f7ee; color: #0f6b33; }
   .status.info { background: #f2f2f2; }
   .hide { display: none; }
+  .resume { background:#eef6ff; border:1px solid #cfe6ff; border-radius:6px; padding:6px 8px; margin-bottom:10px; font-size:10.5px; color:#0b5aa6; }
   .step { font-weight: 600; margin-bottom: 6px; }
   input[type=file] { font: inherit; width: 100%; }
 </style></head><body>
@@ -63,6 +64,7 @@ const localizationUiHtml = `<html><head><style>
 </div>
 
 <div id="main-view" class="hide">
+  <div id="resume" class="resume hide"></div>
   <div class="card hide" id="filekey-card">
     <div class="step">This file</div>
     <p class="muted">Figma only exposes the file key to published plugins, so paste this file's URL once. It is saved on the document, so nobody has to do it again.</p>
@@ -112,6 +114,7 @@ var POLL_TIMER = null;
 var VERIFY_URI = '';
 var CURRENT_PAGE_ID = '';
 var SAVED_LANGS = [];
+var RESUMED_AT = '';
 
 var LANGS = ['nl','fr-ca','es-419','fr','de','es','it','ja','ko','pt-br','sv','da','fi','no'];
 
@@ -215,6 +218,48 @@ function showMain() {
   renderFileKey();
   renderPages();
   renderLangs();
+  renderStage();
+}
+
+/**
+ * Restore the sheet this file is working through. Without this, reopening the
+ * plugin (or a colleague opening it) left PROJECT null, and Preview failed
+ * server-side with "Provide exactly one of project_id, file_key, batch_id".
+ */
+function restoreState(raw) {
+  if (!raw) return;
+  try {
+    var s = JSON.parse(raw);
+    if (s && s.projectId) {
+      PROJECT = s.projectId;
+      TABS = s.tabs || [];
+      RUN_IDS = s.runIds || [];
+      RESUMED_AT = s.updatedAt || '';
+    }
+  } catch (e) { /* corrupt state is not worth failing over */ }
+}
+
+function persistState() {
+  send('save-state', {
+    state: JSON.stringify({
+      projectId: PROJECT, tabs: TABS, runIds: RUN_IDS, updatedAt: new Date().toISOString()
+    })
+  });
+}
+
+/** Enable only the steps that can actually succeed right now. */
+function renderStage() {
+  var hasSheet = !!PROJECT && RUN_IDS.length > 0;
+  $('btn-pack').disabled = !hasSheet;
+  $('btn-preview').disabled = !hasSheet || !$('file').files.length;
+  $('btn-commit').disabled = true;
+  $('btn-push').disabled = !hasSheet;
+  $('resume').className = hasSheet ? 'resume' : 'resume hide';
+  if (hasSheet) {
+    var when = RESUMED_AT ? new Date(RESUMED_AT).toLocaleString() : '';
+    $('resume').textContent = 'Working sheet: ' + (TABS.map(function (t) { return t.name; }).join(', ') || 'ready') +
+      ' — ' + RUN_IDS.length + ' page(s)' + (when ? ' · extracted ' + when : '');
+  }
 }
 
 function renderFileKey() {
@@ -299,7 +344,8 @@ $('btn-extract').onclick = async function () {
             '" (hidden layers prune their whole subtree).', 'info');
       }
     }
-    $('btn-pack').disabled = false;
+    persistState();
+    renderStage();
     // The pack is what she came for, so produce it without a second click.
     // The button stays for re-downloads.
     say('Extracted ' + RUN_IDS.length + ' page(s). Building the pack…', 'ok');
@@ -345,7 +391,7 @@ function readFileBase64(file) {
 }
 
 $('file').onchange = function () {
-  $('btn-preview').disabled = !$('file').files.length;
+  $('btn-preview').disabled = !$('file').files.length || !PROJECT;
   $('btn-commit').disabled = true;
 };
 
@@ -408,6 +454,7 @@ onmessage = function (event) {
     PAGES = msg.pages || [];
     CURRENT_PAGE_ID = msg.currentPageId || '';
     SAVED_LANGS = msg.langs || [];
+    restoreState(msg.state);
     if (TOKEN) showMain(); else { $('pair-view').className = ''; say('Not connected yet.'); }
   }
   if (msg.type === 'file-key') {
@@ -575,6 +622,7 @@ export function runLocalization(): void {
     token?: string
     fileKey?: string
     langs?: string[]
+    state?: string
     pkg?: LocalizationPackage
   }) {
     if (msg.type === 'get-context') {
@@ -593,11 +641,22 @@ export function runLocalization(): void {
         // Most runs use the same language set; remembering it saves re-ticking
         // three boxes every time.
         langs: Array.isArray(savedLangs) ? savedLangs : [],
+        // The sheet this file is currently working through, so import and push
+        // still work after the plugin is closed or opened by someone else.
+        state: figma.root.getSharedPluginData('babylon', 'localizationState') || '',
       })
     }
 
     if (msg.type === 'save-langs') {
       await figma.clientStorage.setAsync(LANGS_KEY, Array.isArray(msg.langs) ? msg.langs : [])
+    }
+
+    if (msg.type === 'save-state') {
+      // On the DOCUMENT, not clientStorage: the agency round trip spans days,
+      // and whoever imports the returned pack is often not whoever extracted.
+      // Storing it per-user meant the importer had no project id and the call
+      // failed with "Provide exactly one of project_id, file_key, batch_id".
+      figma.root.setSharedPluginData('babylon', 'localizationState', msg.state ?? '')
     }
 
     if (msg.type === 'save-file-key') {
