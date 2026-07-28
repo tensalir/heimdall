@@ -37,6 +37,12 @@ const envSchema = z.object({
   VOYAGE_API_KEY: z.string().min(1).optional(),
   /** Babylon localization ingest endpoint for plugin wordcount runs. */
   LOCALIZATION_BABYLON_INGEST_URL: z.string().url().optional(),
+  /**
+   * Babylon origin for the brokered plugin API. Optional: when unset it is
+   * derived from LOCALIZATION_BABYLON_INGEST_URL, so the common case needs no
+   * extra configuration. Set it only if the two ever diverge.
+   */
+  LOCALIZATION_BABYLON_BASE_URL: z.string().url().optional(),
   /** Shared HMAC secret for Heimdall -> Babylon ingest authentication. */
   LOCALIZATION_BABYLON_SHARED_SECRET: z.string().min(1).optional(),
   /** Optional key identifier header for key rotation support. */
