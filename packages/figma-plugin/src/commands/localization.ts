@@ -22,6 +22,8 @@ import { DEFAULT_HEIMDALL_API } from '../constants'
 
 /** Separate from `heimdallPluginToken` on purpose — see the note above. */
 const TOKEN_KEY = 'heimdallLocalizationToken'
+/** Last-used target languages, so the picker is not re-ticked every run. */
+const LANGS_KEY = 'heimdallLocalizationLangs'
 
 const localizationUiHtml = `<html><head><style>
   * { box-sizing: border-box; }
@@ -108,6 +110,8 @@ var RUN_IDS = [];
 var DEVICE_CODE = '';
 var POLL_TIMER = null;
 var VERIFY_URI = '';
+var CURRENT_PAGE_ID = '';
+var SAVED_LANGS = [];
 
 var LANGS = ['nl','fr-ca','es-419','fr','de','es','it','ja','ko','pt-br','sv','da','fi','no'];
 
@@ -226,13 +230,18 @@ $('filekey-save').onclick = function () {
 };
 
 function renderPages() {
-  $('pages').innerHTML = PAGES.map(function (p, i) {
-    return '<label class="item"><input type="checkbox" data-page="' + p.id + '"' + (i === 0 ? ' checked' : '') + '> ' + escapeHtml(p.name) + '</label>';
+  // Default to the page she is on; fall back to the first if it is not listed.
+  var preferred = CURRENT_PAGE_ID && PAGES.some(function (p) { return p.id === CURRENT_PAGE_ID; })
+    ? CURRENT_PAGE_ID : (PAGES[0] ? PAGES[0].id : '');
+  $('pages').innerHTML = PAGES.map(function (p) {
+    return '<label class="item"><input type="checkbox" data-page="' + p.id + '"' +
+      (p.id === preferred ? ' checked' : '') + '> ' + escapeHtml(p.name) + '</label>';
   }).join('');
 }
 function renderLangs() {
   $('langs').innerHTML = LANGS.map(function (l) {
-    return '<label class="item"><input type="checkbox" data-lang="' + l + '"> ' + l.toUpperCase() + '</label>';
+    var on = SAVED_LANGS.indexOf(l) !== -1;
+    return '<label class="item"><input type="checkbox" data-lang="' + l + '"' + (on ? ' checked' : '') + '> ' + l.toUpperCase() + '</label>';
   }).join('');
 }
 function escapeHtml(s) {
@@ -258,6 +267,7 @@ $('btn-extract').onclick = async function () {
   if (!langs.length) return say('Select at least one language.', 'err');
 
   $('btn-extract').disabled = true;
+  send('save-langs', { langs: langs });
   try {
     say('Creating sheet…');
     var sheet = await api('/api/plugin/localization/sheet', {
@@ -290,7 +300,10 @@ $('btn-extract').onclick = async function () {
       }
     }
     $('btn-pack').disabled = false;
-    say('Extracted ' + RUN_IDS.length + ' page(s). Download the pack for the agency.', 'ok');
+    // The pack is what she came for, so produce it without a second click.
+    // The button stays for re-downloads.
+    say('Extracted ' + RUN_IDS.length + ' page(s). Building the pack…', 'ok');
+    await downloadPack();
   } catch (e) {
     say(String(e.message || e), 'err');
   } finally {
@@ -298,7 +311,9 @@ $('btn-extract').onclick = async function () {
   }
 };
 
-$('btn-pack').onclick = async function () {
+$('btn-pack').onclick = function () { downloadPack(); };
+
+async function downloadPack() {
   try {
     say('Building workbook…');
     // Fetched rather than window.open'd: the download needs the Authorization
@@ -307,12 +322,15 @@ $('btn-pack').onclick = async function () {
     var blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'translation_pack.xlsx';
+    // Name it after the page and date — several packs end up in Downloads
+    // together, and "translation_pack.xlsx (3)" helps nobody.
+    var label = (TABS[0] && TABS[0].name ? TABS[0].name : 'pack').replace(/[^A-Za-z0-9]+/g, '_');
+    a.download = 'translation_pack_' + label + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
     say('Downloaded. Send it to the agency, then upload the filled file below.', 'ok');
   } catch (e) { say(String(e.message || e), 'err'); }
-};
+}
 
 function readFileBase64(file) {
   return new Promise(function (resolve, reject) {
@@ -388,6 +406,8 @@ onmessage = function (event) {
     TOKEN = msg.token || '';
     FILE_KEY = msg.fileKey || '';
     PAGES = msg.pages || [];
+    CURRENT_PAGE_ID = msg.currentPageId || '';
+    SAVED_LANGS = msg.langs || [];
     if (TOKEN) showMain(); else { $('pair-view').className = ''; say('Not connected yet.'); }
   }
   if (msg.type === 'file-key') {
@@ -554,19 +574,30 @@ export function runLocalization(): void {
     type: string
     token?: string
     fileKey?: string
+    langs?: string[]
     pkg?: LocalizationPackage
   }) {
     if (msg.type === 'get-context') {
       const savedBase = await figma.clientStorage.getAsync('heimdallApiBase')
       const apiBase = typeof savedBase === 'string' && savedBase.trim() ? savedBase.trim() : DEFAULT_HEIMDALL_API
       const savedToken = await figma.clientStorage.getAsync(TOKEN_KEY)
+      const savedLangs = await figma.clientStorage.getAsync(LANGS_KEY)
       figma.ui.postMessage({
         type: 'context',
         apiBase,
         token: typeof savedToken === 'string' ? savedToken : '',
         fileKey: resolveFileKey(),
         pages: figma.root.children.map((p) => ({ id: p.id, name: p.name })),
+        // Pre-select what she is actually looking at, rather than page one.
+        currentPageId: figma.currentPage.id,
+        // Most runs use the same language set; remembering it saves re-ticking
+        // three boxes every time.
+        langs: Array.isArray(savedLangs) ? savedLangs : [],
       })
+    }
+
+    if (msg.type === 'save-langs') {
+      await figma.clientStorage.setAsync(LANGS_KEY, Array.isArray(msg.langs) ? msg.langs : [])
     }
 
     if (msg.type === 'save-file-key') {
