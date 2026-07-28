@@ -72,6 +72,12 @@ export const localizationUiHtml = `<html><head><style>
   .verdict.warn { background: #fff6e5; border: 1px solid #f0d3a0; color: #8a5a00; }
   .verdict.bad { background: #ffe9e9; border: 1px solid #f3b7b7; color: #9b1c1c; }
   .verdict b { display: block; margin-bottom: 3px; }
+  /* Asked before Publish rather than in a modal partway through, so nothing is
+     half-applied while someone decides. */
+  .collide { margin-top: 8px; padding: 8px; border: 1px solid #cfe6ff; background: #f5fbff; border-radius: 6px; font-size: 10.5px; }
+  .collide b { display: block; margin-bottom: 5px; color: #0b5aa6; }
+  .opt { display: flex; gap: 6px; align-items: flex-start; padding: 3px 0; }
+  .opt input { margin-top: 2px; }
 </style></head><body>
 
 <div id="pair-view" class="hide">
@@ -134,6 +140,15 @@ export const localizationUiHtml = `<html><head><style>
       <p class="muted" style="margin-top:0">Choose the .xlsx the agency sent back. It is checked as soon as you pick it — nothing is written until you publish.</p>
       <input type="file" id="file" accept=".xlsx" />
       <div id="verdict" class="verdict hide"></div>
+      <div id="collide" class="collide hide">
+        <b id="collide-head"></b>
+        <label class="opt"><input type="radio" name="mode" value="update" checked>
+          <span><strong>Update them</strong> — keep the pages, rewrite the text. Comments and anything else on them stay.</span></label>
+        <label class="opt"><input type="radio" name="mode" value="duplicate">
+          <span><strong>Keep both</strong> — leave them alone and add copies named _A, _B…</span></label>
+        <label class="opt"><input type="radio" name="mode" value="replace">
+          <span><strong>Delete and recreate</strong> — start from the source page again. Anything else on the old pages goes with them.</span></label>
+      </div>
       <div class="row" style="margin-top:8px"><button class="primary" id="btn-publish" disabled>Publish to Figma</button></div>
       <div class="hint hide" id="hint-push">Add this file's link above to publish the pages from here. The translations can still be saved without it.</div>
     </div>
@@ -494,6 +509,7 @@ $('btn-another').onclick = function () {
   $('file').value = '';
   LAST_PLAN = null;
   $('verdict').className = 'verdict hide';
+  $('collide').className = 'collide hide';
   $('btn-another').className = 'hide';
   $('btn-publish').disabled = true;
   $('btn-publish').textContent = 'Publish to Figma';
@@ -610,11 +626,45 @@ function renderVerdict(plan, r) {
   el.innerHTML = '<b>' + escapeHtml(head) + '</b>' + escapeHtml(lines.join(String.fromCharCode(10)));
 }
 
+/** One run may cover several sheets; ask about each run once. */
+function runsForCollisionCheck(plan) {
+  var byRun = {};
+  for (var i = 0; i < plan.pages.length; i++) {
+    var p = plan.pages[i];
+    if (!p.run_id) continue;
+    if (!byRun[p.run_id]) byRun[p.run_id] = { runId: p.run_id, locales: [] };
+    byRun[p.run_id].locales = uniq(byRun[p.run_id].locales.concat(p.target_languages || []));
+  }
+  return Object.keys(byRun).map(function (k) { return byRun[k]; });
+}
+
+function renderCollisions(existing) {
+  if (!existing.length) {
+    $('collide').className = 'collide hide';
+    return;
+  }
+  // Locale page names usually already carry the locale — "Page 1 (ES-419)" —
+  // so only spell it out when the name does not.
+  var names = existing.map(function (e) {
+    return e.name.toUpperCase().indexOf(e.locale) === -1 ? e.name + ' (' + e.locale + ')' : e.name;
+  });
+  $('collide-head').textContent = existing.length === 1
+    ? 'One locale page already exists: ' + names[0] + '. What should happen to it?'
+    : existing.length + ' locale pages already exist: ' + names.join(', ') + '. What should happen to them?';
+  $('collide').className = 'collide';
+}
+
+function chosenMode() {
+  var picked = document.querySelector('input[name="mode"]:checked');
+  return picked ? picked.value : 'update';
+}
+
 async function runCheck() {
   LAST_PLAN = null;
   $('btn-publish').disabled = true;
   $('btn-another').className = 'hide';
   $('verdict').className = 'verdict hide';
+  $('collide').className = 'collide hide';
   if (!$('file').files.length) return;
   try {
     var r = await runImport('preview');
@@ -623,6 +673,8 @@ async function runCheck() {
     renderVerdict(plan, r);
     $('btn-publish').textContent = publishLabel(plan);
     $('btn-publish').disabled = plan.state === 'blocked';
+    // Only worth asking when the pages would actually be created here.
+    if (plan.state === 'ready') send('check-locale-pages', { runs: runsForCollisionCheck(plan) });
     say(plan.state === 'blocked' ? 'Nothing was written.' : 'Checked. Nothing written yet.',
         plan.state === 'blocked' ? 'err' : 'info');
   } catch (e) {
@@ -648,11 +700,14 @@ $('btn-publish').onclick = async function () {
       return;
     }
     renderStage();
+    // Read once, so a stray click on the radios mid-publish cannot make half
+    // the pages update and the other half get replaced.
+    var mode = chosenMode();
     for (var i = 0; i < RUN_IDS.length; i++) {
       say('Publishing ' + (i + 1) + '/' + RUN_IDS.length + '…');
       await api('/api/plugin/localization/approve', { method: 'POST', json: { run_id: RUN_IDS[i] } });
       var pkg = await api('/api/plugin/localization/locale-package?runId=' + encodeURIComponent(RUN_IDS[i]));
-      send('apply-locales', { pkg: pkg });
+      send('apply-locales', { pkg: pkg, mode: mode });
     }
     say('Sent to Figma. Creating the pages…');
   } catch (e) {
@@ -684,6 +739,9 @@ onmessage = function (event) {
     // reason alone. Re-check so the verdict reflects what is now true.
     if (LAST_PLAN && LAST_PLAN.state === 'save-only' && $('file').files.length) runCheck();
     else say('Saved for this document.', 'ok');
+  }
+  if (msg.type === 'locale-pages') {
+    renderCollisions(msg.existing || []);
   }
   if (msg.type === 'applied') {
     say(msg.summary, msg.errors ? 'err' : 'ok');
@@ -766,7 +824,69 @@ async function walkAndApply(
   for (let i = 0; i < n; i++) await walkAndApply(sc[i]!, dc[i], dict, tally)
 }
 
-async function applyLocalePackage(pkg: LocalizationPackage): Promise<string> {
+/** What to do when a locale page for this run already exists. */
+type ExistingPageMode = 'update' | 'replace' | 'duplicate'
+
+/**
+ * The canonical locale page for a run, if there is one.
+ *
+ * Copies made by 'duplicate' carry the same locale/runId tags — they are locale
+ * pages, and a human should see them as such — but also a `copyOf` marker, and
+ * this lookup skips them. Without that, the next publish would update whichever
+ * copy happened to sit first in the page order.
+ */
+export function findLocalePage(runId: string, LOCALE: string): PageNode | null {
+  for (const p of figma.root.children) {
+    if (p.getSharedPluginData('babylon', 'locale') === LOCALE &&
+        p.getSharedPluginData('babylon', 'runId') === runId &&
+        !p.getSharedPluginData('babylon', 'copyOf')) return p
+  }
+  return null
+}
+
+/** Spreadsheet-column suffixes: _A … _Z, then _AA, _AB … */
+export function suffixFor(index: number): string {
+  let n = index
+  let out = ''
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out
+    n = Math.floor(n / 26) - 1
+  } while (n >= 0)
+  return '_' + out
+}
+
+/** First `base_X` nobody is using yet. Page names are not unique in Figma, so
+ *  this checks the names actually present rather than assuming a count. */
+export function nextCopyName(base: string): string {
+  const taken: Record<string, true> = {}
+  for (const p of figma.root.children) taken[p.name] = true
+  for (let i = 0; i < 700; i++) {
+    const candidate = base + suffixFor(i)
+    if (!taken[candidate]) return candidate
+  }
+  return base + '_copy'
+}
+
+/** Which locale pages already exist, so the UI can ask before anything runs
+ *  rather than interrupting halfway through. */
+export function existingLocalePages(
+  runs: Array<{ runId: string; locales: string[] }>,
+): Array<{ runId: string; locale: string; name: string }> {
+  const out: Array<{ runId: string; locale: string; name: string }> = []
+  for (const run of runs) {
+    for (const lang of run.locales || []) {
+      const LOCALE = String(lang).toUpperCase()
+      const page = findLocalePage(run.runId, LOCALE)
+      if (page) out.push({ runId: run.runId, locale: LOCALE, name: page.name })
+    }
+  }
+  return out
+}
+
+async function applyLocalePackage(
+  pkg: LocalizationPackage,
+  mode: ExistingPageMode,
+): Promise<string> {
   if (!pkg.source_page_id) return 'No source page id in the package.'
   const src = await figma.getNodeByIdAsync(pkg.source_page_id)
   if (!src || src.type !== 'PAGE') return 'Source page not found: ' + pkg.source_page_id
@@ -782,18 +902,36 @@ async function applyLocalePackage(pkg: LocalizationPackage): Promise<string> {
 
     // Same namespace and keys the Babylon MCP path writes, so a locale page
     // created by either route is found and updated in place by the other.
-    let dst: PageNode | null = null
-    for (const p of figma.root.children) {
-      if (p.getSharedPluginData('babylon', 'locale') === LOCALE &&
-          p.getSharedPluginData('babylon', 'runId') === pkg.run_id) { dst = p; break }
-    }
-    let reused = true
-    if (!dst) {
-      reused = false
+    const existing = findLocalePage(pkg.run_id, LOCALE)
+    let dst: PageNode
+    let what: string
+
+    if (existing && mode === 'update') {
+      dst = existing
+      what = 'existing page'
+    } else if (existing && mode === 'replace') {
+      // Deliberate and destructive: anything else on that page goes with it.
+      // Only reachable by choosing "Delete and recreate" explicitly.
+      const name = existing.name
+      existing.remove()
+      dst = src.clone()
+      dst.name = name
+      dst.setSharedPluginData('babylon', 'locale', LOCALE)
+      dst.setSharedPluginData('babylon', 'runId', pkg.run_id)
+      what = 'recreated'
+    } else if (existing) {
+      dst = src.clone()
+      dst.name = nextCopyName(locale.pageName)
+      dst.setSharedPluginData('babylon', 'locale', LOCALE)
+      dst.setSharedPluginData('babylon', 'runId', pkg.run_id)
+      dst.setSharedPluginData('babylon', 'copyOf', existing.id)
+      what = 'copy "' + dst.name + '"'
+    } else {
       dst = src.clone()
       dst.name = locale.pageName
       dst.setSharedPluginData('babylon', 'locale', LOCALE)
       dst.setSharedPluginData('babylon', 'runId', pkg.run_id)
+      what = 'new page'
     }
     await dst.loadAsync()
 
@@ -803,8 +941,7 @@ async function applyLocalePackage(pkg: LocalizationPackage): Promise<string> {
     const count = Math.min(srcTop.length, dstTop.length)
     for (let i = 0; i < count; i++) await walkAndApply(srcTop[i]!, dstTop[i], dict, tally)
 
-    parts.push(LOCALE + ': ' + tally.updated + ' updated' +
-      (reused ? ' (existing page)' : ' (new page)') +
+    parts.push(LOCALE + ': ' + tally.updated + ' updated (' + what + ')' +
       (tally.errors.length ? ', ' + tally.errors.length + ' error(s)' : ''))
   }
   return parts.length ? parts.join('\n') : 'Nothing to apply — no approved translations.'
@@ -846,6 +983,8 @@ export function runLocalization(): void {
     langs?: string[]
     state?: string
     pkg?: LocalizationPackage
+    mode?: string
+    runs?: Array<{ runId: string; locales: string[] }>
   }) {
     if (msg.type === 'get-context') {
       const savedBase = await figma.clientStorage.getAsync('heimdallApiBase')
@@ -901,9 +1040,18 @@ export function runLocalization(): void {
       await figma.clientStorage.setAsync(TOKEN_KEY, (msg.token ?? '').trim())
     }
 
+    if (msg.type === 'check-locale-pages') {
+      figma.ui.postMessage({
+        type: 'locale-pages',
+        existing: existingLocalePages(msg.runs ?? []),
+      })
+    }
+
     if (msg.type === 'apply-locales' && msg.pkg) {
       try {
-        const summary = await applyLocalePackage(msg.pkg)
+        const mode: ExistingPageMode =
+          msg.mode === 'replace' || msg.mode === 'duplicate' ? msg.mode : 'update'
+        const summary = await applyLocalePackage(msg.pkg, mode)
         figma.ui.postMessage({ type: 'applied', summary, errors: summary.indexOf('error') !== -1 })
       } catch (e) {
         figma.ui.postMessage({ type: 'applied', summary: String(e), errors: true })
