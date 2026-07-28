@@ -56,6 +56,12 @@ export const localizationUiHtml = `<html><head><style>
   .req-badge { color: #c0392b; font-weight: 600; font-size: 10px; border: 1px solid #f3b7b7;
                border-radius: 4px; padding: 1px 5px; margin-left: 6px; vertical-align: 1px; }
   .hint { color: #9b1c1c; font-size: 10px; margin-top: 5px; }
+  /* How to actually get the link. Two routes, because the desktop app has no
+     address bar and Ctrl+L does nothing there. */
+  .how { font-size: 10.5px; color: #444; margin: 0 0 8px; }
+  .how div { margin-bottom: 3px; }
+  .kbd { font: 10px ui-monospace, Menlo, monospace; border: 1px solid #d8d8d8; border-bottom-width: 2px;
+         border-radius: 3px; padding: 0 4px; background: #fafafa; }
   /* The two jobs this plugin does. They are done by different people, so the
      chooser states them rather than guessing. */
   .choice { display: block; width: 100%; text-align: left; padding: 12px; margin-bottom: 8px;
@@ -111,11 +117,15 @@ export const localizationUiHtml = `<html><head><style>
   <div class="crumb"><button class="link" id="go-back">← Back</button><span id="crumb-label" class="muted"></span></div>
   <div id="resume" class="resume hide"></div>
   <div class="card req hide" id="filekey-card">
-    <div class="step">Start here · This file's link <span class="req-mark">*</span><span class="req-badge">REQUIRED</span></div>
-    <p class="muted">Figma does not tell the plugin which file it is running in, so this is the one thing it cannot work out on its own. Copy this file's address straight from your browser and paste it below — the whole link is fine, nothing to trim.</p>
+    <div class="step"><span id="filekey-title">Start here · This file's link</span> <span class="req-mark" id="filekey-mark">*</span><span class="req-badge" id="filekey-badge">REQUIRED</span></div>
+    <p class="muted" style="margin-top:0">Figma does not tell the plugin which file it is running in, so this is the one thing it cannot work out on its own.</p>
+    <div class="how">
+      <div><b>In a browser:</b> press <span class="kbd">Ctrl</span>+<span class="kbd">L</span> (<span class="kbd">⌘</span>+<span class="kbd">L</span> on Mac) to select the address, copy it, then paste it below.</div>
+      <div><b>In the Figma desktop app:</b> there is no address bar — use <b>Share</b> at the top right, then <b>Copy link</b>.</div>
+    </div>
     <input type="text" id="filekey-input" placeholder="https://www.figma.com/design/..." style="width:100%;padding:6px;border:1px solid #d8d8d8;border-radius:6px;font:inherit" />
     <div class="row" style="margin-top:6px"><button class="primary" id="filekey-save">Save</button></div>
-    <p class="muted" style="margin-bottom:0">Saved on the file itself — you do this once, and everyone who opens it after you inherits it.</p>
+    <p class="muted" style="margin-bottom:0">Paste the whole link — nothing to trim. It is saved on the file itself, so you do this once and everyone who opens it after you inherits it.</p>
   </div>
   <div id="extract-pane" class="hide">
     <div class="card">
@@ -180,6 +190,9 @@ var SHEET_SOURCE = 'extracted';
 // The last check's verdict. Publishing without one is not possible, so this
 // doubles as the guard on the Publish button.
 var LAST_PLAN = null;
+// Which of the two jobs is on screen — the file link means something slightly
+// different in each, and the card should not overstate it.
+var PANE = '';
 
 var LANGS = ['nl','fr-ca','es-419','fr','de','es','it','ja','ko','pt-br','sv','da','fi','no'];
 
@@ -295,6 +308,7 @@ function showChooser() {
 }
 
 function showPane(which) {
+  PANE = which;
   $('pair-view').className = 'hide';
   $('choose-view').className = 'hide';
   $('main-view').className = '';
@@ -374,6 +388,14 @@ function renderFileKey() {
   $('btn-extract').disabled = missing;
   $('hint-extract').className = missing ? 'hint' : 'hint hide';
   $('hint-push').className = missing ? 'hint' : 'hint hide';
+  // In the upload flow the link is not needed to save the translations, only
+  // to create the pages. Stamping REQUIRED on it there is a claim she can
+  // immediately disprove by importing without it.
+  var forPublish = PANE === 'import';
+  $('filekey-title').textContent = forPublish
+    ? 'This file’s link' : 'Start here · This file’s link';
+  $('filekey-badge').textContent = forPublish ? 'NEEDED TO PUBLISH' : 'REQUIRED';
+  $('filekey-mark').className = forPublish ? 'req-mark hide' : 'req-mark';
 }
 
 $('filekey-save').onclick = function () {
