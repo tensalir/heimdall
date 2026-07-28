@@ -49,6 +49,13 @@ export const localizationUiHtml = `<html><head><style>
   .resume { background:#eef6ff; border:1px solid #cfe6ff; border-radius:6px; padding:6px 8px; margin-bottom:10px; font-size:10.5px; color:#0b5aa6; }
   .step { font-weight: 600; margin-bottom: 6px; }
   input[type=file] { font: inherit; width: 100%; }
+  /* The one field nobody can guess for you — styled so it cannot be mistaken
+     for an optional extra sitting above the numbered steps. */
+  .card.req { border-color: #f3b7b7; background: #fffafa; }
+  .req-mark { color: #c0392b; }
+  .req-badge { color: #c0392b; font-weight: 600; font-size: 10px; border: 1px solid #f3b7b7;
+               border-radius: 4px; padding: 1px 5px; margin-left: 6px; vertical-align: 1px; }
+  .hint { color: #9b1c1c; font-size: 10px; margin-top: 5px; }
 </style></head><body>
 
 <div id="pair-view" class="hide">
@@ -67,11 +74,12 @@ export const localizationUiHtml = `<html><head><style>
 
 <div id="main-view" class="hide">
   <div id="resume" class="resume hide"></div>
-  <div class="card hide" id="filekey-card">
-    <div class="step">This file</div>
-    <p class="muted">Figma only exposes the file key to published plugins, so paste this file's URL once. It is saved on the document, so nobody has to do it again.</p>
+  <div class="card req hide" id="filekey-card">
+    <div class="step">Start here · This file's link <span class="req-mark">*</span><span class="req-badge">REQUIRED</span></div>
+    <p class="muted">Figma does not tell the plugin which file it is running in, so this is the one thing it cannot work out on its own. Copy this file's address straight from your browser and paste it below — the whole link is fine, nothing to trim.</p>
     <input type="text" id="filekey-input" placeholder="https://www.figma.com/design/..." style="width:100%;padding:6px;border:1px solid #d8d8d8;border-radius:6px;font:inherit" />
     <div class="row" style="margin-top:6px"><button class="primary" id="filekey-save">Save</button></div>
+    <p class="muted" style="margin-bottom:0">Saved on the file itself — you do this once, and everyone who opens it after you inherits it.</p>
   </div>
   <div class="card">
     <div class="step">1 · Pages</div>
@@ -85,6 +93,7 @@ export const localizationUiHtml = `<html><head><style>
     <div class="step">3 · Extract</div>
     <button class="primary" id="btn-extract">Create sheet &amp; extract</button>
     <div class="row" style="margin-top:6px"><button id="btn-pack" disabled>Download pack (.xlsx)</button></div>
+    <div class="hint hide" id="hint-extract">Add this file's link above first.</div>
   </div>
   <div class="card">
     <div class="step">4 · Import translations</div>
@@ -97,6 +106,7 @@ export const localizationUiHtml = `<html><head><style>
   <div class="card">
     <div class="step">5 · Push to Figma</div>
     <button class="primary" id="btn-push" disabled>Approve &amp; push locale pages</button>
+    <div class="hint hide" id="hint-push">Add this file's link above first, so the plugin can check the pack belongs to this file. Importing (step 4) works without it.</div>
   </div>
   <div class="row"><button id="btn-unpair">Disconnect</button></div>
 </div>
@@ -277,15 +287,24 @@ function renderStage() {
   }
 }
 
+/**
+ * Only ask when we genuinely do not know it. A plugin published to the org gets
+ * figma.fileKey for free, so most people never see this card at all — it is the
+ * development path (imported manifest) and brand-new files that land here.
+ * When it does show, it is the first thing on screen and the steps that depend
+ * on it say so, rather than presenting a dead button with no explanation.
+ */
 function renderFileKey() {
-  // Only ask when we genuinely do not know it.
-  $('filekey-card').className = FILE_KEY ? 'card hide' : 'card';
-  $('btn-extract').disabled = !FILE_KEY;
+  var missing = !FILE_KEY;
+  $('filekey-card').className = missing ? 'card req' : 'card req hide';
+  $('btn-extract').disabled = missing;
+  $('hint-extract').className = missing ? 'hint' : 'hint hide';
+  $('hint-push').className = missing ? 'hint' : 'hint hide';
 }
 
 $('filekey-save').onclick = function () {
   var v = $('filekey-input').value;
-  if (!v.trim()) return say('Paste the file URL first.', 'err');
+  if (!v.trim()) return say('Paste this file’s link first.', 'err');
   send('save-file-key', { fileKey: v });
 };
 
@@ -749,7 +768,11 @@ export function runLocalization(): void {
     if (msg.type === 'save-file-key') {
       const key = parseFileKey(msg.fileKey ?? '')
       if (!key) {
-        figma.ui.postMessage({ type: 'file-key', fileKey: '', error: 'Could not read a file key from that.' })
+        figma.ui.postMessage({
+          type: 'file-key',
+          fileKey: '',
+          error: 'That does not look like a Figma file link. Copy this file’s address from your browser and paste the whole thing.',
+        })
         return
       }
       // Stored on the document, not clientStorage: the key belongs to the
