@@ -61,6 +61,12 @@ const localizationUiHtml = `<html><head><style>
 </div>
 
 <div id="main-view" class="hide">
+  <div class="card hide" id="filekey-card">
+    <div class="step">This file</div>
+    <p class="muted">Figma only exposes the file key to published plugins, so paste this file's URL once. It is saved on the document, so nobody has to do it again.</p>
+    <input type="text" id="filekey-input" placeholder="https://www.figma.com/design/..." style="width:100%;padding:6px;border:1px solid #d8d8d8;border-radius:6px;font:inherit" />
+    <div class="row" style="margin-top:6px"><button class="primary" id="filekey-save">Save</button></div>
+  </div>
   <div class="card">
     <div class="step">1 · Pages</div>
     <div class="list" id="pages"></div>
@@ -202,9 +208,22 @@ $('btn-unpair').onclick = function () {
 function showMain() {
   $('pair-view').className = 'hide';
   $('main-view').className = '';
+  renderFileKey();
   renderPages();
   renderLangs();
 }
+
+function renderFileKey() {
+  // Only ask when we genuinely do not know it.
+  $('filekey-card').className = FILE_KEY ? 'card hide' : 'card';
+  $('btn-extract').disabled = !FILE_KEY;
+}
+
+$('filekey-save').onclick = function () {
+  var v = $('filekey-input').value;
+  if (!v.trim()) return say('Paste the file URL first.', 'err');
+  send('save-file-key', { fileKey: v });
+};
 
 function renderPages() {
   $('pages').innerHTML = PAGES.map(function (p, i) {
@@ -371,6 +390,12 @@ onmessage = function (event) {
     PAGES = msg.pages || [];
     if (TOKEN) showMain(); else { $('pair-view').className = ''; say('Not connected yet.'); }
   }
+  if (msg.type === 'file-key') {
+    if (msg.error) return say(msg.error, 'err');
+    FILE_KEY = msg.fileKey || '';
+    renderFileKey();
+    say('File key saved for this document.', 'ok');
+  }
   if (msg.type === 'applied') {
     say(msg.summary, msg.errors ? 'err' : 'ok');
     $('btn-push').disabled = false;
@@ -496,10 +521,41 @@ async function applyLocalePackage(pkg: LocalizationPackage): Promise<string> {
   return parts.length ? parts.join('\n') : 'Nothing to apply — no approved translations.'
 }
 
+/**
+ * Accept either a bare file key or a full Figma URL.
+ * `https://www.figma.com/design/<KEY>/<name>` — also matches /file/ and /board/.
+ */
+function parseFileKey(input: string): string {
+  const raw = input.trim()
+  if (!raw) return ''
+  const fromUrl = /figma\.com\/(?:design|file|board)\/([A-Za-z0-9]+)/.exec(raw)
+  if (fromUrl) return fromUrl[1]!
+  // A bare key: Figma keys are alphanumeric, ~22 chars.
+  if (/^[A-Za-z0-9]{10,}$/.test(raw)) return raw
+  return ''
+}
+
+/**
+ * `figma.fileKey` is only populated for plugins published privately to an
+ * organisation — in development mode it is undefined. So fall back to a value
+ * stored on the document, which the user supplies once per file.
+ */
+function resolveFileKey(): string {
+  const native = (figma as unknown as { fileKey?: string }).fileKey
+  if (typeof native === 'string' && native.trim()) return native.trim()
+  const stored = figma.root.getSharedPluginData('babylon', 'fileKey')
+  return typeof stored === 'string' ? stored.trim() : ''
+}
+
 export function runLocalization(): void {
   figma.showUI(localizationUiHtml, { width: 460, height: 700 })
 
-  figma.ui.onmessage = async function (msg: { type: string; token?: string; pkg?: LocalizationPackage }) {
+  figma.ui.onmessage = async function (msg: {
+    type: string
+    token?: string
+    fileKey?: string
+    pkg?: LocalizationPackage
+  }) {
     if (msg.type === 'get-context') {
       const savedBase = await figma.clientStorage.getAsync('heimdallApiBase')
       const apiBase = typeof savedBase === 'string' && savedBase.trim() ? savedBase.trim() : DEFAULT_HEIMDALL_API
@@ -508,9 +564,21 @@ export function runLocalization(): void {
         type: 'context',
         apiBase,
         token: typeof savedToken === 'string' ? savedToken : '',
-        fileKey: figma.fileKey || '',
+        fileKey: resolveFileKey(),
         pages: figma.root.children.map((p) => ({ id: p.id, name: p.name })),
       })
+    }
+
+    if (msg.type === 'save-file-key') {
+      const key = parseFileKey(msg.fileKey ?? '')
+      if (!key) {
+        figma.ui.postMessage({ type: 'file-key', fileKey: '', error: 'Could not read a file key from that.' })
+        return
+      }
+      // Stored on the document, not clientStorage: the key belongs to the
+      // file, so everyone who opens it inherits the answer.
+      figma.root.setSharedPluginData('babylon', 'fileKey', key)
+      figma.ui.postMessage({ type: 'file-key', fileKey: key })
     }
 
     if (msg.type === 'save-token') {
