@@ -7,6 +7,7 @@
 
 import { NextResponse } from 'next/server.js'
 import { createSupabaseRouteClient } from './supabase-auth.js'
+import { resolvePluginToken } from './plugin-tokens.js'
 import {
   hasFullAccess,
   isAdminRole,
@@ -21,7 +22,19 @@ export {
   isPrivilegedEmail,
 } from './access-control.js'
 
-export type RoutePolicy = 'public' | 'user' | 'machine' | 'webhook' | 'dual' | 'gpt_actions'
+export type RoutePolicy =
+  | 'public'
+  | 'user'
+  | 'machine'
+  | 'webhook'
+  | 'dual'
+  | 'gpt_actions'
+  /**
+   * Per-user bearer token issued by the device-pairing flow, used by the Figma
+   * plugin. Distinct from 'machine', which accepts the shared plugin secret
+   * that ships inside the plugin bundle.
+   */
+  | 'user_token'
 
 const FEEDBACK_REVIEWERS = (process.env.HEIMDALL_FEEDBACK_REVIEWERS || '')
   .split(',')
@@ -32,6 +45,32 @@ export function isFeedbackReviewer(email: string | undefined): boolean {
   if (!email) return false
   if (FEEDBACK_REVIEWERS.length === 0) return isPrivilegedEmail(email)
   return FEEDBACK_REVIEWERS.includes(email.toLowerCase())
+}
+
+/**
+ * Require a valid per-user plugin token on a route handler.
+ *
+ * Middleware only checks that a bearer header is PRESENT for 'user_token'
+ * routes — it runs on Edge, and resolving the token there would add a database
+ * round trip to every plugin request. The real check is here, so any handler
+ * under a user_token prefix MUST call this; skipping it leaves the route
+ * effectively unauthenticated.
+ *
+ * Returns { userId, tokenId } on success, or a 401 NextResponse.
+ */
+export async function requirePluginUser(
+  request: Request,
+): Promise<{ userId: string; tokenId: string; error?: never } | { error: NextResponse; userId?: never; tokenId?: never }> {
+  const resolved = await resolvePluginToken(request.headers.get('authorization'))
+  if (!resolved) {
+    return {
+      error: NextResponse.json(
+        { error: 'Valid plugin token required. Re-pair the plugin from Settings.' },
+        { status: 401 },
+      ),
+    }
+  }
+  return { userId: resolved.userId, tokenId: resolved.tokenId }
 }
 
 /**
@@ -147,12 +186,25 @@ const DUAL_AUTH_PREFIXES = [
   '/api/briefing-assistant/social-comments/discover',
 ]
 
+/**
+ * Routes authenticated by a per-user plugin token rather than the shared
+ * plugin secret. These sit UNDER /api/plugin/, so classifyApiRoute must test
+ * this list before MACHINE_PREFIXES — otherwise the broader prefix wins and
+ * the shared secret would be accepted after all.
+ */
+const USER_TOKEN_PREFIXES = [
+  '/api/plugin/localization/',
+]
+
 const PUBLIC_PREFIXES = [
   '/api/auth/',
   '/api/health',
   '/api/briefing-assistant/auth',
   '/api/sheets/auth',
   '/api/images/proxy',
+  // The pairing handshake itself cannot require a token — it is how a token is
+  // obtained. Both endpoints are rate-limited and verify a hashed device code.
+  '/api/plugin/pair/',
 ]
 
 /** OpenAPI schema for Custom GPT Actions (no secret; operations still require GPT secret). */
@@ -168,6 +220,10 @@ export function classifyApiRoute(pathname: string): RoutePolicy {
   if (pathname === GPT_ACTIONS_OPENAPI_PATH) return 'public'
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return 'public'
   if (WEBHOOK_PREFIXES.some((p) => pathname.startsWith(p))) return 'webhook'
+  // Before MACHINE_PREFIXES on purpose: these paths are nested under
+  // /api/plugin/, and first-match-wins would otherwise classify them 'machine'
+  // and accept the shared bundle secret.
+  if (USER_TOKEN_PREFIXES.some((p) => pathname.startsWith(p))) return 'user_token'
   if (MACHINE_PREFIXES.some((p) => pathname.startsWith(p))) return 'machine'
   if (DUAL_AUTH_PREFIXES.some((p) => pathname.startsWith(p))) return 'dual'
   if (GPT_ACTIONS_PREFIXES.some((p) => pathname.startsWith(p))) return 'gpt_actions'

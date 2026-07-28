@@ -173,6 +173,22 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
     return addCors(request, NextResponse.next())
   }
 
+  if (policy === 'user_token') {
+    // Presence check only. Resolving the token means a database lookup, and
+    // this middleware runs on the Edge runtime for every request — so the real
+    // verification is `requirePluginUser` inside each handler, which also
+    // gives the handler the user id it needs. Rejecting obviously-absent
+    // credentials here just avoids waking a lambda for them.
+    const authz = request.headers.get('authorization')
+    if (!authz?.toLowerCase().startsWith('bearer ')) {
+      return addCors(request, NextResponse.json(
+        { error: 'Valid plugin token required. Re-pair the plugin from Settings.' },
+        { status: 401, headers: corsHeaders(request) },
+      ))
+    }
+    return addCors(request, NextResponse.next())
+  }
+
   if (policy === 'dual') {
     const machineSecret = process.env.HEIMDALL_MACHINE_SECRET
     const provided = request.headers.get('x-heimdall-secret')

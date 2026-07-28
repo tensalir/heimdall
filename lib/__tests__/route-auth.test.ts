@@ -23,6 +23,32 @@ describe('classifyApiRoute', () => {
     expect(classifyApiRoute('/api/plugin/sync')).toBe('machine')
   })
 
+  describe('plugin localization routes use per-user tokens, not the shared secret', () => {
+    // These paths are nested under /api/plugin/, which is a MACHINE prefix.
+    // If the user_token check is ever moved below MACHINE_PREFIXES,
+    // first-match-wins silently downgrades them to accepting the shared secret
+    // that ships inside the plugin bundle. These tests are the tripwire.
+    it('classifies localization routes as user_token', () => {
+      expect(classifyApiRoute('/api/plugin/localization/pack')).toBe('user_token')
+      expect(classifyApiRoute('/api/plugin/localization/extract')).toBe('user_token')
+      expect(classifyApiRoute('/api/plugin/localization/import')).toBe('user_token')
+    })
+
+    it('does NOT fall through to machine despite sitting under /api/plugin/', () => {
+      expect(classifyApiRoute('/api/plugin/localization/anything')).not.toBe('machine')
+    })
+
+    it('leaves sibling plugin routes on the shared-secret policy', () => {
+      expect(classifyApiRoute('/api/plugin/briefings')).toBe('machine')
+      expect(classifyApiRoute('/api/plugin/iterator/generate')).toBe('machine')
+    })
+
+    it('leaves the pairing handshake public — it is how a token is obtained', () => {
+      expect(classifyApiRoute('/api/plugin/pair/start')).toBe('public')
+      expect(classifyApiRoute('/api/plugin/pair/poll')).toBe('public')
+    })
+  })
+
   it('classifies trend discovery as dual (user POST + cron GET)', () => {
     expect(classifyApiRoute('/api/briefing-assistant/trends/discover')).toBe('dual')
   })
