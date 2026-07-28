@@ -567,7 +567,13 @@ function publishPlan(report) {
   var langs = uniq([].concat.apply([], pages.map(function (p) { return p.target_languages || []; })))
     .map(function (l) { return String(l).toUpperCase(); });
   var names = pages.map(function (p) { return p.page_name || p.page_node_id; });
-  var base = { pages: pages, langs: langs, names: names, file: ctx.file_name || ctx.file_key || '' };
+  // Only a real name is worth showing. Babylon leaves file_name null when it
+  // never learned one, and printing the raw key reads as noise next to the
+  // page name.
+  var base = { pages: pages, langs: langs, names: names, file: ctx.file_name || '' };
+  // For "wrong file" the identity matters more than the prettiness, so fall
+  // back to the key there rather than saying "another file".
+  var label = ctx.file_name || ctx.file_key || 'another file';
 
   if (!pages.length) {
     base.state = 'blocked';
@@ -586,7 +592,7 @@ function publishPlan(report) {
   }
   if (ctx.file_key !== FILE_KEY) {
     base.state = 'save-only';
-    base.reason = 'This pack belongs to ' + base.file + ', not the file you have open. Open that file to create the pages.';
+    base.reason = 'This pack belongs to ' + label + ', not the file you have open. Open that file to create the pages.';
     return base;
   }
   base.state = 'ready';
@@ -746,6 +752,10 @@ onmessage = function (event) {
   if (msg.type === 'applied') {
     say(msg.summary, msg.errors ? 'err' : 'ok');
     $('btn-another').className = '';
+    // The apply runs on the main thread, so a failure there never reached the
+    // publish handler's catch and the button stayed dead — leaving no way to
+    // try again with a different choice.
+    if (msg.errors) $('btn-publish').disabled = false;
   }
 };
 
@@ -913,12 +923,35 @@ async function applyLocalePackage(
       // Deliberate and destructive: anything else on that page goes with it.
       // Only reachable by choosing "Delete and recreate" explicitly.
       const name = existing.name
-      existing.remove()
+      const index = figma.root.children.indexOf(existing)
       dst = src.clone()
-      dst.name = name
       dst.setSharedPluginData('babylon', 'locale', LOCALE)
       dst.setSharedPluginData('babylon', 'runId', pkg.run_id)
-      what = 'recreated'
+
+      // Figma refuses to delete the page you are standing on — that is the
+      // "Removing this node is not allowed" error. Step off it first, onto the
+      // replacement, which is where you want to be anyway.
+      if (figma.currentPage.id === existing.id) await figma.setCurrentPageAsync(dst)
+
+      try {
+        // dynamic-page access: touch it before mutating it.
+        await existing.loadAsync()
+        existing.remove()
+        dst.name = name
+        // Put the replacement back where the old page sat, rather than leaving
+        // it next to the source. Position is cosmetic, so never let it throw.
+        try {
+          if (index >= 0) figma.root.insertChild(Math.min(index, figma.root.children.length - 1), dst)
+        } catch { /* page order is not worth failing a publish over */ }
+        what = 'recreated'
+      } catch (e) {
+        // Still could not delete it. Keep the translated page rather than
+        // throwing the work away, and say plainly that the old one is still
+        // there so nobody assumes it was replaced.
+        dst.name = nextCopyName(locale.pageName)
+        dst.setSharedPluginData('babylon', 'copyOf', existing.id)
+        what = 'could not delete "' + name + '" (' + String(e) + '), added "' + dst.name + '" instead'
+      }
     } else if (existing) {
       dst = src.clone()
       dst.name = nextCopyName(locale.pageName)

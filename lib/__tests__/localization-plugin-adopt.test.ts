@@ -132,6 +132,20 @@ describe('publishPlan', () => {
     expect(load(OPEN_FILE).publishPlan({}).state).toBe('blocked')
   })
 
+  it('leaves the display name empty rather than showing the raw file key', () => {
+    // Babylon returns file_name: null when it never learned one. Printing the
+    // key beside the page name reads as noise.
+    const plan = load(OPEN_FILE).publishPlan(report({ file_name: null }))
+    expect(plan.state).toBe('ready')
+    expect(plan.file).toBe('')
+  })
+
+  it('still names the wrong file by key when there is no file name', () => {
+    const plan = load(OPEN_FILE).publishPlan(report({ file_key: 'zzz999', file_name: null }))
+    expect(plan.state).toBe('save-only')
+    expect(plan.reason).toContain('zzz999')
+  })
+
   it('de-duplicates languages across pages and upper-cases them', () => {
     const pages = [
       { project_id: 'p', run_id: 'r1', page_node_id: '1:1', page_name: 'A', target_languages: ['nl', 'de'] },
