@@ -56,6 +56,22 @@ export const localizationUiHtml = `<html><head><style>
   .req-badge { color: #c0392b; font-weight: 600; font-size: 10px; border: 1px solid #f3b7b7;
                border-radius: 4px; padding: 1px 5px; margin-left: 6px; vertical-align: 1px; }
   .hint { color: #9b1c1c; font-size: 10px; margin-top: 5px; }
+  /* The two jobs this plugin does. They are done by different people, so the
+     chooser states them rather than guessing. */
+  .choice { display: block; width: 100%; text-align: left; padding: 12px; margin-bottom: 8px;
+            border: 1px solid #d8d8d8; border-radius: 8px; background: #fff; }
+  .choice:hover { border-color: #0d99ff; background: #f5fbff; }
+  .choice strong { display: block; margin-bottom: 3px; }
+  .choice .muted { display: block; font-weight: 400; }
+  .crumb { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .link { border: none; background: none; padding: 0; color: #0d99ff; cursor: pointer; font: inherit; }
+  /* The check result. Colour carries the verdict; the text always carries the
+     detail, because colour alone is not a message. */
+  .verdict { margin-top: 8px; padding: 8px; border-radius: 6px; font-size: 10.5px; white-space: pre-wrap; }
+  .verdict.ok { background: #e8f7ee; border: 1px solid #b9e3c8; color: #0f6b33; }
+  .verdict.warn { background: #fff6e5; border: 1px solid #f0d3a0; color: #8a5a00; }
+  .verdict.bad { background: #ffe9e9; border: 1px solid #f3b7b7; color: #9b1c1c; }
+  .verdict b { display: block; margin-bottom: 3px; }
 </style></head><body>
 
 <div id="pair-view" class="hide">
@@ -72,7 +88,21 @@ export const localizationUiHtml = `<html><head><style>
   <div id="pair-status" class="status info hide"></div>
 </div>
 
+<div id="choose-view" class="hide">
+  <h2>What do you want to do?</h2>
+  <button class="choice" id="go-extract">
+    <strong>Extract pages for translation</strong>
+    <span class="muted">Pick pages and languages, then download a pack to send to the agency.</span>
+  </button>
+  <button class="choice" id="go-import">
+    <strong>Upload translated pack</strong>
+    <span class="muted">Bring back the filled .xlsx and publish the locale pages. You do not need to have done the extraction yourself.</span>
+  </button>
+  <div class="row" style="margin-top:12px"><button id="btn-unpair">Disconnect</button></div>
+</div>
+
 <div id="main-view" class="hide">
+  <div class="crumb"><button class="link" id="go-back">← Back</button><span id="crumb-label" class="muted"></span></div>
   <div id="resume" class="resume hide"></div>
   <div class="card req hide" id="filekey-card">
     <div class="step">Start here · This file's link <span class="req-mark">*</span><span class="req-badge">REQUIRED</span></div>
@@ -81,34 +111,36 @@ export const localizationUiHtml = `<html><head><style>
     <div class="row" style="margin-top:6px"><button class="primary" id="filekey-save">Save</button></div>
     <p class="muted" style="margin-bottom:0">Saved on the file itself — you do this once, and everyone who opens it after you inherits it.</p>
   </div>
-  <div class="card">
-    <div class="step">1 · Pages</div>
-    <div class="list" id="pages"></div>
-  </div>
-  <div class="card">
-    <div class="step">2 · Languages</div>
-    <div class="list" id="langs"></div>
-  </div>
-  <div class="card">
-    <div class="step">3 · Extract</div>
-    <button class="primary" id="btn-extract">Create sheet &amp; extract</button>
-    <div class="row" style="margin-top:6px"><button id="btn-pack" disabled>Download pack (.xlsx)</button></div>
-    <div class="hint hide" id="hint-extract">Add this file's link above first.</div>
-  </div>
-  <div class="card">
-    <div class="step">4 · Import translations</div>
-    <input type="file" id="file" accept=".xlsx" />
-    <div class="row" style="margin-top:6px">
-      <button id="btn-preview" disabled>Preview</button>
-      <button class="primary" id="btn-commit" disabled>Commit</button>
+  <div id="extract-pane" class="hide">
+    <div class="card">
+      <div class="step">1 · Pages</div>
+      <div class="list" id="pages"></div>
+    </div>
+    <div class="card">
+      <div class="step">2 · Languages</div>
+      <div class="list" id="langs"></div>
+    </div>
+    <div class="card">
+      <div class="step">3 · Extract</div>
+      <button class="primary" id="btn-extract">Create sheet &amp; extract</button>
+      <div class="row" style="margin-top:6px"><button id="btn-pack" disabled>Download pack (.xlsx)</button></div>
+      <div class="hint hide" id="hint-extract">Add this file's link above first.</div>
     </div>
   </div>
-  <div class="card">
-    <div class="step">5 · Push to Figma</div>
-    <button class="primary" id="btn-push" disabled>Approve &amp; push locale pages</button>
-    <div class="hint hide" id="hint-push">Add this file's link above first, so the plugin can check the pack belongs to this file. Importing (step 4) works without it.</div>
+
+  <div id="import-pane" class="hide">
+    <div class="card">
+      <div class="step">The translated pack</div>
+      <p class="muted" style="margin-top:0">Choose the .xlsx the agency sent back. It is checked as soon as you pick it — nothing is written until you publish.</p>
+      <input type="file" id="file" accept=".xlsx" />
+      <div id="verdict" class="verdict hide"></div>
+      <div class="row" style="margin-top:8px"><button class="primary" id="btn-publish" disabled>Publish to Figma</button></div>
+      <div class="hint hide" id="hint-push">Add this file's link above to publish the pages from here. The translations can still be saved without it.</div>
+    </div>
+    <div class="row"><button id="btn-another" class="hide">Upload another pack</button></div>
   </div>
-  <div class="row"><button id="btn-unpair">Disconnect</button></div>
+
+  <div class="row" style="margin-top:10px"><button id="btn-unpair-2">Disconnect</button></div>
 </div>
 
 <div id="status" class="status info"></div>
@@ -130,6 +162,9 @@ var RESUMED_AT = '';
 // How this document got its working sheet — 'extracted' here, or 'imported'
 // when a returned pack supplied it. Only affects what the banner claims.
 var SHEET_SOURCE = 'extracted';
+// The last check's verdict. Publishing without one is not possible, so this
+// doubles as the guard on the Publish button.
+var LAST_PLAN = null;
 
 var LANGS = ['nl','fr-ca','es-419','fr','de','es','it','ja','ko','pt-br','sv','da','fi','no'];
 
@@ -216,25 +251,54 @@ function resetPair() {
   DEVICE_CODE = '';
 }
 
-$('btn-unpair').onclick = function () {
+function unpair() {
   TOKEN = '';
   send('save-token', { token: '' });
   $('main-view').className = 'hide';
+  $('choose-view').className = 'hide';
   $('pair-view').className = '';
   resetPair();
   say('Disconnected.');
-};
+}
+$('btn-unpair').onclick = unpair;
+$('btn-unpair-2').onclick = unpair;
 
 /* ---------------- main flow ---------------- */
 
-function showMain() {
+/**
+ * Two jobs, done by different people: a designer extracting pages, and whoever
+ * receives the agency's file days later. The plugin has no way to tell which
+ * one just opened it, so it asks instead of guessing and putting the wrong
+ * five steps in front of someone.
+ */
+function showChooser() {
   $('pair-view').className = 'hide';
+  $('main-view').className = 'hide';
+  $('choose-view').className = '';
+  say('');
+  $('status').className = 'status info hide';
+}
+
+function showPane(which) {
+  $('pair-view').className = 'hide';
+  $('choose-view').className = 'hide';
   $('main-view').className = '';
+  $('status').className = 'status info';
+  $('extract-pane').className = which === 'extract' ? '' : 'hide';
+  $('import-pane').className = which === 'import' ? '' : 'hide';
+  $('crumb-label').textContent = which === 'extract' ? 'Extract pages for translation' : 'Upload translated pack';
   renderFileKey();
   renderPages();
   renderLangs();
   renderStage();
+  say(which === 'extract'
+    ? 'Pick the pages and languages, then extract.'
+    : 'Choose the .xlsx the agency sent back.');
 }
+
+$('go-extract').onclick = function () { showPane('extract'); };
+$('go-import').onclick = function () { showPane('import'); };
+$('go-back').onclick = function () { showChooser(); };
 
 /**
  * Restore the sheet this file is working through. Without this, reopening the
@@ -265,20 +329,15 @@ function persistState() {
 }
 
 /**
- * Enable only the steps that can actually succeed right now.
- *
- * Step 4 is deliberately NOT gated on having a sheet. Whoever imports a
- * returned pack is usually not whoever exported it — the agency round trip
+ * The upload flow is deliberately NOT gated on having a sheet. Whoever imports
+ * a returned pack is usually not whoever exported it — the agency round trip
  * takes days — and the workbook names its own run in every row's hidden Key
- * column. Requiring an extraction in this document first asked her for
- * something she had no way to supply, and left Preview greyed out for good.
+ * column. Requiring an extraction in this document first asked for something
+ * the uploader had no way to supply.
  */
 function renderStage() {
   var hasSheet = !!PROJECT && RUN_IDS.length > 0;
   $('btn-pack').disabled = !hasSheet;
-  $('btn-preview').disabled = !$('file').files.length;
-  $('btn-commit').disabled = true;
-  $('btn-push').disabled = !hasSheet;
   $('resume').className = hasSheet ? 'resume' : 'resume hide';
   if (hasSheet) {
     var when = RESUMED_AT ? new Date(RESUMED_AT).toLocaleString() : '';
@@ -426,15 +485,25 @@ function readFileBase64(file) {
   });
 }
 
-$('file').onchange = function () {
-  $('btn-preview').disabled = !$('file').files.length;
-  $('btn-commit').disabled = true;
+/**
+ * Checking is not a decision, so it is not a button. Picking the file runs the
+ * check straight away; it is a preview-mode import, which writes nothing.
+ */
+$('file').onchange = function () { runCheck(); };
+$('btn-another').onclick = function () {
+  $('file').value = '';
+  LAST_PLAN = null;
+  $('verdict').className = 'verdict hide';
+  $('btn-another').className = 'hide';
+  $('btn-publish').disabled = true;
+  $('btn-publish').textContent = 'Publish to Figma';
+  say('Choose the .xlsx the agency sent back.');
 };
 
 async function runImport(mode) {
   var file = $('file').files[0];
-  if (!file) return say('Choose the filled .xlsx first.', 'err');
-  say(mode === 'commit' ? 'Importing…' : 'Checking…');
+  if (!file) throw new Error('Choose the filled .xlsx first.');
+  say(mode === 'commit' ? 'Saving translations…' : 'Checking the pack…');
   var b64 = await readFileBase64(file);
   var body = { xlsx_base64: b64, mode: mode, confirm: mode === 'commit' ? true : undefined };
   // Only pin the sheet when we know it. The workbook carries its own run id in
@@ -453,98 +522,142 @@ async function runImport(mode) {
   return { report: report, summary: summary, warned: warns.length > 0 };
 }
 
-/**
- * Say out loud which file and pages the workbook resolved to. Uploading the
- * wrong pack is the easy mistake here, and it should be visible in the preview
- * rather than after the write.
- */
-function describeTarget(report) {
-  var ctx = report.figma || {};
-  var pages = ctx.pages || [];
-  if (!pages.length) return 'Could not tie this workbook to a Babylon run.';
-  var names = pages.map(function (p) { return p.page_name || p.page_node_id; }).join(', ');
-  if (!ctx.file_key) return 'Covers pages in more than one Figma file: ' + names + '.';
-  var where = ctx.file_name || ctx.file_key;
-  if (!FILE_KEY) return 'Matches ' + where + ' → ' + names + '.';
-  return 'Matches ' + where + ' → ' + names +
-    (ctx.file_key === FILE_KEY ? ' (this document).' : ' — NOT the document you have open.');
+function uniq(list) {
+  var out = [];
+  for (var i = 0; i < list.length; i++) if (list[i] && out.indexOf(list[i]) === -1) out.push(list[i]);
+  return out;
 }
 
 /**
- * Take the runs to push from the workbook that was just imported, rather than
- * from whatever this document happens to have extracted. That is what lets
- * someone who never ran steps 1-3 finish the round trip.
+ * Decide what this workbook can actually do, from the check alone, so the
+ * button can say it before anything is written.
  *
- * The file-key check is not belt-and-braces. applyLocalePackage resolves
+ *   'ready'     — commit and create the locale pages here.
+ *   'save-only' — the translations can be saved, but the pages cannot be made
+ *                 from this document. Never silently downgraded to nothing:
+ *                 losing the agency's work because the wrong file is open
+ *                 would be far worse than the missing last step.
+ *   'blocked'   — we cannot place the workbook at all.
+ *
+ * The file check is not belt-and-braces. applyLocalePackage resolves
  * source_page_id through getNodeByIdAsync, and Figma node ids are unique only
- * within a file — so a pack from the wrong file does not fail cleanly. It
- * finds whichever page happens to share that id, clones it, and writes another
- * file's translations into it.
- *
- * Returns '' when the sheet was adopted, or the reason step 5 has to stay shut.
+ * within a file — so a pack from the wrong file does not fail cleanly. It finds
+ * whichever page happens to share that id, clones it, and writes another file's
+ * translations into it.
  */
-function adoptImportedSheet(report) {
+function publishPlan(report) {
   var ctx = report.figma || {};
   var pages = ctx.pages || [];
+  var langs = uniq([].concat.apply([], pages.map(function (p) { return p.target_languages || []; })))
+    .map(function (l) { return String(l).toUpperCase(); });
+  var names = pages.map(function (p) { return p.page_name || p.page_node_id; });
+  var base = { pages: pages, langs: langs, names: names, file: ctx.file_name || ctx.file_key || '' };
+
   if (!pages.length) {
-    return 'No page in this workbook could be tied to a Babylon run, so there is nothing to push.';
+    base.state = 'blocked';
+    base.reason = 'None of the rows could be tied back to a page. This may not be a Babylon pack, or both the hidden Key column and the Read me sheet were stripped before it came back.';
+    return base;
   }
   if (!ctx.file_key) {
-    return 'This pack covers more than one Figma file, so it cannot be pushed from a single document. Split it per file.';
+    base.state = 'save-only';
+    base.reason = 'This pack covers more than one Figma file, so the pages cannot be created from a single document.';
+    return base;
   }
   if (!FILE_KEY) {
-    return 'Paste this document’s URL at the top so the plugin can confirm the pack belongs here.';
+    base.state = 'save-only';
+    base.reason = 'This document’s link is missing, so the plugin cannot confirm the pack belongs here.';
+    return base;
   }
   if (ctx.file_key !== FILE_KEY) {
-    return 'That pack belongs to a different Figma file (' + (ctx.file_name || ctx.file_key) +
-      '). The translations are saved; open that file and push from there.';
+    base.state = 'save-only';
+    base.reason = 'This pack belongs to ' + base.file + ', not the file you have open. Open that file to create the pages.';
+    return base;
   }
-  PROJECT = pages[0].project_id || PROJECT;
-  TABS = pages.map(function (p) { return { id: p.page_node_id, name: p.page_name }; });
-  RUN_IDS = [];
-  for (var i = 0; i < pages.length; i++) {
-    if (pages[i].run_id && RUN_IDS.indexOf(pages[i].run_id) === -1) RUN_IDS.push(pages[i].run_id);
-  }
+  base.state = 'ready';
+  return base;
+}
+
+/** Adopt the runs the workbook named, so publishing works for someone who
+ *  never ran the extraction. */
+function adoptPlan(plan) {
+  if (plan.state !== 'ready') return false;
+  PROJECT = plan.pages[0].project_id || PROJECT;
+  TABS = plan.pages.map(function (p) { return { id: p.page_node_id, name: p.page_name }; });
+  RUN_IDS = uniq(plan.pages.map(function (p) { return p.run_id; }));
   SHEET_SOURCE = 'imported';
   RESUMED_AT = new Date().toISOString();
   persistState();
-  return '';
+  return true;
 }
 
-$('btn-preview').onclick = async function () {
+function publishLabel(plan) {
+  if (plan.state === 'save-only') return 'Save translations';
+  var n = plan.names.length;
+  return 'Publish ' + n + (n === 1 ? ' page' : ' pages') + ' to Figma' +
+    (plan.langs.length ? ' (' + plan.langs.join(', ') + ')' : '');
+}
+
+function renderVerdict(plan, r) {
+  var kind = plan.state === 'blocked' ? 'bad' : (r.warned || plan.state === 'save-only' ? 'warn' : 'ok');
+  var head = plan.state === 'blocked'
+    ? 'Cannot place this workbook'
+    : plan.names.join(', ') + (plan.file ? ' · ' + plan.file : '');
+  var lines = [r.summary];
+  if (plan.langs.length) lines.push('Languages: ' + plan.langs.join(', '));
+  if (plan.reason) lines.push(plan.reason);
+  var el = $('verdict');
+  el.className = 'verdict ' + kind;
+  el.innerHTML = '<b>' + escapeHtml(head) + '</b>' + escapeHtml(lines.join(String.fromCharCode(10)));
+}
+
+async function runCheck() {
+  LAST_PLAN = null;
+  $('btn-publish').disabled = true;
+  $('btn-another').className = 'hide';
+  $('verdict').className = 'verdict hide';
+  if (!$('file').files.length) return;
   try {
     var r = await runImport('preview');
-    say('Preview — ' + r.summary + String.fromCharCode(10) + describeTarget(r.report) +
-        String.fromCharCode(10) + 'Nothing written yet.', r.warned ? 'err' : 'ok');
-    $('btn-commit').disabled = false;
-  } catch (e) { say(String(e.message || e), 'err'); }
-};
+    var plan = publishPlan(r.report);
+    LAST_PLAN = plan;
+    renderVerdict(plan, r);
+    $('btn-publish').textContent = publishLabel(plan);
+    $('btn-publish').disabled = plan.state === 'blocked';
+    say(plan.state === 'blocked' ? 'Nothing was written.' : 'Checked. Nothing written yet.',
+        plan.state === 'blocked' ? 'err' : 'info');
+  } catch (e) {
+    say(String(e.message || e), 'err');
+  }
+}
 
-$('btn-commit').onclick = async function () {
+$('btn-publish').onclick = async function () {
+  var plan = LAST_PLAN;
+  if (!plan) return;
+  $('btn-publish').disabled = true;
   try {
     var r = await runImport('commit');
-    var blocked = adoptImportedSheet(r.report);
-    // renderStage() opens step 5 when the sheet was adopted, and closes step 4
-    // so the same file is not committed twice by a second click.
+    // Re-plan from the committed report rather than trusting the earlier check:
+    // the file key can have been filled in since, and this is the report that
+    // actually wrote.
+    plan = publishPlan(r.report);
+    renderVerdict(plan, r);
+    if (!adoptPlan(plan)) {
+      renderStage();
+      $('btn-another').className = '';
+      say('Translations saved. ' + plan.reason, 'err');
+      return;
+    }
     renderStage();
-    say('Imported — ' + r.summary + (blocked ? String.fromCharCode(10, 10) + '! ' + blocked : ''),
-        (r.warned || blocked) ? 'err' : 'ok');
-  } catch (e) { say(String(e.message || e), 'err'); }
-};
-
-$('btn-push').onclick = async function () {
-  $('btn-push').disabled = true;
-  try {
     for (var i = 0; i < RUN_IDS.length; i++) {
-      say('Approving ' + (i + 1) + '/' + RUN_IDS.length + '…');
+      say('Publishing ' + (i + 1) + '/' + RUN_IDS.length + '…');
       await api('/api/plugin/localization/approve', { method: 'POST', json: { run_id: RUN_IDS[i] } });
       var pkg = await api('/api/plugin/localization/locale-package?runId=' + encodeURIComponent(RUN_IDS[i]));
       send('apply-locales', { pkg: pkg });
     }
-    say('Sent to Figma. Applying…');
+    say('Sent to Figma. Creating the pages…');
   } catch (e) {
     say(String(e.message || e), 'err');
-    $('btn-push').disabled = false;
+    $('btn-publish').disabled = false;
   }
 };
 
@@ -561,17 +674,20 @@ onmessage = function (event) {
     CURRENT_PAGE_ID = msg.currentPageId || '';
     SAVED_LANGS = msg.langs || [];
     restoreState(msg.state);
-    if (TOKEN) showMain(); else { $('pair-view').className = ''; say('Not connected yet.'); }
+    if (TOKEN) showChooser(); else { $('pair-view').className = ''; say('Not connected yet.'); }
   }
   if (msg.type === 'file-key') {
     if (msg.error) return say(msg.error, 'err');
     FILE_KEY = msg.fileKey || '';
     renderFileKey();
-    say('File key saved for this document.', 'ok');
+    // A pack checked before the link was known was ruled save-only for that
+    // reason alone. Re-check so the verdict reflects what is now true.
+    if (LAST_PLAN && LAST_PLAN.state === 'save-only' && $('file').files.length) runCheck();
+    else say('Saved for this document.', 'ok');
   }
   if (msg.type === 'applied') {
     say(msg.summary, msg.errors ? 'err' : 'ok');
-    $('btn-push').disabled = false;
+    $('btn-another').className = '';
   }
 };
 

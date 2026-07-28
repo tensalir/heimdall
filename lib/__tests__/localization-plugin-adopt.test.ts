@@ -1,41 +1,50 @@
 /**
- * The Localization tab's step-4 decision logic.
+ * The upload flow's decision logic.
  *
- * These two helpers live inside the plugin's UI string (the iframe body cannot
+ * These helpers live inside the plugin's UI string (the iframe body cannot
  * import a module, so that string is the only copy). They are pure, so the test
  * lifts them out and runs them against the shape Babylon's
  * `condenseImportReport` actually returns.
  *
- * `adoptImportedSheet` is worth pinning: it decides whether step 5 may push the
- * runs from an uploaded workbook. Getting it wrong is not a cosmetic bug —
+ * `publishPlan` is worth pinning: it decides whether Publish may create locale
+ * pages from an uploaded workbook. Getting it wrong is not cosmetic —
  * `applyLocalePackage` resolves `source_page_id` with `getNodeByIdAsync`, and
  * Figma node ids are unique only within a file, so a pack from the wrong file
  * would find whichever page shares the id and overwrite it.
+ *
+ * The other half matters just as much in the other direction: a pack that
+ * cannot be published must still be *saveable*, or having the wrong file open
+ * silently throws away the agency's work.
  */
 import { describe, expect, it } from 'vitest'
 import { localizationUiHtml } from '../../packages/figma-plugin/src/commands/localization'
 
+interface Plan {
+  state: 'ready' | 'save-only' | 'blocked'
+  reason?: string
+  pages: Array<Record<string, unknown>>
+  langs: string[]
+  names: string[]
+  file: string
+}
+
 interface Ctx {
-  FILE_KEY: string
   PROJECT: string | null
   TABS: Array<{ id: string; name: string }>
   RUN_IDS: string[]
   SHEET_SOURCE: string
-  RESUMED_AT: string
   saved: string[]
-  adoptImportedSheet(report: unknown): string
-  describeTarget(report: unknown): string
+  publishPlan(report: unknown): Plan
+  adoptPlan(plan: Plan): boolean
+  publishLabel(plan: Plan): string
 }
 
-/**
- * Evaluate the two helpers with the module-level vars they close over turned
- * into locals, so each test gets an isolated document state.
- */
+/** Run the helpers with the module-level vars they close over turned into
+ *  locals, so each test gets an isolated document state. */
 function load(fileKey: string): Ctx {
   const source = (name: string) => {
     const start = localizationUiHtml.indexOf(`function ${name}(`)
     if (start < 0) throw new Error(`${name} not found in the plugin UI — did it get renamed?`)
-    // Both helpers end at the first line that is exactly "}" at column 0.
     const end = localizationUiHtml.indexOf('\n}', start)
     if (end < 0) throw new Error(`Could not find the end of ${name}`)
     return localizationUiHtml.slice(start, end + 2)
@@ -47,15 +56,15 @@ function load(fileKey: string): Ctx {
     var PROJECT = null, TABS = [], RUN_IDS = [], SHEET_SOURCE = 'extracted', RESUMED_AT = '';
     var saved = [];
     function persistState() { saved.push(JSON.stringify({ PROJECT: PROJECT, RUN_IDS: RUN_IDS, SHEET_SOURCE: SHEET_SOURCE })); }
-    ${source('describeTarget')}
-    ${source('adoptImportedSheet')}
+    ${source('uniq')}
+    ${source('publishPlan')}
+    ${source('adoptPlan')}
+    ${source('publishLabel')}
     return {
-      adoptImportedSheet: adoptImportedSheet,
-      describeTarget: describeTarget,
+      publishPlan: publishPlan, adoptPlan: adoptPlan, publishLabel: publishLabel,
       get PROJECT() { return PROJECT }, get TABS() { return TABS },
       get RUN_IDS() { return RUN_IDS }, get SHEET_SOURCE() { return SHEET_SOURCE },
-      get RESUMED_AT() { return RESUMED_AT }, get saved() { return saved },
-      FILE_KEY: FILE_KEY
+      get saved() { return saved }
     };
   `,
   ) as (fileKey: string) => Ctx
@@ -86,89 +95,102 @@ function report(over: Record<string, unknown> = {}) {
   }
 }
 
-describe('adoptImportedSheet', () => {
-  it('adopts the runs from the workbook when it belongs to the open file', () => {
+describe('publishPlan', () => {
+  it('is ready when the pack belongs to the open file', () => {
+    const plan = load(OPEN_FILE).publishPlan(report())
+    expect(plan.state).toBe('ready')
+    expect(plan.reason).toBeUndefined()
+    expect(plan.names).toEqual(['PDP · EN'])
+    expect(plan.langs).toEqual(['NL', 'DE'])
+  })
+
+  it('is save-only — never blocked — for a pack from a different file', () => {
+    const plan = load(OPEN_FILE).publishPlan(report({ file_key: 'other', file_name: 'Other File' }))
+    expect(plan.state).toBe('save-only')
+    expect(plan.reason).toContain('Other File')
+  })
+
+  it('is save-only when the pack spans several files', () => {
+    const plan = load(OPEN_FILE).publishPlan(report({ file_key: null }))
+    expect(plan.state).toBe('save-only')
+    expect(plan.reason).toContain('more than one Figma file')
+  })
+
+  it('is save-only when this document has no link to check against', () => {
+    const plan = load('').publishPlan(report())
+    expect(plan.state).toBe('save-only')
+    expect(plan.reason).toContain('link is missing')
+  })
+
+  it('blocks only when nothing could be tied to a page', () => {
+    const plan = load(OPEN_FILE).publishPlan(report({ pages: [], file_key: null }))
+    expect(plan.state).toBe('blocked')
+    expect(plan.reason).toContain('tied back to a page')
+  })
+
+  it('tolerates a report with no figma block at all', () => {
+    expect(load(OPEN_FILE).publishPlan({}).state).toBe('blocked')
+  })
+
+  it('de-duplicates languages across pages and upper-cases them', () => {
+    const pages = [
+      { project_id: 'p', run_id: 'r1', page_node_id: '1:1', page_name: 'A', target_languages: ['nl', 'de'] },
+      { project_id: 'p', run_id: 'r2', page_node_id: '1:2', page_name: 'B', target_languages: ['de', 'fr'] },
+    ]
+    expect(load(OPEN_FILE).publishPlan(report({ pages })).langs).toEqual(['NL', 'DE', 'FR'])
+  })
+})
+
+describe('adoptPlan', () => {
+  it('takes project, tabs and runs from the workbook and persists them', () => {
     const ctx = load(OPEN_FILE)
-    expect(ctx.adoptImportedSheet(report())).toBe('')
+    expect(ctx.adoptPlan(ctx.publishPlan(report()))).toBe(true)
     expect(ctx.PROJECT).toBe('proj-1')
     expect(ctx.RUN_IDS).toEqual(['run-1'])
     expect(ctx.TABS).toEqual([{ id: '10:2', name: 'PDP · EN' }])
     expect(ctx.SHEET_SOURCE).toBe('imported')
-    // Persisted, so reopening the plugin keeps step 5 reachable.
     expect(ctx.saved).toHaveLength(1)
   })
 
-  it('refuses a pack from a different Figma file and leaves state untouched', () => {
-    const ctx = load(OPEN_FILE)
-    const reason = ctx.adoptImportedSheet(report({ file_key: 'other', pages: report().figma.pages }))
-    expect(reason).toContain('different Figma file')
-    expect(ctx.RUN_IDS).toEqual([])
-    expect(ctx.PROJECT).toBeNull()
-    expect(ctx.saved).toHaveLength(0)
-  })
-
-  it('says the translations are still saved when it refuses — only the push is blocked', () => {
-    const ctx = load(OPEN_FILE)
-    expect(ctx.adoptImportedSheet(report({ file_key: 'other' }))).toMatch(/translations are saved/i)
-  })
-
-  it('refuses a pack spanning several files (file_key null)', () => {
-    const ctx = load(OPEN_FILE)
-    expect(ctx.adoptImportedSheet(report({ file_key: null }))).toContain('more than one Figma file')
-    expect(ctx.RUN_IDS).toEqual([])
-  })
-
-  it('refuses when this document has no file key to compare against', () => {
-    const ctx = load('')
-    expect(ctx.adoptImportedSheet(report())).toContain('URL')
-    expect(ctx.RUN_IDS).toEqual([])
-  })
-
-  it('reports nothing to push when no sheet resolved to a page', () => {
-    const ctx = load(OPEN_FILE)
-    expect(ctx.adoptImportedSheet(report({ pages: [], file_key: null }))).toContain('nothing to push')
+  it('refuses anything not ready and leaves state untouched', () => {
+    for (const over of [{ file_key: 'other' }, { file_key: null }, { pages: [], file_key: null }]) {
+      const ctx = load(OPEN_FILE)
+      expect(ctx.adoptPlan(ctx.publishPlan(report(over)))).toBe(false)
+      expect(ctx.RUN_IDS).toEqual([])
+      expect(ctx.PROJECT).toBeNull()
+      expect(ctx.saved).toHaveLength(0)
+    }
   })
 
   it('de-duplicates run ids across sheets that share a run', () => {
     const ctx = load(OPEN_FILE)
     const pages = [
-      { project_id: 'proj-1', run_id: 'run-1', page_node_id: '10:2', page_name: 'A' },
-      { project_id: 'proj-1', run_id: 'run-1', page_node_id: '10:2', page_name: 'A' },
-      { project_id: 'proj-1', run_id: 'run-2', page_node_id: '10:9', page_name: 'B' },
+      { project_id: 'proj-1', run_id: 'run-1', page_node_id: '10:2', page_name: 'A', target_languages: ['nl'] },
+      { project_id: 'proj-1', run_id: 'run-1', page_node_id: '10:2', page_name: 'A', target_languages: ['nl'] },
+      { project_id: 'proj-1', run_id: 'run-2', page_node_id: '10:9', page_name: 'B', target_languages: ['nl'] },
     ]
-    expect(ctx.adoptImportedSheet(report({ pages }))).toBe('')
+    ctx.adoptPlan(ctx.publishPlan(report({ pages })))
     expect(ctx.RUN_IDS).toEqual(['run-1', 'run-2'])
-  })
-
-  it('tolerates a report with no figma block at all', () => {
-    const ctx = load(OPEN_FILE)
-    expect(ctx.adoptImportedSheet({})).toContain('nothing to push')
   })
 })
 
-describe('describeTarget', () => {
-  it('names the file and pages, and confirms it is the open document', () => {
+describe('publishLabel', () => {
+  it('states the page count and languages so the button says what it will do', () => {
     const ctx = load(OPEN_FILE)
-    const t = ctx.describeTarget(report())
-    expect(t).toContain('Amazon Bundles')
-    expect(t).toContain('PDP · EN')
-    expect(t).toContain('this document')
+    expect(ctx.publishLabel(ctx.publishPlan(report()))).toBe('Publish 1 page to Figma (NL, DE)')
   })
 
-  it('calls out a foreign file before anything is committed', () => {
+  it('pluralises', () => {
     const ctx = load(OPEN_FILE)
-    expect(ctx.describeTarget(report({ file_key: 'other' }))).toContain('NOT the document you have open')
+    const pages = [
+      { project_id: 'p', run_id: 'r1', page_node_id: '1:1', page_name: 'A', target_languages: ['nl'] },
+      { project_id: 'p', run_id: 'r2', page_node_id: '1:2', page_name: 'B', target_languages: ['nl'] },
+    ]
+    expect(ctx.publishLabel(ctx.publishPlan(report({ pages })))).toBe('Publish 2 pages to Figma (NL)')
   })
 
-  it('does not claim a mismatch when this document has no file key', () => {
-    const ctx = load('')
-    const t = ctx.describeTarget(report())
-    expect(t).not.toContain('NOT the document')
-    expect(t).toContain('Amazon Bundles')
-  })
-
-  it('reports an unresolvable workbook plainly', () => {
+  it('offers to save rather than publish when the pages cannot be made here', () => {
     const ctx = load(OPEN_FILE)
-    expect(ctx.describeTarget(report({ pages: [], file_key: null }))).toContain('Could not tie')
+    expect(ctx.publishLabel(ctx.publishPlan(report({ file_key: 'other' })))).toBe('Save translations')
   })
 })
